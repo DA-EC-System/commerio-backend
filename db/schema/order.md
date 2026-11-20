@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V109**, 11 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
+Phiên bản **V111**, 11 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
 **Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
 
@@ -171,10 +171,9 @@ Cột:
   Cờ lưu. Cờ suy ra được (chưa ghép SKU, sắp trễ hạn, có yêu cầu trả, lệch COD) không lưu (Documents/19 D4).
 - `attention_note` text · null
 - `cancel_requested` boolean · not null · mặc định `false`
+  Khách xin huỷ, chờ Sale trả lời. Chỉ bật khi đơn còn mở (CHECK `orders_cancel_requested_open`).
 - `cancel_pending` boolean · not null · mặc định `false`
-  Đã gửi lệnh huỷ cả đơn lên sàn (Sale huỷ, Sale đồng ý khách xin huỷ), chờ sàn huỷ hết món. Cờ `cancelling` của API suy ra lúc đọc: cột này, hoặc sàn đã huỷ cả đơn mà còn kiện chờ mở để huỷ (`cancellingSql` ở `repository/orders.ts`).
-- `cancelling` boolean · not null · mặc định `false`
-  **Đã bỏ:** Cột cờ cũ (trước #417), thay bằng `cancel_pending`. Giữ một bản deploy cho image cũ còn chạy lúc đổi image (job migrate chạy trước) và để lùi image: trigger `orders_sync_cancel_pending` (`*_dang-huy-chuyen-co`) giữ hai cột bằng nhau, code mới không đọc, không ghi. PR sau bỏ trigger và cột.
+  Đã gửi lệnh huỷ cả đơn lên sàn (Sale huỷ, Sale đồng ý khách xin huỷ), chờ sàn huỷ hết món. Cờ `cancelling` của API suy ra lúc đọc: cột này, hoặc sàn đã huỷ cả đơn mà còn kiện chờ mở để huỷ (`cancellingSql` ở `repository/orders.ts`). Chỉ bật khi đơn còn mở (CHECK `orders_cancel_pending_open`).
 - `platform_cancelled` boolean · not null · mặc định `false`
 - `shop_disconnected` boolean · not null · mặc định `false`
 - `shipping_address` jsonb · null
@@ -203,12 +202,13 @@ Ràng buộc và index:
 - index (`customer_id`) `orders_customer_id_index`
 - index (`conversation_id`) `orders_conversation_id_index`
 - index (`status`) `orders_status_index`
+- check `orders_cancel_pending_open`: `not cancel_pending or status in ('unpaid', 'processing')`
+- check `orders_cancel_requested_open`: `not cancel_requested or status in ('unpaid', 'processing')`
 - check `orders_outcome`: `(status = 'completed') = (outcome is not null)`
 - check `orders_cod`: `source = 'marketplace' or not is_cod`
 - check `orders_amounts`: `subtotal >= 0 and total >= 0 and shipping_fee >= 0`
 - check `orders_payment_method`: `(source = 'marketplace') = (payment_method is null)`
 - check `orders_marketplace_ref`: `source <> 'marketplace' or (shop_id is not null and external_order_id is not null)`
-- trigger `orders_sync_cancel_pending`: `before insert or update → order.orders_sync_cancel_pending()`, ở `db/migrations/20261119071502_dang-huy-chuyen-co.sql`
 - trigger `orders_ship_by_packages`: `AFTER UPDATE OF ship_by, kiểm lúc commit → order.assert_package_ship_by()`, ở `db/migrations/20261119074938_han-ban-giao-kien.sql`
 
 Trỏ vào bảng này:

@@ -1,0 +1,3 @@
+ALTER TABLE "order"."orders" DROP COLUMN "cancelling";--> statement-breakpoint
+ALTER TABLE "order"."orders" ADD CONSTRAINT "orders_cancel_pending_open" CHECK (not "order"."orders"."cancel_pending" or "order"."orders"."status" in ('unpaid', 'processing'));--> statement-breakpoint
+ALTER TABLE "order"."orders" ADD CONSTRAINT "orders_cancel_requested_open" CHECK (not "order"."orders"."cancel_requested" or "order"."orders"."status" in ('unpaid', 'processing'));

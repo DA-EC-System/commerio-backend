@@ -212,18 +212,6 @@ describe('huỷ đơn sàn (§19.3, phương án a)', () => {
     expect(await detail(orderId)).toMatchObject({ cancelReason: 'Hết hàng', version: after.version });
   });
 
-  it('cột cũ cancelling ghi kèm theo cancel_pending (image cũ còn chạy lúc đổi image đọc cột này)', async () => {
-    const o = remote('pending');
-    const { orderId } = await ingest(o);
-    const columns = async () => (await testPool().query(`select cancelling, cancel_pending from "order".orders where id = $1`, [orderId])).rows[0];
-    await post(`${orderId}/platform-cancel`, { version: (await detail(orderId)).version, reasonId: '10000007' });
-    expect(await columns()).toEqual({ cancelling: true, cancel_pending: true });
-    const confirmed = structuredClone(o);
-    confirmed.lines[0]!.status = 'cancelled';
-    await ingest(confirmed);
-    expect(await columns()).toEqual({ cancelling: false, cancel_pending: false });
-  });
-
   it('đơn có món đã huỷ: lý do huỷ và lệnh huỷ chỉ gửi món chưa huỷ', async () => {
     const o = twoLines('pending');
     o.lines[0]!.status = 'cancelled';
