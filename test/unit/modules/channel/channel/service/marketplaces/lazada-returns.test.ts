@@ -177,6 +177,25 @@ describe('lazadaReturnMethods', () => {
     await expect(methods.decideReturn('tok', '7000', ['7001'], 'accept', { kind: 'refund' })).rejects.toMatchObject({ platformCode: 'refund_only_request' });
   });
 
+  it('ảnh minh chứng (#437): refuseReturn gửi `image_info` [{name,url}], startDispute gửi `image_info_list` [{file_url,file_name}] theo mẫu tài liệu', async () => {
+    const images = [
+      { name: 'vet-xuoc.jpg', url: 'https://vn-live.slatic.net/p/a.jpg' },
+      { name: 'hop.png', url: 'https://vn-live.slatic.net/p/b.png' },
+    ];
+    const { calls, methods } = fakeCall({});
+    await methods.decideReturn('tok', '7000', ['7001'], 'reject', { reasonId: '100000046', images });
+    await methods.decideReturn('tok', '7000', ['7001'], 'reject', { kind: 'refund', comment: 'Hàng còn nguyên', images });
+    await methods.decideReturn('tok', '7000', ['7001'], 'reject', { reasonId: '100000046' });
+    expect(JSON.parse(calls[0]![1].image_info!)).toEqual(images);
+    expect(calls[0]![1].image_info_list).toBeUndefined();
+    expect(JSON.parse(calls[1]![1].image_info_list!)).toEqual([
+      { file_url: 'https://vn-live.slatic.net/p/a.jpg', file_name: 'vet-xuoc.jpg' },
+      { file_url: 'https://vn-live.slatic.net/p/b.png', file_name: 'hop.png' },
+    ]);
+    expect(calls[1]![1].image_info).toBeUndefined();
+    expect('image_info' in calls[2]![1]).toBe(false);
+  });
+
   it('hoàn tiền là instantRefund, báo đã nhận là confirmDelivery', async () => {
     const { calls, methods } = fakeCall({});
     await methods.decideReturn('tok', '7000', ['7001'], 'refund', {});

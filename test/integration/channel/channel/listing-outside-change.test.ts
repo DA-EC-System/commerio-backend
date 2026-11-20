@@ -109,7 +109,7 @@ async function lastTransition(id: string) {
 const sentSkus = () => updatePriceQuantity.mock.calls.flatMap(([, items]) => items.map((i) => i.externalSkuId));
 
 beforeAll(async () => {
-  company = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany({ optionalModules: [] });
   shopId = await connect('lazada');
 });
 beforeEach(() => {
@@ -374,7 +374,7 @@ describe('POST …/outside-change/:action (CEO quyết)', () => {
     expect((await decide(listingId, 'restore', { version }, sale.token)).status).toBe(403);
     const bad = await decide(listingId, 'force', { version });
     expect(bad.status).toBe(422);
-    const other = await createCompany({ optionalModules: ['channel'] });
+    const other = await createCompany({ optionalModules: [] });
     expect((await decide(listingId, 'restore', { version }, other.ceo.token)).status).toBe(404);
     expect(await listing(listingId)).toMatchObject({ status: 'hidden', outside_change_kind: 'disabled' });
   });

@@ -116,7 +116,11 @@ export interface NewProduct {
   sizeChartUri?: string;
   sellerSku: string;
   price: string;
-  quantity: number;
+  /**
+   * Tồn gửi kèm. Thiếu là không gửi: đẩy lại sản phẩm đã có trên sàn mà SKU chưa có số hay chưa tin được (#460, #223)
+   * thì giữ tồn trên sàn, lượt đẩy tồn quyết sau. Tạo mới luôn có.
+   */
+  quantity?: number;
   weightG: number;
   lengthMm: number;
   widthMm: number;
@@ -142,6 +146,30 @@ export interface ContentUpdate {
   description: string;
   attributes: Record<string, string | string[]>;
   responsible?: Responsible;
+}
+
+/**
+ * Đổi category của sản phẩm đang có trên sàn (`apply-category`, commerio-backend#467): chỉ category và attribute; tên, mô tả,
+ * ảnh, SKU, giá, tồn giữ như trên sàn. `sizeChartUrl` (ảnh của app) chỉ được đưa lên khi sản phẩm trên sàn chưa có bảng size.
+ */
+export interface CategoryChangeInput {
+  externalCategoryId: string;
+  /** Như `NewProduct.attributes` (nhãn lựa chọn hoặc chuỗi tự nhập). */
+  attributes: Record<string, string | string[]>;
+  responsible?: Responsible;
+  /** Ảnh bảng size của app: adapter đưa lên sàn chỉ khi sản phẩm trên sàn chưa có bảng size. */
+  sizeChartUrl?: string;
+  /** App đã ẩn listing (`hidden`): sau khi sửa phải tắt lại dù lần đọc này thấy sản phẩm đang bật (lượt thử lại). */
+  keepDeactivated?: boolean;
+}
+
+/**
+ * Kết quả đổi category: `underReview` sàn ngừng bán bản cũ để duyệt; `mismatch` các chỗ lệch khi đọc lại so với lúc đọc trước
+ * (số SKU, SKU người bán, giá, số ảnh), mỗi chỗ một cụm tiếng Việt viết thường đầu câu; rỗng là khớp.
+ */
+export interface CategoryChangeResult {
+  underReview: boolean;
+  mismatch: string[];
 }
 
 /** Bản sửa nội dung trên sàn: đang duyệt, đã qua (hoặc không còn bản đang duyệt), hay trượt kèm lý do sàn ghi. */
@@ -634,6 +662,11 @@ export interface MarketplaceAdapter {
    * bản cũ để duyệt; false là vẫn bán bản cũ trong lúc duyệt bản sửa. Sàn chưa hỗ trợ thì không có hàm này.
    */
   updateContent?(accessToken: string, externalProductId: string, content: ContentUpdate): Promise<{ underReview: boolean }>;
+  /**
+   * Đổi category của sản phẩm đang bán (#467, Documents/21 §18.5): dựng bản sửa từ chính dữ liệu đọc trên sàn, chỉ thay
+   * category và attribute. Không bật, tắt sản phẩm. Sàn chưa hỗ trợ thì không có hàm này (route trả 422).
+   */
+  changeCategory?(accessToken: string, externalProductId: string, input: CategoryChangeInput): Promise<CategoryChangeResult>;
   /** Trạng thái bản sửa nội dung đang duyệt (#293), đồng bộ đọc cho listing có bản sửa `auditing`. */
   contentRevision?(accessToken: string, externalProductId: string): Promise<ContentRevision>;
   /**
@@ -756,9 +789,14 @@ export interface MarketplaceAdapter {
     externalReturnId: string,
     externalLineIds: readonly string[],
     decision: 'accept' | 'reject' | 'refund',
-    /** `kind`: loại yêu cầu (chỉ hoàn tiền đi API riêng ở Lazada); thiếu là `return`. */
-    opts: { reasonId?: string; comment?: string; kind?: 'return' | 'refund' },
+    /**
+     * `kind`: loại yêu cầu (chỉ hoàn tiền đi API riêng ở Lazada); thiếu là `return`. `images`: ảnh minh chứng đã nằm trên
+     * sàn (chuỗi `uploadImage` trả), chỉ có khi sàn khai `returnImageTypes` (#437).
+     */
+    opts: { reasonId?: string; comment?: string; kind?: 'return' | 'refund'; images?: readonly { name: string; url: string }[] },
   ): Promise<void>;
+  /** Kiểu ảnh sàn nhận làm minh chứng khi từ chối yêu cầu trả (#437); không khai là sàn chưa nhận ảnh qua app. */
+  readonly returnImageTypes?: readonly string[];
   /** Báo sàn kho đã nhận hàng trả lúc quét, chưa kiểm hàng (#202, §20.1; Lazada `confirmDelivery`). */
   confirmReturnReceived?(accessToken: string, externalReturnId: string, externalLineIds: readonly string[]): Promise<void>;
   /**

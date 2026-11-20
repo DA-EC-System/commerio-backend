@@ -5,15 +5,17 @@ import { registerChannelOpenApi } from './api/openapi.ts';
 import { channelRouter } from './api/routes.ts';
 import { runListingSync, runOpenOrderPull, runOrderPull, runStockPush, runTokenRefresh } from './service/background.ts';
 import { registerChannelConsumer, workChannelQueue } from './service/background-jobs.ts';
+import { runCategoryApply } from './service/category-apply.ts';
 import { runListingPush } from './service/listing-push.ts';
 import { runRemoteSkusRefresh } from './service/remote-skus.ts';
 import { runSpecFromMatch } from './service/spec-from-match.ts';
 import { onAvailableChanged } from './service/listing-sync.ts';
 import { handleAllocationDone, handleStocktakePosted } from './service/opening-stocktake.ts';
-import { onConfigActivated, onVariantPriceChanged } from './service/repricing.ts';
+import { onConfigActivated, onStockChanged, onVariantPriceChanged } from './service/repricing.ts';
 import { productPort } from './service/product-port.ts';
 import { handleReauthMail, REAUTH_MAIL_CONSUMER, startReauthMailLoop } from './service/reauth-mail.ts';
 import {
+  categoryApplyQueue,
   listingPushQueue,
   listingSyncQueue,
   openOrderPullQueue,
@@ -45,6 +47,8 @@ export const channelModule: ModuleDefinition = {
     // Giá theo gian hàng (#225, 21 §11.2): đổi giá muốn bán, kích hoạt phí, thuế, lãi tối thiểu thì có bản chờ xác nhận.
     registerChannelConsumer('catalog.variant_price_changed', (e) => onVariantPriceChanged(e.payload), { consumer: 'channel-reprice-target' });
     registerChannelConsumer('finance.fee_config_activated', (e) => onConfigActivated(e.payload), { consumer: 'channel-reprice-config' });
+    // Giá vốn đổi làm listing đang bán dưới giá thấp nhất: bản chờ đề xuất giá mới (#225 A1, 25 §6.2).
+    registerChannelConsumer('inventory.stock_changed', (e) => onStockChanged(e.payload), { consumer: 'channel-reprice-cost' });
     // SKU vào, rời tạm ngừng: xếp `channel.stock_push` để ẩn, hiện listing trên sàn (#224, 21 §11.2, 25 §6.4).
     registerChannelConsumer('catalog.variant_status_changed', (e) => onVariantStatusChanged(e.payload), { consumer: 'channel-variant-status' });
     // Việc nền của gian hàng (#102): kéo đơn 5 phút, đồng bộ listing 15 phút, làm mới token hằng ngày.
@@ -56,6 +60,8 @@ export const channelModule: ModuleDefinition = {
     await workChannelQueue(stockPushQueue, (job) => runStockPush(port, job));
     // Đẩy listing (#219): mỗi lần một việc; nâng `concurrency` khi đo được hạn mức gọi sàn (#215).
     await workChannelQueue(listingPushQueue, (job) => runListingPush(port, job));
+    // Đổi category trên sàn (#467): mỗi (gian hàng, sản phẩm sàn) một việc, như đẩy listing.
+    await workChannelQueue(categoryApplyQueue, (job, attempt) => runCategoryApply(port, job, attempt));
     // Tải lại SKU sàn chạy nền (#361): handler bọc `asManual`, lời gọi sàn vẫn tính như bấm tay.
     await workChannelQueue(remoteSkusRefreshQueue, (job, attempt) => runRemoteSkusRefresh(job, attempt, port));
     // Ghép SKU dựng spec từ category trên sàn (#400 lát 12).
@@ -81,8 +87,8 @@ export { loseShopAuth, markNeedsReauth } from './service/shops.ts';
 export { settlementPayouts, settlementTransactions, shopsToSettle } from './service/settlement-port.ts';
 export type { Payout, SettlementTxn } from './service/marketplaces/index.ts';
 
-/** Chặn tắt phân hệ Kênh bán khi đã có gian hàng (#152); `src/wiring.ts` đưa cho `platform`. */
-export { hasChannelData, shopSetupState } from './repository/shops.ts';
+// Gian hàng của công ty cho checklist onboarding (#461).
+export { shopSetupState } from './repository/shops.ts';
 // Trạng thái chờ kiểm kê đầu kỳ của gian hàng cho fulfillment (#199 phần b), tiêm qua `ctx.stockHoldOf` ở `src/wiring.ts`.
 export { awaitingStocktakeShops } from './repository/shops.ts';
 // Lý do chặn lưu trữ SKU phần sàn cho catalog (#204), tiêm qua `ctx.listingArchiveBlockers` ở `src/wiring.ts`.

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { defaultDemo } from '../../../db/seed/demo.ts';
 import { parseSection, seedScenarios } from '../../../db/seed/scenarios.ts';
-import { uniqueEmail } from '../helpers/company.ts';
+import { uniqueEmail, uniqueTaxCode } from '../helpers/company.ts';
 import { testPool } from '../helpers/db.ts';
 import { login, PASSWORD, selectCompany, testApp } from '../helpers/http.ts';
 
@@ -10,6 +10,7 @@ const db = testPool();
 function input() {
   const result = defaultDemo(PASSWORD);
   for (const account of Object.values(result.accounts)) account.email = uniqueEmail('demo');
+  result.company = { ...result.company, taxCode: uniqueTaxCode() };
   return result;
 }
 

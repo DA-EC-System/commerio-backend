@@ -72,3 +72,5 @@ export {
   returnsAwaitingConfirm,
   returnsAwaitingRefundApproval,
 } from './service/return-confirm.ts';
+// Ghi hoàn tiền tới mức doanh thu đã ghi (#355, Documents/21 §11.3): finance gọi khi nhận `sales.return_refunded`.
+export { flagReturnForReview, returnLinesOf, type ReturnLineRef } from './service/return-review.ts';

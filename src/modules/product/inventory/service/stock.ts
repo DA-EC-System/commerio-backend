@@ -34,6 +34,7 @@ export async function listStock(
     pageSize: number;
     search?: string | undefined;
     groupId?: string | undefined;
+    productId?: string | undefined;
     belowMin?: boolean | undefined;
     quarantine?: boolean | undefined;
     negative?: boolean | undefined;
@@ -54,6 +55,7 @@ export async function listStock(
       (l) =>
         (!search || l.productName.toLowerCase().includes(search) || l.sku.toLowerCase().includes(search)) &&
         (!q.groupId || l.group.id === q.groupId) &&
+        (!q.productId || l.productId === q.productId) &&
         (!q.belowMin || l.belowMin) &&
         (!q.quarantine || l.quarantine > 0) &&
         (!q.negative || l.negative),

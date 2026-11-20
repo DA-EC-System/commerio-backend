@@ -174,7 +174,8 @@ export async function missingOf(
   return { missing, attributes };
 }
 
-async function view(companyId: string, adapter: MarketplaceAdapter, row: ProductSpecRow | undefined, product: SpecProduct): Promise<SpecView> {
+/** Spec kèm `missing` như route `GET` trả (cũng là `current` của 409 `version_conflict`). Gọi trong `withCompany`. */
+export async function specView(companyId: string, adapter: MarketplaceAdapter, row: ProductSpecRow | undefined, product: SpecProduct): Promise<SpecView> {
   if (!row) return { spec: null, missing: [] };
   const org = adapter.responsibleFields ? await responsibleOrgOf(companyId) : null;
   const { missing } = await missingOf(adapter, row, product, org);
@@ -199,7 +200,7 @@ export async function getProductSpec(ctx: ModuleContext, companyId: string, prod
   return withCompany(companyId, async () => {
     const variants = await variantsOf(ctx, productId);
     const row = await findSpec(productId, platform);
-    return view(companyId, adapter, row, specProductOf(variants));
+    return specView(companyId, adapter, row, specProductOf(variants));
   });
 }
 
@@ -327,7 +328,7 @@ export async function putProductSpec(
     const conflict = async () => {
       const current = await findSpec(productId, platform);
       return new AppError(409, 'version_conflict', 'Thông tin sàn của sản phẩm vừa được người khác sửa', {
-        current: current ? (await view(companyId, adapter, current, product)).spec : null,
+        current: current ? (await specView(companyId, adapter, current, product)).spec : null,
       });
     };
     let row: ProductSpecRow | undefined;
@@ -350,7 +351,7 @@ export async function putProductSpec(
       before: before ? { externalCategoryId: before.externalCategoryId, attributes: before.attributes, version: before.version } : null,
       after: { externalCategoryId: row.externalCategoryId, attributes: row.attributes, version: row.version },
     });
-    return view(companyId, adapter, row, product);
+    return specView(companyId, adapter, row, product);
   });
 }
 

@@ -19,7 +19,7 @@ Integration chạy migration và test bằng role `commerio_migrator` (`NOSUPERU
 |---|---|
 | `db.ts` | `testPool()`: pool tới DB test bằng role chủ bảng (bỏ qua RLS), `setup.ts` tự đóng |
 | `http.ts` | `testApp()`, `login(email)`, `selectCompany(token, companyId)`, `refreshCookie(res)`, `PASSWORD` |
-| `company.ts` | `createCompany({ optionalModules? })` → `{ companyId, ceo: { email, token } }` (token đã chọn công ty); `addMember(companyId, 'admin' \| 'sale' \| 'warehouse' \| roleId)`; `createCustomRole(companyId, permissions)`; `registerCompany`, `registerBody`, `uniqueEmail` |
+| `company.ts` | `createCompany({ optionalModules? })` → `{ companyId, ceo: { email, token } }` (token đã chọn công ty; đăng ký qua API rồi đặt đúng bộ phân hệ tuỳ chọn trong DB, mặc định `purchasing`, `report`; Kênh bán là lõi từ #459); `uniqueTaxCode()` (mã số thuế unique trong CSDL, đăng ký nào cũng phải dùng mã riêng); `addMember(companyId, 'admin' \| 'sale' \| 'warehouse' \| roleId)`; `createCustomRole(companyId, permissions)`; `registerCompany`, `registerBody`, `uniqueEmail` |
 | `rls.ts` | `asCompany(companyId, fn)`: chạy như request trong công ty (role `commerio_app`), rồi rollback |
 | `locks.ts` | `raceBehindLock(lock, blocked, start)`: dựng chạy đua tất định. Mở giao dịch chạy `lock(holder)` (vd `select … for update`, chèn chưa commit), gửi các request đua trong `start`, chờ tới khi đúng `blocked` phiên bị chặn sau giao dịch đó (đếm cả phiên xếp hàng sau phiên bị chặn), rồi commit và trả kết quả của `start` |
 | `state.ts` | `lockCompany`, `suspendMembership`, `setModuleEnabled`, `revokePermission` (chỉ cho vai trò tuỳ biến) |

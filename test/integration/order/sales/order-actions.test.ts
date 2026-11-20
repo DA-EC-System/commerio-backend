@@ -62,7 +62,7 @@ let sku: string;
 const auth = (r: request.Test, token = company.ceo.token) => r.set('Authorization', `Bearer ${token}`);
 
 beforeAll(async () => {
-  company = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany({ optionalModules: [] });
   const res = await auth(app().post('/api/v1/channel/shops/lazada/token')).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
   shopId = res.body.shop.id;
   await testPool().query(`update channel.shops set status = 'active', order_cutoff_at = now() where id = $1`, [shopId]);
@@ -210,18 +210,6 @@ describe('huỷ đơn sàn (§19.3, phương án a)', () => {
     expect(cancelReasons).not.toHaveBeenCalled();
     expect(cancelOrder).not.toHaveBeenCalled();
     expect(await detail(orderId)).toMatchObject({ cancelReason: 'Hết hàng', version: after.version });
-  });
-
-  it('cột cũ cancelling ghi kèm theo cancel_pending (image cũ còn chạy lúc đổi image đọc cột này)', async () => {
-    const o = remote('pending');
-    const { orderId } = await ingest(o);
-    const columns = async () => (await testPool().query(`select cancelling, cancel_pending from "order".orders where id = $1`, [orderId])).rows[0];
-    await post(`${orderId}/platform-cancel`, { version: (await detail(orderId)).version, reasonId: '10000007' });
-    expect(await columns()).toEqual({ cancelling: true, cancel_pending: true });
-    const confirmed = structuredClone(o);
-    confirmed.lines[0]!.status = 'cancelled';
-    await ingest(confirmed);
-    expect(await columns()).toEqual({ cancelling: false, cancel_pending: false });
   });
 
   it('đơn có món đã huỷ: lý do huỷ và lệnh huỷ chỉ gửi món chưa huỷ', async () => {

@@ -4,6 +4,7 @@
 import type { Decimal } from 'decimal.js';
 import {
   availableOf,
+  countedOf,
   getVariants,
   productImageUrls,
   productSizeChartUrls,
@@ -45,6 +46,8 @@ export interface ProductPort {
   standardPrices(ids: readonly string[]): Promise<Map<string, Decimal | null>>;
   /** Có mọi biến thể của công ty (chưa có tồn thì 0); id lạ không có trong Map thì không đẩy tồn (#222). */
   availableOf(ids: readonly string[]): Promise<Map<string, number>>;
+  /** SKU kho đã có số (#460); thiếu (bản giả của test) thì coi mọi SKU đã có số. */
+  countedOf?(ids: readonly string[]): Promise<Set<string>>;
   /**
    * Link ảnh catalog theo sản phẩm (#303), tối đa `max` ảnh đầu theo thứ tự; sản phẩm chưa có ảnh (hoặc máy chủ chưa
    * cấu hình link ảnh) không có trong Map.
@@ -87,6 +90,7 @@ export function productPort(ctx: ModuleContext): ProductPort {
       variants: async (ids, opts) => (await getVariants(ids, opts)).map(toListingVariant),
       standardPrices: (ids) => standardPricesOf(ctx, ids),
       availableOf,
+      countedOf,
       productImageUrls,
       productSizeChartUrls,
     }

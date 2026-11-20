@@ -22,7 +22,15 @@ import {
 } from '../domain/listing.ts';
 import { platformPriceChanged } from '../domain/outside-price.ts';
 import { holdsStock } from '../domain/shop.ts';
-import { findListingById, type ListingPatch, type ListingRow, listListingRows, setListingCategory } from '../repository/listings.ts';
+import {
+  clearResolvedCategoryChange,
+  failStaleCategoryChanges,
+  findListingById,
+  type ListingPatch,
+  type ListingRow,
+  listListingRows,
+  setListingCategory,
+} from '../repository/listings.ts';
 import { markPushed } from '../repository/price-calculations.ts';
 import { markSpecCategory } from '../repository/product-specs.ts';
 import { markStockPushed, type ShopRow } from '../repository/shops.ts';
@@ -362,6 +370,11 @@ export async function syncListings(port: ProductPort, companyId: string, shopId:
     summary.changed++;
   }
 
+  // Kẹt `category_change = queued` (việc đổi category rơi): quá 30 phút thì `failed`, để người dùng đổi lại (#467).
+  await inCompany(() =>
+    failStaleCategoryChanges(new Date(staleBefore), 'Quá 30 phút chưa có kết quả từ sàn, thử lại', rows.filter((r) => r.categoryChange?.status === 'queued').map((r) => r.id)),
+  );
+
   const watched = rows.filter((r) => WATCHED.includes(r.status) && r.sellerSku && r.externalSkuId);
   summary.checked = watched.length;
   let bySku = new Map<string, RemoteSku>();
@@ -447,6 +460,12 @@ async function syncCategories(
     const category = bySku.get(row.externalSkuId!)?.externalCategoryId;
     return category && category !== row.externalCategoryId ? [{ row, category }] : [];
   });
+  // Sàn đã ở đúng category đích của lượt đổi: lượt `failed`/`mismatch` không còn đúng, xoá (#467).
+  const resolved = watched.filter((row) => {
+    const change = row.categoryChange;
+    return change && change.status !== 'queued' && bySku.get(row.externalSkuId!)?.externalCategoryId === change.toCategoryId;
+  });
+  if (resolved.length) await inCompany(() => clearResolvedCategoryChange(resolved.map((r) => r.id)));
   if (!changes.length) return;
   await inCompany(async () => {
     const variantIds = changes.flatMap((c) => (c.row.externalCategoryId && c.row.variantId ? [c.row.variantId] : []));
@@ -507,7 +526,10 @@ async function reconcileStock(
     // SKU chưa tin được (#223): số app có thể chưa trừ đơn bán ở gian hàng khác, nên chỉ cao hơn số thật. Khớp, hoặc sàn
     // cao hơn (đẩy giảm) vẫn làm; sàn thấp hơn (sẽ đẩy tăng, bật Lệch tồn) thì bỏ lượt này.
     const untrusted = await untrustedVariants();
+    // SKU kho chưa có số (#460): không đối chiếu, không ghi `platform_stock`, không bật Lệch tồn.
+    const counted = await countedOf(port, candidates.map((r) => r.variantId!));
     for (const row of candidates) {
+      if (!zeroHidden(row) && !counted.has(row.variantId!)) continue;
       const app = zeroHidden(row) ? 0 : available.get(row.variantId!);
       if (app === undefined) continue;
       const remote = bySku.get(row.externalSkuId!)!.sellableQuantity!;
@@ -582,9 +604,10 @@ async function pushDue(
   const due = onPlatform.filter((r) => (r.outsideChangeKind ? zeroHidden(r) && stockPending(r) : stockPending(r) || priceDueOf(r)));
   if (!due.length) return;
   const ids = due.map((r) => r.variantId!);
-  const { available, untrusted } = await inCompany(async () => ({
+  const { available, untrusted, counted } = await inCompany(async () => ({
     available: holdStock ? new Map<string, number>() : await port.availableOf(ids),
     untrusted: holdStock ? new Map<string, ShopRow[]>() : await untrustedVariants(),
+    counted: holdStock ? null : await countedOf(port, ids),
   }));
   const at = new Date();
   // Biến thể không có trong Map (đã xoá, công ty khác): không đẩy tồn, giữ `stock_sync = pending`, ghi `variant_missing`.
@@ -605,8 +628,12 @@ async function pushDue(
     // so với số sàn ĐỌC THẬT trong lượt này (`sellableQuantity`). Không so với `platform_stock`: đó là số app gửi lần trước,
     // sàn có thể đã bán bớt mà app chưa biết (review R2-1). Đường không đọc sàn (`pushPending`) vì thế không đẩy tồn SKU
     // này. Bị giữ thì `pending` kèm `orders_stale`; lượt đồng bộ 15 phút hoặc lấy đơn xong trọn thì đẩy lại.
+    // SKU kho chưa có số (#460, 25 §6.4 "Ghép listing có sẵn"): không đẩy số có thể bán (0) đè tồn trên sàn, thắng
+    // `orders_stale`. Listing ẩn bằng tồn 0 vẫn gửi 0: đó là lệnh ngừng bán, không phải số tồn.
+    const uncounted = wanted !== undefined && !zero && counted !== null && !counted.has(row.variantId!);
     const staleShops = untrusted.get(row.variantId!);
-    const blocked = staleShops !== undefined && wanted !== undefined && !zero && raisesStock(wanted, r?.sellableQuantity);
+    const stale = !uncounted && staleShops !== undefined && wanted !== undefined && !zero && raisesStock(wanted, r?.sellableQuantity);
+    const blocked = uncounted || stale;
     const quantity = blocked ? undefined : wanted;
     const item: PriceQuantity | null =
       !price && quantity === undefined
@@ -617,7 +644,7 @@ async function pushDue(
             ...(price && { price: price.toFixed(0) }),
             ...(quantity !== undefined && { quantity }),
           };
-    const held: ListingPatch = blocked ? { stockSyncError: ordersStaleError(staleShops, at) } : {};
+    const held: ListingPatch = uncounted ? { stockSyncError: notCountedError(at) } : stale ? { stockSyncError: ordersStaleError(staleShops!, at) } : {};
     return { row, item, stockDue: stockDue && !blocked, priceDue, locked: { ...lockPatch(r, at), ...held } };
   });
   const isMissing = (p: (typeof plan)[number]) => p.stockDue && !p.locked.stockSyncError && p.item?.quantity === undefined;
@@ -650,6 +677,7 @@ async function pushDue(
         // Giá theo gian hàng đã lên sàn: lần tính `confirmed` → `pushed` (Documents/19 `price_calculations`).
         if (price?.ok && row.priceCalcId && row.manualPrice === null) await markPushed(row.priceCalcId);
         if (stock?.ok || price?.ok) patch = { ...patch, lastPushedAt: at };
+        if (price?.ok) patch = { ...patch, lastPricePushedAt: at };
       }
       patch = { ...patch, ...locked };
       // Lệch `version` (tồn vừa đổi, đánh dấu lại pending giữa lúc đọc và lúc ghi): bỏ kết quả lượt này, giữ dòng
@@ -657,6 +685,23 @@ async function pushDue(
       await updateListing(row.id, { version: row.version }, patch);
     }
   });
+}
+
+/** Mã lỗi giữ tồn của SKU kho chưa có số (#460). */
+export const STOCK_NOT_COUNTED = 'stock_not_counted';
+
+/** SKU có số trong kho; cổng giả của test không có `countedOf` thì coi mọi SKU đã có số. */
+export async function countedOf(port: ProductPort, ids: readonly string[]): Promise<Set<string>> {
+  return port.countedOf ? port.countedOf(ids) : new Set(ids);
+}
+
+/** Lý do giữ tồn của SKU kho chưa có số (`stockSyncError.code = 'stock_not_counted'`, 21 §18.6.6). */
+function notCountedError(at: Date): SyncError {
+  return {
+    code: STOCK_NOT_COUNTED,
+    message: 'Chưa có số tồn: SKU chưa nhập kho, chưa kiểm kê nên app chưa đẩy tồn lên sàn',
+    at: at.toISOString(),
+  };
 }
 
 /** Sàn khoá tồn hoặc giá do khuyến mãi (`RemoteSku.stockLocked`, `priceLocked`): giữ số cũ trên sàn, ghi lỗi để báo. */
@@ -747,7 +792,8 @@ async function checkRevisions(
 function remoteChange(action: ListingAction, rejectReason: string | null | undefined): { patch: ListingPatch; reason: string | null } {
   if (action === 'reject') {
     const reason = rejectReason ?? NO_REASON;
-    return { patch: { rejectReason: reason }, reason };
+    // `live`, `hidden` → `rejected` (#389): bỏ cách ẩn (CHECK `listings_hidden_by`).
+    return { patch: { rejectReason: reason, hiddenBy: null }, reason };
   }
   // CHECK `listings_hidden_by`: chỉ `hidden`, `live` mang `hidden_by`.
   if (action === 'delist') {

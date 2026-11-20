@@ -6,6 +6,10 @@ describe('syncAction: trạng thái trên sàn → thao tác', () => {
   it.each([
     ['under_review', 'live', 'approve'],
     ['under_review', 'rejected', 'reject'],
+    // Sàn từ chối cả sản phẩm khi listing đang bán, đang ẩn (#389).
+    ['live', 'rejected', 'reject'],
+    ['hidden', 'rejected', 'reject'],
+    ['platform_hold', 'rejected', null],
     ['under_review', 'review', null],
     ['live', 'hold', 'hold'],
     ['hidden', 'hold', 'hold'],

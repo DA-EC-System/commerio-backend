@@ -44,7 +44,9 @@ export const listingMachine = defineMachine<ListingStatus, ListingAction>([
   { from: 'pushing', to: 'under_review', action: 'send_review', system: true },
   { from: 'pushing', to: 'push_failed', action: 'fail', system: true },
   { from: 'under_review', to: 'live', action: 'approve', system: true },
-  { from: 'under_review', to: 'rejected', action: 'reject', system: true },
+  // Sàn từ chối cả sản phẩm (#389): kể cả listing `live` sau khi app bật lại (TikTok duyệt lại, listing giữ `live`) hay
+  // `hidden` (app ẩn bằng tồn 0). Bản sửa nội dung bị từ chối thì sản phẩm vẫn bán, không qua cạnh này (`revisionStatus`).
+  { from: ['under_review', 'live', 'hidden'], to: 'rejected', action: 'reject', system: true },
   { from: ['live', 'hidden'], to: 'platform_hold', action: 'hold', system: true },
   { from: 'platform_hold', to: 'live', action: 'release', system: true },
   { from: 'live', to: 'hidden', action: 'hide', system: true },
@@ -89,7 +91,7 @@ export const DELETABLE: readonly ListingStatus[] = ['under_review', 'live', 'hid
 export function syncAction(status: ListingStatus, remote: RemoteState): ListingAction | null {
   if (remote === 'deleted') return DELETABLE.includes(status) ? 'delist' : null;
   if (status === 'under_review' && remote === 'live') return 'approve';
-  if (status === 'under_review' && remote === 'rejected') return 'reject';
+  if ((status === 'under_review' || status === 'live' || status === 'hidden') && remote === 'rejected') return 'reject';
   if ((status === 'live' || status === 'hidden') && remote === 'hold') return 'hold';
   if (status === 'platform_hold' && remote === 'live') return 'release';
   if (status === 'live' && remote === 'inactive') return 'outside_hold';

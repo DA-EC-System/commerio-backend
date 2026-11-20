@@ -11,6 +11,7 @@ import { addMember, createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
 import { createOrder } from '../../helpers/sales.ts';
+import { createReturnRequest } from './return-helpers.ts';
 
 // Consumer `finance-ledger` của sổ tiền (#228, #229; Documents/21 §11.2, §21.1). Sự kiện tự dựng theo payload của
 // danh mục, chạy qua `processMessage` thật với handler như `registerLedgerConsumers`, trong `withCompany` kèm
@@ -155,7 +156,11 @@ describe('consumer finance-ledger (§11.2)', () => {
   it('D41-07: return_refunded ghi hoàn tiền khách; return_inspected chỉ giảm giá vốn dòng có giá vốn', async () => {
     const s = await setup();
     const base = { orderId: s.order.orderId, shopId: s.shopId };
-    await deliver(s.companyId, 'sales.return_refunded', { ...base, returnRequestId: randomUUID(), refundAmount: '100000.00', refundedAt: '2026-11-05T02:00:00.000Z' });
+    // Hoàn tiền tối đa bằng doanh thu đã ghi của dòng trả (#355): kiện đã giao, yêu cầu trả một món của kiện đó.
+    const pkg = s.delivered([{ variantId: s.variantId, quantity: 1, unitPrice: '100000.00', unitCost: '60000.00' }]);
+    await deliver(s.companyId, 'fulfillment.package_delivered', pkg);
+    const { returnRequestId } = await createReturnRequest(s.companyId, { orderId: s.order.orderId, packageId: pkg.packageId, quantity: 1, unitPrice: 100000 });
+    await deliver(s.companyId, 'sales.return_refunded', { ...base, returnRequestId, refundAmount: '100000.00', refundedAt: '2026-11-05T02:00:00.000Z' });
     const inspected = {
       ...base,
       inspectionId: randomUUID(),
@@ -167,7 +172,8 @@ describe('consumer finance-ledger (§11.2)', () => {
     };
     await deliver(s.companyId, 'inventory.return_inspected', inspected);
     await deliver(s.companyId, 'inventory.return_inspected', inspected);
-    expect((await rows(s.companyId)).map((r) => [r.kind, r.amount])).toEqual([
+    const touched = (await rows(s.companyId)).filter((r) => r.kind === 'cogs_reversal' || r.kind === 'customer_refund');
+    expect(touched.map((r) => [r.kind, r.amount])).toEqual([
       ['cogs_reversal', '60000.00'],
       ['customer_refund', '-100000.00'],
     ]);

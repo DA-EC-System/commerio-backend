@@ -1,7 +1,19 @@
 // Yêu cầu trả: xem và thao tác (Documents/21 §20, §20.1; 25 §9). Thao tác trên yêu cầu từ sàn gọi sàn ngoài giao dịch
 // (qua `ctx.marketplaceReturns` do channel tiêm) rồi mới ghi theo `version`, như huỷ đơn sàn (`cancel.ts`).
 import { Decimal } from 'decimal.js';
-import { assertTransition, findAccountSummaries, getStatusHistory, publishEvent, recordAudit, recordTransition } from '../../../core/index.ts';
+import {
+  assertTransition,
+  attachmentProblem,
+  attachmentsOf,
+  confirmUploads,
+  fileLinks,
+  findAccountSummaries,
+  getStatusHistory,
+  publishEvent,
+  recordAudit,
+  recordTransition,
+  replaceAttachments,
+} from '../../../core/index.ts';
 import { countOpenUnmatchedParcels } from '../../fulfillment/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
@@ -101,7 +113,7 @@ export async function returnView(ctx: SalesContext, row: ReturnRow, opts: ViewOp
           }
         : null,
     rejectReason: row.rejectReasonId ? { id: row.rejectReasonId, label: row.rejectReasonLabel ?? '' } : null,
-    attachments: [],
+    attachments: (await attachmentsOf({ type: 'return_requests', id: row.id })).map(({ fileId, name, url, contentType }) => ({ fileId, name, url, contentType })),
   };
 }
 
@@ -175,7 +187,15 @@ export async function updateReturnShown(row: ReturnRow, patch: ReturnPatch): Pro
  */
 export async function applyReturnStep(
   row: ReturnRow,
-  step: { action: ReturnAction; to: ReturnStatus; actorId: string | null; reason?: string | null; source?: 'user' | 'system' | 'marketplace' },
+  step: {
+    action: ReturnAction;
+    to: ReturnStatus;
+    actorId: string | null;
+    reason?: string | null;
+    source?: 'user' | 'system' | 'marketplace';
+    /** Thêm vào `after` của nhật ký bước (vd tệp minh chứng, URL ảnh trên sàn, #437). */
+    audit?: Record<string, unknown>;
+  },
   patch: ReturnPatch = {},
 ): Promise<boolean> {
   const closeResult = CLOSE_RESULT[step.action];
@@ -212,7 +232,7 @@ export async function applyReturnStep(
       entityId: row.id,
       label: row.code,
       before: { code: row.code, status: row.status },
-      after: { code: row.code, status: step.to, action: step.action, ...(step.reason && { reason: step.reason }) },
+      after: { code: row.code, status: step.to, action: step.action, ...(step.reason && { reason: step.reason }), ...step.audit },
     });
   }
   if (refunds) {
@@ -281,22 +301,42 @@ export async function actOnReturn(ctx: SalesContext, actor: Actor, id: string, a
     reason = reason ?? found.label;
   }
   const { to } = assertTransition(returnMachine, row.status, action, { actor, record: { source: row.source, kind: row.kind }, reason, view });
+  // Ảnh minh chứng (#437): kiểm tệp trước khi báo sàn; gắn vào yêu cầu cùng giao dịch ghi bước.
+  const fileIds = action === 'reject' ? (input.attachmentIds ?? []) : [];
+  const files = fileIds.length ? await evidenceLinks(actor.companyId, fileIds) : [];
+  let platformImages: string[] = [];
   if (send) {
     const externalLineIds = loaded.lines.flatMap((l) => (l.externalLineId ? [l.externalLineId] : []));
-    await marketplaceOf(ctx).decide(actor.companyId, row.shopId!, row.externalReturnId!, externalLineIds, send, {
+    ({ platformImages } = await marketplaceOf(ctx).decide(actor.companyId, row.shopId!, row.externalReturnId!, externalLineIds, send, {
       ...(rejectReason && { reasonId: rejectReason.id }),
       ...(input.comment && { comment: input.comment }),
       kind: row.kind,
-    });
+      ...(files.length && { images: files.map(({ name, url, contentType }) => ({ name, url, contentType })) }),
+    }));
   }
   return withCompany(actor.companyId, async () => {
     const fresh = (await findReturn(row.id, { lock: true }))!;
     if (fresh.version !== row.version) throw conflict(await returnView(ctx, fresh, opts));
     const patch: ReturnPatch = rejectReason ? { rejectReasonId: rejectReason.id, rejectReasonLabel: rejectReason.label } : {};
-    if (!(await applyReturnStep(fresh, { action, to, actorId: actor.accountId, reason }, patch))) {
+    const audit = fileIds.length ? { attachmentIds: fileIds, ...(platformImages.length && { platformImages }) } : undefined;
+    if (!(await applyReturnStep(fresh, { action, to, actorId: actor.accountId, reason, ...(audit && { audit }) }, patch))) {
       throw conflict(await returnView(ctx, (await findReturn(row.id))!, opts));
     }
+    if (fileIds.length) await replaceAttachments({ type: 'return_requests', id: row.id }, fileIds, actor.accountId);
     return returnView(ctx, fresh, opts);
+  });
+}
+
+/**
+ * Tệp minh chứng của bước từ chối: xác nhận đã tải xong (ngoài giao dịch), kiểm như mọi tệp đính kèm, trả link ký sẵn
+ * để channel đưa ảnh lên sàn. Lỗi tệp là 422 ở ô `attachmentIds` (§20.1).
+ */
+async function evidenceLinks(companyId: string, fileIds: readonly string[]) {
+  await confirmUploads(companyId, fileIds);
+  return withCompany(companyId, async () => {
+    const problem = await attachmentProblem(fileIds);
+    if (problem) throw invalidField('attachmentIds', problem);
+    return fileLinks(fileIds);
   });
 }
 

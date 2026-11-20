@@ -57,7 +57,7 @@ const auth = (r: request.Test) => r.set('Authorization', `Bearer ${company.ceo.t
 const seller = (prefix = '') => `${prefix}${randomUUID().replace(/-/g, '').slice(0, 12)}`;
 
 beforeAll(async () => {
-  company = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany({ optionalModules: [] });
 });
 
 async function connect(sellerId: string, platform = 'lazada') {
@@ -113,7 +113,7 @@ describe('§18.7.1 số liệu trên Shop', () => {
 
   it('D43-11: walletMismatch, walletDiff theo lần đối soát done gần nhất có số; lần failed, lần không có số, lần chạy lại kỳ cũ không đổi cờ (§21.3, #251)', async () => {
     const { shop } = await connect(seller());
-    const other = await createCompany({ optionalModules: ['channel'] });
+    const other = await createCompany({ optionalModules: [] });
     const run = (status: 'done' | 'failed' | 'running', walletDiff: string | null, to: string, companyId = company.companyId) =>
       testPool().query(
         `insert into finance.settlement_batches (company_id, shop_id, source, period_from, period_to, status, wallet_diff)

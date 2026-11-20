@@ -14,6 +14,8 @@ export interface RemoteSkuInput {
   titleEn?: string | null;
   state: string;
   quantity: number;
+  /** Giá gốc trên sàn, chuỗi số (#460). */
+  price?: string | null;
   /** Tiêu đề thiếu nhãn biến thể: dòng đã có thì giữ tiêu đề cũ (review #309 vòng 2 N3). */
   labelMissing?: boolean;
 }
@@ -43,6 +45,8 @@ export async function upsertRemoteSkus(shopId: string, skus: readonly RemoteSkuI
       state: s.state as RemoteSkuRow['state'],
       // Sàn không có tồn âm; số lạ không làm hỏng cả bản sao.
       quantity: Math.max(0, Math.trunc(s.quantity)),
+      // Giá lạ (không phải số không âm) thì bỏ, không làm hỏng cả bản sao.
+      price: s.price != null && /^\d+(\.\d+)?$/.test(s.price.trim()) ? s.price.trim() : null,
       seenAt,
       labelMissing: s.labelMissing === true,
     }));
@@ -61,6 +65,7 @@ export async function upsertRemoteSkus(shopId: string, skus: readonly RemoteSkuI
             titleEn: sql`excluded.title_en`,
             state: sql`excluded.state`,
             quantity: sql`excluded.quantity`,
+            price: sql`excluded.price`,
             seenAt: sql`excluded.seen_at`,
           },
         });

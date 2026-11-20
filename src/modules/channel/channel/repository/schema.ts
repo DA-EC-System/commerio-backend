@@ -188,6 +188,20 @@ export const outsideChangeKind = channelSchema.enum('outside_change_kind', ['dis
 export const contentSource = channelSchema.enum('listing_content_source', ['app', 'platform']);
 /** Bản sửa nội dung đang chờ sàn duyệt trong lúc listing vẫn bán (#293, Documents/21 §18.3). */
 export const revisionStatus = channelSchema.enum('listing_revision_status', ['auditing', 'failed']);
+/**
+ * Lượt đổi category trên sàn của listing (`apply-category`, commerio-backend#467, Documents/21 §18.5): `queued` đã xếp việc
+ * `channel.category_apply`, chưa xong; `failed` sàn từ chối hoặc hết lượt thử; `mismatch` sàn nhận nhưng đọc lại thấy lệch
+ * SKU, giá, ảnh. `at` là chuỗi ISO lúc ghi trạng thái (lúc xếp việc với `queued`).
+ */
+export interface CategoryChange {
+  status: 'queued' | 'failed' | 'mismatch';
+  toCategoryId: string;
+  toCategoryPath: string | null;
+  code: string | null;
+  message: string | null;
+  attempts: number;
+  at: string;
+}
 
 /**
  * Một SKU trên một gian hàng, đồng thời là bảng ghép SKU sàn → SKU app. Mã sàn trống khi chưa đẩy lần nào.
@@ -231,6 +245,11 @@ export const listings = channelSchema.table(
     stockSyncError: jsonb('stock_sync_error').$type<SyncError>(),
     priceSyncError: jsonb('price_sync_error').$type<SyncError>(),
     lastPushedAt: timestamp('last_pushed_at', { withTimezone: true }),
+    /**
+     * Lần sàn nhận giá app đẩy gần nhất (#360). So giá sàn bị sửa ngoài app chờ 15 phút sau mốc này; không dùng
+     * `last_pushed_at` vì lần đẩy tồn cũng ghi mốc đó, SKU đổi tồn mỗi chu kỳ sẽ không bao giờ được so giá.
+     */
+    lastPricePushedAt: timestamp('last_price_pushed_at', { withTimezone: true }),
     /** Ảnh đã đưa lên sàn (URL trên sàn), dùng lại cho lần đẩy sau. */
     externalImageUrls: text('external_image_urls').array(),
     listedPrice: money('listed_price'),
@@ -268,6 +287,11 @@ export const listings = channelSchema.table(
     revisionStatus: revisionStatus('revision_status'),
     revisionRejectReason: text('revision_reject_reason'),
     revisionAt: timestamp('revision_at', { withTimezone: true }),
+    /**
+     * Lượt đổi category trên sàn (`categoryChange`, commerio-backend#467): `{ status, toCategoryId, toCategoryPath, code,
+     * message, attempts, at }`, null khi không có hoặc sàn đã nhận mà không lệch (trạng thái duyệt ở `revision_*`). Xoá khi gỡ.
+     */
+    categoryChange: jsonb('category_change').$type<CategoryChange>(),
     /** Mặc định `platform` (không rõ nguồn thì không ghi đè nội dung người bán); mọi chỗ tạo listing ghi rõ giá trị. */
     contentSource: contentSource('content_source').notNull().default('platform'),
     /**
@@ -340,6 +364,11 @@ export const listings = channelSchema.table(
       'listings_remote_title',
       sql`(${t.remoteTitleAtMatch} is not null or (${t.remoteTitleEnAtMatch} is null and ${t.remoteTitleMatchedAt} is null))
         and (${t.remoteTitleChangedAt} is null or ${t.remoteTitleMatchedAt} is not null)`,
+    ),
+    // Gỡ là trạng thái cuối: lượt đổi category không còn đối tượng (#467).
+    check(
+      'listings_category_change',
+      sql`${t.categoryChange} is null or (${t.status} <> 'delisted' and ${t.categoryChange} ->> 'status' in ('queued', 'failed', 'mismatch'))`,
     ),
     check('listings_reject_reason', sql`${t.status} <> 'rejected' or ${t.rejectReason} is not null`),
     check('listings_push_attempts', sql`${t.pushAttempts} >= 0`),
@@ -481,7 +510,7 @@ export const productSpecs = channelSchema.table(
   ],
 );
 
-export type PriceCalcTrigger = 'push' | 'target_changed' | 'config_activated';
+export type PriceCalcTrigger = 'push' | 'target_changed' | 'config_activated' | 'cost';
 export const priceCalcStatus = channelSchema.enum('price_calc_status', ['pending_confirm', 'confirmed', 'pushed', 'superseded']);
 
 /**
@@ -514,7 +543,10 @@ export const priceCalculations = channelSchema.table(
     netReceived: money('net_received').notNull(),
     marginPct: numeric('margin_pct', { precision: 7, scale: 2 }),
     belowFloor: boolean('below_floor'),
-    /** Vì sao có lần tính: đẩy lần đầu, đổi giá muốn bán, kích hoạt cấu hình (đổi giá vốn không tạo lần tính). */
+    /**
+     * Vì sao có lần tính: đẩy lần đầu, đổi giá muốn bán, kích hoạt cấu hình, giá vốn tăng làm giá đang bán dưới giá thấp
+     * nhất (`cost`, #225: `target_net` là max(giá muốn bán, giá thấp nhất làm tròn lên đồng)).
+     */
     trigger: text('trigger').$type<PriceCalcTrigger>().notNull(),
     status: priceCalcStatus('status').notNull().default('pending_confirm'),
     confirmedBy: uuid('confirmed_by'),
@@ -528,7 +560,7 @@ export const priceCalculations = channelSchema.table(
     check('price_calculations_floor', sql`not ${t.belowFloor} or ${t.status} in ('pending_confirm', 'superseded')`),
     check('price_calculations_confirmed', sql`${t.status} not in ('confirmed', 'pushed') or ${t.confirmedBy} is not null`),
     check('price_calculations_cost_floor', sql`(${t.cost} is null) = (${t.belowFloor} is null)`),
-    check('price_calculations_trigger', sql`${t.trigger} in ('push', 'target_changed', 'config_activated')`),
+    check('price_calculations_trigger', sql`${t.trigger} in ('push', 'target_changed', 'config_activated', 'cost')`),
     uniqueIndex('price_calculations_one_pending').on(t.shopId, t.variantId).where(sql`${t.status} = 'pending_confirm'`),
   ],
 );
@@ -581,6 +613,11 @@ export const remoteSkus = channelSchema.table(
     titleEn: text('title_en'),
     state: text('state').notNull().$type<'review' | 'live' | 'rejected' | 'hold' | 'inactive'>(),
     quantity: integer('quantity').notNull(),
+    /**
+     * Giá gốc trên sàn lúc đọc (`RemoteSku.price`: Lazada `skus[].price`, TikTok `tax_exclusive_price`), để hộp ghép so với
+     * giá app (#460). null khi sàn không trả hoặc bản sao đọc trước #460.
+     */
+    price: money('price'),
     /** Lần gần nhất đọc thấy SKU này trên sàn. */
     seenAt: timestamp('seen_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -588,6 +625,7 @@ export const remoteSkus = channelSchema.table(
     uniqueIndex('remote_skus_shop_external_sku_uq').on(t.shopId, t.externalSkuId),
     check('remote_skus_state', sql`${t.state} in ('review', 'live', 'rejected', 'hold', 'inactive')`),
     check('remote_skus_quantity', sql`${t.quantity} >= 0`),
+    check('remote_skus_price', sql`${t.price} >= 0`),
   ],
 );
 

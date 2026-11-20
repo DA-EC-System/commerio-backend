@@ -14,6 +14,12 @@ export async function insertCompany(input: { name: string; taxCode: string }): P
   return row!.id;
 }
 
+/** Mã số thuế (dạng chuẩn) đã thuộc một công ty chưa (#459). */
+export async function taxCodeExists(taxCode: string): Promise<boolean> {
+  const rows = await getDb().select({ id: companies.id }).from(companies).where(eq(companies.taxCode, taxCode)).limit(1);
+  return rows.length > 0;
+}
+
 export async function insertModules(
   companyId: string,
   codes: readonly ModuleCode[],
@@ -52,14 +58,14 @@ export async function enabledModuleCodes(companyId: string): Promise<ModuleCode[
 export interface CompanyProfileRow {
   id: string;
   name: string;
-  taxCode: string;
+  taxCode: string | null;
   address: string | null;
   responsibleName: string | null;
   responsibleAddress: string | null;
   version: number;
 }
 
-export type CompanyProfilePatch = Partial<Pick<CompanyProfileRow, 'address' | 'responsibleName' | 'responsibleAddress'>>;
+export type CompanyProfilePatch = Partial<Pick<CompanyProfileRow, 'taxCode' | 'address' | 'responsibleName' | 'responsibleAddress'>>;
 
 const profileColumns = {
   id: companies.id,
@@ -70,6 +76,19 @@ const profileColumns = {
   responsibleAddress: companies.responsibleAddress,
   version: companies.version,
 };
+
+/**
+ * Mã số thuế này từng bị quản trị nền tảng gỡ khỏi chính công ty này chưa (#459): đọc dòng nhật ký `release_tax_code`
+ * (`core.audit_logs`, cùng schema `core`).
+ */
+export async function wasTaxCodeReleasedFrom(companyId: string, taxCode: string): Promise<boolean> {
+  const { rows } = await getDb().execute(sql`
+    select 1 from core.audit_logs
+    where company_id is null and entity_type = 'core.companies' and entity_id = ${companyId}
+      and operation = 'release_tax_code' and before->>'taxCode' = ${taxCode}
+    limit 1`);
+  return rows.length > 0;
+}
 
 export async function findCompanyProfile(id: string): Promise<CompanyProfileRow | undefined> {
   const [row] = await getDb().select(profileColumns).from(companies).where(eq(companies.id, id));

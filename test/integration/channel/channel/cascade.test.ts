@@ -60,7 +60,7 @@ beforeAll(async () => {
     sizeChartRule: null,
     fetchedAt: new Date(),
   });
-  const c = await createCompany({ optionalModules: ['channel'] });
+  const c = await createCompany({ optionalModules: [] });
   ceo = { token: c.ceo.token, companyId: c.companyId };
 });
 

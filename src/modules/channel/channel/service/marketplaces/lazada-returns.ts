@@ -142,6 +142,8 @@ export function toLazadaReturn(item: Row, amount: LazadaAmountReader): RemoteRet
 
 const idList = (ids: readonly string[]) => `[${ids.join(',')}]`;
 
+type Image = { name: string; url: string };
+
 export function lazadaReturnMethods(
   call: Call,
   amount: LazadaAmountReader,
@@ -169,9 +171,17 @@ export function lazadaReturnMethods(
   /**
    * Yêu cầu chỉ hoàn tiền (ReverseOrderOnlyRefundDecide, `/order/reverse/onlyrefund/seller/decide`, đọc 12/11/2026):
    * `action` agreeRefund hoặc startDispute; `reverse_order_item_ids` mỗi lần một dòng; startDispute bắt buộc `comment` và
-   * `image_info_list` (E0109, E0110). App chưa lưu ảnh (#212) nên chưa gửi ảnh: sàn sẽ từ chối tới khi có.
+   * `image_info_list` (E0109, E0110), mẫu `[{"file_url","file_name"}]` (đọc 20/11/2026). Ảnh là URL trên Lazada
+   * (`/image/migrate`, #437).
    */
-  async function decideOnlyRefund(accessToken: string, reverseOrderId: string, lineIds: readonly string[], decision: 'accept' | 'reject' | 'refund', comment?: string) {
+  async function decideOnlyRefund(
+    accessToken: string,
+    reverseOrderId: string,
+    lineIds: readonly string[],
+    decision: 'accept' | 'reject' | 'refund',
+    comment?: string,
+    images: readonly Image[] = [],
+  ) {
     if (decision === 'accept') throw new MarketplaceError('rejected', 'refund_only_request', 'Yêu cầu chỉ hoàn tiền không có bước đồng ý trả hàng');
     if (!lineIds.length) throw new MarketplaceError('rejected', 'return_lines_missing', 'Yêu cầu trả chưa có mã dòng của sàn');
     const action = decision === 'refund' ? 'agreeRefund' : 'startDispute';
@@ -181,7 +191,10 @@ export function lazadaReturnMethods(
         action,
         reverse_order_id: reverseOrderId,
         reverse_order_item_ids: idList([lineId]),
-        ...(action === 'startDispute' && { comment: comment || 'Người bán không đồng ý hoàn tiền' }),
+        ...(action === 'startDispute' && {
+          comment: comment || 'Người bán không đồng ý hoàn tiền',
+          ...(images.length && { image_info_list: JSON.stringify(images.map((i) => ({ file_url: i.url, file_name: i.name }))) }),
+        }),
       });
     }
   }
@@ -215,12 +228,17 @@ export function lazadaReturnMethods(
       }));
     },
     async decideReturn(accessToken, externalReturnId, externalLineIds, decision, opts) {
-      if (opts.kind === 'refund') return decideOnlyRefund(accessToken, externalReturnId, externalLineIds, decision, opts.comment);
+      if (opts.kind === 'refund') return decideOnlyRefund(accessToken, externalReturnId, externalLineIds, decision, opts.comment, opts.images);
       if (decision === 'accept') return update(accessToken, 'agreeReturn', externalReturnId, externalLineIds);
       if (decision === 'refund') return update(accessToken, 'instantRefund', externalReturnId, externalLineIds);
       if (!opts.reasonId) throw new MarketplaceError('rejected', 'reject_reason_required', 'Từ chối cần lý do của sàn');
       // E0109 bắt buộc `comment`; E0111 không từ chối nhiều dòng một lần.
-      const extra = { reason_id: opts.reasonId, comment: opts.comment || 'Người bán từ chối yêu cầu trả' };
+      // `image_info` mẫu `[{"name","url"}]` (đọc 20/11/2026), URL trên Lazada (`/image/migrate`, #437).
+      const extra = {
+        reason_id: opts.reasonId,
+        comment: opts.comment || 'Người bán từ chối yêu cầu trả',
+        ...(opts.images?.length && { image_info: JSON.stringify(opts.images.map((i) => ({ name: i.name, url: i.url }))) }),
+      };
       for (const lineId of externalLineIds) await update(accessToken, 'refuseReturn', externalReturnId, [lineId], extra);
     },
     async confirmReturnReceived(accessToken, externalReturnId, externalLineIds) {

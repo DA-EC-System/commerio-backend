@@ -12,6 +12,8 @@ import {
   CategorySuggestionsView,
   ShopWarehousesView,
   CategorySyncBody,
+  ApplyCategoryBody,
+  ApplyCategoryResult,
   ProductSpecBody,
   ProductSpecParams,
   ProductSpecView,
@@ -26,6 +28,8 @@ import {
   TakeOverContentBody,
   TakeOverContentParams,
   ListingList,
+  ProductListingList,
+  ProductListingsParams,
   ListingParams,
   ListingSyncResult,
   MappingBody,
@@ -35,6 +39,8 @@ import {
   OutsideChangeBody,
   OutsideChangeParams,
   MatchBody,
+  MatchPreview,
+  MatchPreviewQuery,
   RemoteSkuList,
   RemoteSkusQuery,
   OrderPullResult,
@@ -363,6 +369,38 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     },
   });
   registry.registerPath({
+    method: 'post',
+    path: '/products/:productId/specs/:platform/apply-category',
+    summary: 'Đổi category của sản phẩm trên sàn theo spec (commerio-backend#467)',
+    description:
+      'Cần `channel.listing.manage`; nhóm sẽ xếp có listing `contentSource = platform` (sản phẩm người bán tự đăng) thì cần thêm vai trò CEO, không thì 403 `forbidden`. Chọn listing `live`, `hidden` của sản phẩm trên mọi gian hàng của sàn, có `externalProductId`, `externalCategoryId` khác category của spec; mỗi (gian hàng, sản phẩm sàn) một việc nền `channel.category_apply`, không gọi sàn trong request. Listing được xếp có `categoryChange.status = queued`. Việc nền chỉ đổi category và attribute (TikTok: Edit Product dựng từ Get Product), bảng size của app chỉ gửi khi sản phẩm trên sàn chưa có mà category mới bắt buộc. Sản phẩm đang tắt thì tắt lại sau Edit Product (sàn bật lại khi sửa).',
+    security: bearer,
+    request: { params: ProductSpecParams, body: { content: { 'application/json': { schema: ApplyCategoryBody } } } },
+    responses: {
+      202: { description: 'Mỗi dòng một sản phẩm trên sàn; `code = null` là đã xếp việc', ...json(ApplyCategoryResult) },
+      ...auth,
+      404: problemResponse('`not_found`: sản phẩm không có hoặc của công ty khác'),
+      409: problemResponse(
+        '`category_unmapped` (chưa có spec); `spec_incomplete` (`categoryStatus` khác `ok` hoặc `missing` khác rỗng); `version_conflict` kèm `current`; `category_change_in_progress` (còn listing `queued`); `category_in_sync` (không listing nào lệch category); `size_chart_missing` (category mới bắt buộc bảng size mà sản phẩm chưa có)',
+      ),
+      422: problemResponse('`validation_failed`; `marketplace_unsupported` (adapter sàn không hỗ trợ đổi category)'),
+    },
+  });
+  registry.registerPath({
+    method: 'get',
+    path: '/products/:productId/listings',
+    summary: 'Listing của một sản phẩm ở mọi gian hàng chưa ngắt (21 §18.5, #467)',
+    description:
+      'Cần `channel.shop.view`. Mỗi biến thể chưa lưu trữ × mỗi gian hàng chưa `disconnected`, tính như `GET /shops/:id/listings`, thêm `shopId`, `shopName`, `platform`. Xếp theo gian hàng (cũ trước) rồi biến thể. Không gọi sàn.',
+    security: bearer,
+    request: { params: ProductListingsParams },
+    responses: {
+      200: { description: 'Danh sách', ...json(ProductListingList) },
+      ...auth,
+      404: problemResponse('`not_found`: sản phẩm không có hoặc của công ty khác'),
+    },
+  });
+  registry.registerPath({
     method: 'get',
     path: '/shops/:id/listings',
     summary: 'Biến thể đang bán kèm giá chuẩn và listing trên gian hàng (§18.3)',
@@ -413,6 +451,16 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
       409: problemResponse('`shop_not_connected` kèm `current`'),
       429: problemResponse('`remote_skus_retry_later`, có `Retry-After`'),
     },
+  });
+  registry.registerPath({
+    method: 'get',
+    path: '/shops/:id/listings/match-preview',
+    summary: 'Xem trước số sẽ đẩy khi ghép SKU sàn (#460, 21 §18.3)',
+    description:
+      'Cần `channel.listing.match`. Hộp ghép gọi khi người dùng chọn một cặp, trước nút Lưu. Đọc bản sao SKU sàn (tồn, giá gốc, lần đọc thấy gần nhất) và số của app (số có thể bán, giá đang bán sẽ đẩy: giá ghi đè tay của listing hiện có, không thì giá chuẩn), không gọi sàn, không ghi gì. Ghép xong giá app luôn được đẩy (`priceWillPush` false khi chưa có giá chuẩn). Tồn không đẩy khi gian hàng chờ kiểm kê lần đầu (`shop_waiting_opening`, xét trước) hoặc SKU kho chưa có số (`not_counted`, `app.stock` null: chưa nhập, chưa kiểm kê; tồn trên sàn giữ nguyên). Lỗi: 404 gian hàng → 422 `errors.externalSkuId` (SKU không có trong bản sao) → 422 `errors.variantId` (biến thể không thuộc công ty).',
+    security: bearer,
+    request: { params: ShopParams, query: MatchPreviewQuery },
+    responses: { 200: { description: 'Số sàn và số app', ...json(MatchPreview) }, ...onShop },
   });
   registry.registerPath({
     method: 'post',

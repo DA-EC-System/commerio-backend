@@ -55,6 +55,23 @@ Worker gửi thư mã OTP, thư báo người duyệt và thư báo kết quả 
 
 Đã làm trên staging ngày 17/11/2026 với địa chỉ gửi của nhóm.
 
+## Mã thử đăng ký (#459)
+
+E2E trên staging (FE `e2e/be`, Bình ở #191) không đọc được hộp thư, nên dùng mã thử: email thuộc miền thử nhận mã cố định thay cho thư (`Documents/21` mục 2.1). Chỉ đặt ở staging, **không đặt ở production**. Không ghi giá trị vào repo, issue hay PR.
+
+1. Thêm vào `deploy/k8s/overlays/vps/.env` trên VPS:
+   ```
+   APP_ENV=staging
+   REGISTRATION_TEST_EMAIL_DOMAIN=<miền đuôi .test, .invalid hoặc .example>
+   REGISTRATION_TEST_CODE=<6 chữ số>
+   ```
+   Mã **không** dùng `246810`: giá trị đó là mã test ghi công khai trong `vitest.config.ts`. Đặt thiếu một biến, miền sai đuôi, mã không đủ 6 số hoặc `APP_ENV` khác `staging`/`test` thì api, worker không khởi động (`registrationTestIssues`, `src/shared/config/env.ts`).
+2. Áp vào Secret `app-env` như đoạn đầu trang, rồi `kubectl -n commerio rollout restart deploy/api deploy/worker deploy/realtime` (api kiểm cấu hình lúc khởi động, worker ghi mã thử).
+3. Đặt cùng giá trị cho hai secret của repo FE: `E2E_REGISTRATION_TEST_EMAIL_DOMAIN`, `E2E_REGISTRATION_TEST_CODE` (job `e2e-be`).
+4. Kiểm: đăng ký trên staging bằng email thuộc miền thử, nhập mã thử thì vào thẳng công ty; log worker có "lần đăng ký thử: đã đặt mã thử" và không có mã.
+
+Đổi mã thì đổi cả ba chỗ (VPS, hai secret của FE) cùng lúc.
+
 ## Cảnh báo qua email
 
 Prometheus tính các luật ở `deploy/monitoring/rules/alerts.yml` (tiến trình chết, lỗi 5xx, outbox kẹt, SMTP hỏng, VPS đầy đĩa…) và gửi cảnh báo sang Alertmanager (`deploy/k8s/overlays/vps/alertmanager.yaml`). Alertmanager gửi email qua cùng SMTP Brevo ở trên, kèm email "đã hết" khi cảnh báo tự hết.

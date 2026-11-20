@@ -9,7 +9,16 @@ import { accessRouter } from '../../access/index.ts';
 import { staffRouter } from '../../staff/index.ts';
 import * as auth from '../service/auth-service.ts';
 import { loginWithGoogle } from '../service/google.ts';
-import { ChangePasswordBody, GoogleLoginBody, LoginBody, RegisterBody, SelectCompanyBody } from './schemas.ts';
+import { RegistrationRetryLater, resendRegistration, startRegistration, verifyRegistration } from '../service/registration.ts';
+import {
+  ChangePasswordBody,
+  GoogleLoginBody,
+  LoginBody,
+  RegisterBody,
+  RegistrationIdBody,
+  SelectCompanyBody,
+  VerifyRegistrationBody,
+} from './schemas.ts';
 
 /** Refresh token nằm trong cookie HttpOnly, chỉ gửi kèm các đường dẫn /identity (Documents/21 A1). */
 export const REFRESH_COOKIE = 'commerio_refresh';
@@ -46,14 +55,46 @@ const authLimiter = (options: Partial<Options> = {}) =>
 
 /** Số lần đổi mật khẩu lỗi tối đa mỗi 15 phút cho một tài khoản (chặn đoán mật khẩu bằng access token bị lộ). */
 const CHANGE_PASSWORD_LIMIT = 5;
+/** Số lần nhập mã mỗi 15 phút cho một lần đăng ký (nhân `JOIN_RATE_LIMIT_SCALE`). */
+const REGISTRATION_VERIFY_LIMIT = 10;
 
 export function identityRouter(ctx: auth.IdentityContext): Router {
   const router = Router();
 
+  // Đăng ký hai bước (#459, Documents/21 mục 2.1). Không trả 401 ở ba route này.
   router.post('/register', authLimiter(), validate({ body: RegisterBody }), async (_req, res) => {
-    if (!ctx.seedCompanyDefaults) throw new Error('Chưa nối seedCompanyDefaults (src/wiring.ts)');
-    res.status(201).json(await auth.register(body<typeof RegisterBody>(res), ctx.seedCompanyDefaults));
+    res.status(202).json(await startRegistration(body<typeof RegisterBody>(res)));
   });
+
+  router.post('/register/resend', authLimiter(), validate({ body: RegistrationIdBody }), async (_req, res, next) => {
+    try {
+      res.status(202).json(await resendRegistration(body<typeof RegistrationIdBody>(res).registrationId));
+    } catch (err) {
+      if (err instanceof RegistrationRetryLater) res.setHeader('Retry-After', String(err.retryAfterSeconds));
+      next(err);
+    }
+  });
+
+  router.post(
+    '/register/verify',
+    authLimiter(),
+    validate({ body: VerifyRegistrationBody }),
+    // Sau validate: khoá theo lần đăng ký (chốt chặn bền là 5 lần sai mỗi mã trong DB).
+    authLimiter({
+      limit: Math.max(1, Math.round(REGISTRATION_VERIFY_LIMIT * env.JOIN_RATE_LIMIT_SCALE)),
+      keyGenerator: (_req, res) => `registration:${body<typeof VerifyRegistrationBody>(res).registrationId}`,
+    }),
+    async (_req, res) => {
+      if (!ctx.seedCompanyDefaults) throw new Error('Chưa nối seedCompanyDefaults (src/wiring.ts)');
+      const { refreshToken, ...result } = await verifyRegistration(
+        body<typeof VerifyRegistrationBody>(res),
+        ctx.seedCompanyDefaults,
+      );
+      setRefreshCookie(res, refreshToken);
+      res.setHeader('Cache-Control', 'no-store');
+      res.status(201).json(result);
+    },
+  );
 
   router.post('/login', authLimiter(), validate({ body: LoginBody }), async (_req, res) => {
     const { refreshToken, ...result } = await auth.login(body<typeof LoginBody>(res));

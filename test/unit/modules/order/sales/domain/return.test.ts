@@ -92,9 +92,9 @@ describe('syncAction: trạng thái sàn → bước của app (25 §9)', () => 
     // Kho quét nhận trước khi sàn ghi nhận (TikTok còn BUYER_SHIPPED_ITEM, TRA-B04, #364): app đi trước, không bật cờ.
     ['received', 'awaiting_return', null],
     ['closed', 'awaiting_return', 'conflict'],
-    ['refund_only', 'rejected', 'conflict'],
-    // Đã hoàn tiền ngay mà sàn còn REFUND_PENDING (YCT-000033, #436): sàn trễ, không kéo lùi, không bật cờ.
+    // Hoàn tiền, khách giữ hàng: Lazada `instantRefund` ra REFUND_PENDING, ánh xạ thành hàng đang về (LZ-TRA-B05, #364).
     ['refund_only', 'awaiting_return', null],
+    ['refund_only', 'rejected', 'conflict'],
   ] as const)('%s, sàn báo %s → %s', (current, target, action) => {
     expect(syncAction(current, target)).toBe(action);
   });

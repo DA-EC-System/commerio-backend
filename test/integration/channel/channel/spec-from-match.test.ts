@@ -116,7 +116,7 @@ beforeAll(async () => {
     sizeChartRule: null,
     fetchedAt: new Date(),
   });
-  const c = await createCompany({ optionalModules: ['channel'] });
+  const c = await createCompany({ optionalModules: [] });
   companyId = c.companyId;
   const shop = await request(testApp())
     .post('/api/v1/channel/shops/lazada/token')

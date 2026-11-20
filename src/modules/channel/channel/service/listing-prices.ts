@@ -6,6 +6,7 @@ import type { PriceFilterResult } from '../domain/price-filter.ts';
 import type { ListingRow } from '../repository/listings.ts';
 import { findCalculations, pendingCalculations } from '../repository/price-calculations.ts';
 import { evaluatePrices } from './price-inputs.ts';
+import { firstPushCalculations } from './repricing.ts';
 
 export interface ListingPrice {
   price: number | null;
@@ -53,7 +54,19 @@ export async function currentPrices(
   );
 }
 
-/** Giá của từng biến thể trên gian hàng kèm giá chờ, thực nhận, cờ (trang listing). */
+/**
+ * Lần đẩy kế của biến thể sẽ tính giá bộ lọc (cùng điều kiện `firstPush` của `pushListings`) mà lượt đồng bộ không đẩy giá
+ * cho nó: chưa có listing, listing đã gỡ, hoặc `push_failed` chưa có giá ghi đè hay lần tính. `rejected`, `platform_hold`
+ * còn mã sàn nên lượt đồng bộ vẫn đẩy giá đang bán, giữ giá đó.
+ */
+const nextPushFiltered = (l: ListingRow | undefined) =>
+  !l || l.status === 'delisted' || (l.status === 'push_failed' && l.manualPrice === null && l.priceCalcId === null);
+
+/**
+ * Giá của từng biến thể trên gian hàng kèm giá chờ, thực nhận, cờ (trang listing). Biến thể chưa lên sàn hiện giá bộ lọc
+ * mà lần đẩy sẽ đăng (`firstPushCalculations`, cùng hàm với lúc đẩy nên số hiện ra bằng số gửi lên sàn); không tính được
+ * (gian hàng chưa có phí, SKU chưa có giá muốn bán) thì giá chuẩn (bình luận LZ-KB-B01 của #225).
+ */
 export async function listingPrices(
   shopId: string,
   variantIds: readonly string[],
@@ -61,9 +74,20 @@ export async function listingPrices(
   standard: ReadonlyMap<string, Decimal | null>,
 ): Promise<Map<string, ListingPrice>> {
   const byVariant = new Map(rows.filter((l) => l.variantId && l.status !== 'delisted').map((l) => [l.variantId!, l]));
-  const [pending, own] = await Promise.all([pendingCalculations(shopId, [...byVariant.keys()]), currentPrices(variantIds, rows, standard)]);
+  const [pending, own, preview] = await Promise.all([
+    pendingCalculations(shopId, [...byVariant.keys()]),
+    currentPrices(variantIds, rows, standard),
+    firstPushCalculations(
+      shopId,
+      variantIds.filter((id) => nextPushFiltered(byVariant.get(id))),
+    ),
+  ]);
+  for (const [id, calc] of preview) {
+    const price = Number(calc.roundedPrice);
+    own.set(id, { price, priceSource: 'shop', shopPrice: price });
+  }
   const listedPrices = new Map(
-    [...byVariant.keys()].flatMap((id) => {
+    [...new Set([...byVariant.keys(), ...preview.keys()])].flatMap((id) => {
       const p = own.get(id)?.price;
       return p == null ? [] : [[id, String(p)] as const];
     }),

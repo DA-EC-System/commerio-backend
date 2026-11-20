@@ -145,6 +145,10 @@ export const Shop = z
       }),
     pendingJobs: z.number().int(),
     listingCount: z.number().int().meta({ description: 'Số listing còn trên sàn' }),
+    categoryChangeIssues: z.number().int().meta({
+      description:
+        'Số listing của gian hàng có `categoryChange.status` là `failed` hoặc `mismatch` (21 §18.5, §18.7.2, commerio-backend#467); nhãn "Đổi category trên sàn chưa xong"',
+    }),
     pendingOrderCount: z.number().int().meta({
       description: 'Số đơn của gian hàng chưa `completed` hoặc `cancelled`, cùng cách đếm với `openOrders` của ngắt (21 §18.7.1)',
     }),
@@ -347,6 +351,24 @@ const pendingRevision = z
       'Bản sửa nội dung chờ sàn duyệt trong lúc listing vẫn bán (21 §18.3, #293); `failed` kèm lý do sàn ghi. Null khi không có',
   });
 
+const categoryChange = z
+  .object({
+    status: z.enum(['queued', 'failed', 'mismatch']),
+    toCategoryId: z.string(),
+    toCategoryPath: z.string().nullable(),
+    code: z.string().nullable(),
+    message: z.string().nullable(),
+    attempts: z.number().int(),
+    at: iso,
+  })
+  .strict()
+  .nullable()
+  .meta({
+    id: 'ListingCategoryChange',
+    description:
+      'Lượt đổi category trên sàn (`apply-category`, 21 §18.5, commerio-backend#467): `queued` đã xếp việc, chưa xong (FE gọi lại như `pushing`); `failed` sàn từ chối hoặc hết lượt thử (`code` `marketplace_rejected`, `marketplace_unavailable`, `shop_not_connected`…, `message` là câu của sàn); `mismatch` sàn nhận nhưng đọc lại lệch SKU, giá, ảnh (`message` liệt kê). Sàn nhận và không lệch thì null (trạng thái duyệt ở `pendingRevision`); `failed`, `mismatch` giữ tới lần `apply-category` sau',
+  });
+
 const pendingMapping = z
   .object({
     variantId: z.uuid().nullable().meta({ description: 'Biến thể xin ghép; null là "không quản tồn"' }),
@@ -396,6 +418,7 @@ export const ChannelListing = z
       description:
         'Ai tạo nội dung (tên, mô tả, ảnh) của sản phẩm trên sàn (#399): `app` do app đẩy tạo; `platform` do người bán tạo rồi ghép. Đẩy lại listing `platform` chỉ bật lại SKU và đẩy giá, tồn; ghi nội dung Commerio lên bằng `take-over-content` (CEO)',
     }),
+    categoryChange,
     version: z.number().int(),
   })
   .strict()
@@ -476,6 +499,37 @@ export const MatchBody = z
   })
   .meta({ id: 'ListingMatchInput' });
 
+export const MatchPreviewQuery = z.object({
+  externalSkuId: z.string('Thiếu SKU sàn').trim().min(1, 'Thiếu SKU sàn').max(200),
+  variantId: z.uuid('Biến thể không hợp lệ'),
+});
+
+const money = z.string().meta({ description: 'Chuỗi số VND' });
+export const MatchPreview = z
+  .object({
+    platform: z
+      .object({
+        stock: z.number().int().meta({ description: 'Tồn trên sàn trong bản sao SKU sàn' }),
+        price: money.nullable().meta({ description: 'Giá gốc trên sàn; null khi sàn không trả hoặc bản sao đọc trước #460 (bấm Tải lại)' }),
+        syncedAt: z.iso.datetime({ offset: true }).meta({ description: 'Lần đọc thấy SKU này trên sàn gần nhất' }),
+      })
+      .strict(),
+    app: z
+      .object({
+        stock: z.number().int().nullable().meta({ description: 'Số có thể bán; null khi SKU kho chưa có số (chưa nhập, chưa kiểm kê)' }),
+        price: money.nullable().meta({ description: 'Giá đang bán sẽ đẩy; null khi chưa có giá chuẩn' }),
+      })
+      .strict(),
+    stockWillPush: z.boolean(),
+    stockHeldReason: z
+      .enum(['shop_waiting_opening', 'not_counted'])
+      .nullable()
+      .meta({ description: '`shop_waiting_opening`: gian hàng chờ kiểm kê lần đầu; `not_counted`: SKU kho chưa có số, tồn trên sàn giữ nguyên' }),
+    priceWillPush: z.boolean(),
+  })
+  .strict()
+  .meta({ id: 'ListingMatchPreview' });
+
 export const MappingParams = z.object({ id: z.string(), listingId: z.string(), action: z.enum(['approve', 'reject']) });
 
 export const TakeOverContentParams = z.object({ id: z.string(), listingId: z.string() });
@@ -524,6 +578,14 @@ export const ListingRow = z
     feeWarning: z.enum(['over_50']).nullable().meta({ description: 'Tổng phí và thuế của gian hàng trên 50%' }),
     listing: ChannelListing.nullable(),
     remoteTitleChanged: RemoteTitleChanged,
+    externalCategoryId: z.string().nullable().meta({
+      description: 'Category của listing trên sàn (`listings.external_category_id`, 21 §18.5, commerio-backend#467); null khi chưa có listing hoặc chưa biết category',
+    }),
+    externalCategoryPath: z.string().nullable().meta({
+      description:
+        'Đường dẫn của `externalCategoryId` của listing trong cây category đã đồng bộ (21 §18.5, commerio-backend#467); null khi chưa có listing, listing chưa có category hoặc category chưa có trong cây',
+    }),
+    categoryChange: categoryChange.meta({ description: 'Bằng `listing.categoryChange`; null khi chưa có listing (21 §18.5)' }),
   })
   .strict()
   .meta({ id: 'ListingRow' });
@@ -534,6 +596,11 @@ export const AcknowledgeTitleBody = z
   .meta({ id: 'ListingAcknowledgeTitleInput' });
 
 export const ListingList = z.object({ items: z.array(ListingRow) }).strict().meta({ id: 'ListingList' });
+
+/** Trang sản phẩm (21 §18.5 `GET /channel/products/:productId/listings`, #467). */
+export const ProductListingsParams = z.object({ productId: z.string().max(60) });
+export const ProductListingRow = ListingRow.extend({ shopId: z.uuid(), shopName: z.string(), platform: z.string() }).meta({ id: 'ProductListingRow' });
+export const ProductListingList = z.object({ items: z.array(ProductListingRow) }).strict().meta({ id: 'ProductListingList' });
 
 export const PushResult = z
   .object({
@@ -724,6 +791,10 @@ const platformCategoryShape = {
   path: z.string().meta({ description: 'Tên từ gốc nối " > "' }),
   isLeaf: z.boolean(),
   status: z.enum(['active', 'removed']),
+  pathIds: z.array(z.string()).meta({
+    description:
+      '`externalId` từ gốc tới chính category, cùng thứ tự với `path` (commerio-backend#467); đọc từ cây đã đồng bộ, cha chưa có trong cây thì thiếu phần gốc',
+  }),
 };
 export const PlatformCategory = z.object(platformCategoryShape).strict().meta({ id: 'PlatformCategory' });
 export const PlatformCategoryPage = z
@@ -817,6 +888,34 @@ export const ProductSpecView = z
   })
   .strict()
   .meta({ id: 'ProductSpecView' });
+
+// Đổi category trên sàn (commerio-backend#467, 21 §18.5).
+export const ApplyCategoryBody = z
+  .object({ version: z.number('Thiếu version').int().nonnegative().meta({ description: '`version` của spec' }) })
+  .meta({ id: 'ApplyCategoryInput' });
+export const ApplyCategoryResult = z
+  .object({
+    items: z.array(
+      z
+        .object({
+          shopId: z.uuid(),
+          shopName: z.string(),
+          externalProductId: z.string(),
+          listingIds: z.array(z.uuid()),
+          fromCategoryId: z.string().nullable().meta({ description: 'Category hiện tại trên sàn; null khi chưa biết' }),
+          fromCategoryPath: z.string().nullable(),
+          toCategoryId: z.string(),
+          toCategoryPath: z.string().nullable(),
+          code: z
+            .enum(['shop_not_connected'])
+            .nullable()
+            .meta({ description: 'null là đã xếp việc; `shop_not_connected`: gian hàng không `active` hoặc hết token, không xếp' }),
+        })
+        .strict(),
+    ),
+  })
+  .strict()
+  .meta({ id: 'ApplyCategoryResult' });
 
 // Cấp kế của attribute cascade (#400, Documents/21 §18.5).
 export const CascadeQuery = z.object({
