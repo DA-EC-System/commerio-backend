@@ -144,4 +144,21 @@ describe('uploadImage TikTok', () => {
     const query = Object.fromEntries([...call.url.searchParams].filter(([k]) => k !== 'sign'));
     expect(call.url.searchParams.get('sign')).toBe(signTiktok('/product/202309/images/upload', query, '', 'apps'));
   });
+
+  it.each([
+    ['main', 'MAIN_IMAGE'],
+    ['size_chart', 'SIZE_CHART_IMAGE'],
+    ['evidence', 'DESCRIPTION_IMAGE'],
+  ] as const)('mục đích %s → use_case %s (ảnh minh chứng #476 không chịu giới hạn 300–4000 px của MAIN_IMAGE)', async (purpose, useCase) => {
+    const forms: FormData[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (_input, init) => {
+      forms.push(init!.body as FormData);
+      return new Response(JSON.stringify({ code: 0, message: 'Success', request_id: 'r', data: { uri: 'tos-alisg/abc' } }));
+    });
+    const config = { appKey: 'appk', appSecret: 'apps', serviceId: undefined, apiUrl: 'https://open.test', authUrl: 'https://auth.test' };
+    const methods = tiktokListingMethods(createTiktokClient(config, fetchFn), { image: opts() });
+    const token = packTiktokToken({ token: 'TTP_at', cipher: 'ROW_c', shopId: '749' });
+    await methods.uploadImage(token, `http://img.test:${port}/anh/coc.png`, purpose);
+    expect(forms[0]!.get('use_case')).toBe(useCase);
+  });
 });

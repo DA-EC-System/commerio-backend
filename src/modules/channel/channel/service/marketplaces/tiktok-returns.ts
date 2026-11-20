@@ -316,7 +316,8 @@ export function tiktokReturnMethods(
     },
     async returnReasons(accessToken, externalReturnId, action) {
       // Get Decision Eligibility: lý do theo đúng quyết định sẽ gửi (Reject Return 202606), kèm sàn còn cho quyết không.
-      // Ảnh minh chứng (`images`) chưa gửi tới khi app lưu ảnh (#212), nên không đánh dấu lý do nào cần ảnh.
+      // Get Decision Eligibility không cho biết lý do nào cần ảnh (`available_reject_reasons` chỉ có `name`, `text`, tra
+      // 20/11/2026), nên không đánh dấu lý do nào cần ảnh; ảnh người dùng gửi kèm vẫn được gửi (#476).
       const decision = REJECT_DECISION[action];
       const data = await client.call<{ decisions?: Row[] }>('GET', DECISION_ELIGIBILITY, {
         token: accessToken,
@@ -346,7 +347,10 @@ export function tiktokReturnMethods(
       // Từ chối bắt buộc lý do của Get Decision Eligibility: kiểm trước khi gọi để không tốn lượt.
       if (!opts.reasonId) throw new MarketplaceError('rejected', 'reject_reason_required', 'TikTok bắt buộc chọn lý do khi từ chối yêu cầu trả');
       const comment = opts.comment || (refundOnly ? 'Người bán không đồng ý hoàn tiền' : 'Người bán từ chối yêu cầu trả');
-      return decide(accessToken, externalReturnId, refundOnly ? 'REJECT_REFUND' : 'REJECT_RETURN', { reject_reason: opts.reasonId, comment }, opts.reasonId);
+      // `images[].image_id` là `uri` của Upload Product Image (Reject Return 202606, tra 20/11/2026); `mime_type`, `width`,
+      // `height` không bắt buộc nên không gửi.
+      const images = opts.images?.length ? { images: opts.images.map((i) => ({ image_id: i.url })) } : {};
+      return decide(accessToken, externalReturnId, refundOnly ? 'REJECT_REFUND' : 'REJECT_RETURN', { reject_reason: opts.reasonId, comment, ...images }, opts.reasonId);
     },
     async approveReturnRefund(accessToken, externalReturnId) {
       // APPROVE_RECEIVED_PACKAGE = người bán đã kiểm hàng và đồng ý hoàn tiền (docv2 Approve Return 202309), nên gửi sau
