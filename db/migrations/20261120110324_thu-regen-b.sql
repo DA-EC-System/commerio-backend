@@ -1,0 +1,1 @@
+ALTER TABLE "insight"."daily_channel_summary" ADD COLUMN "test_b" boolean;
