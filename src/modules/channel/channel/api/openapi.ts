@@ -28,6 +28,8 @@ import {
   TakeOverContentBody,
   TakeOverContentParams,
   ListingList,
+  ProductListingList,
+  ProductListingsParams,
   ListingParams,
   ListingSyncResult,
   MappingBody,
@@ -382,6 +384,20 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
         '`category_unmapped` (chưa có spec); `spec_incomplete` (`categoryStatus` khác `ok` hoặc `missing` khác rỗng); `version_conflict` kèm `current`; `category_change_in_progress` (còn listing `queued`); `category_in_sync` (không listing nào lệch category); `size_chart_missing` (category mới bắt buộc bảng size mà sản phẩm chưa có)',
       ),
       422: problemResponse('`validation_failed`; `marketplace_unsupported` (sàn chưa hỗ trợ đổi category, Lazada)'),
+    },
+  });
+  registry.registerPath({
+    method: 'get',
+    path: '/products/:productId/listings',
+    summary: 'Listing của một sản phẩm ở mọi gian hàng chưa ngắt (21 §18.5, #467)',
+    description:
+      'Cần `channel.shop.view`. Mỗi biến thể chưa lưu trữ × mỗi gian hàng chưa `disconnected`, tính như `GET /shops/:id/listings`, thêm `shopId`, `shopName`, `platform`. Xếp theo gian hàng (cũ trước) rồi biến thể. Không gọi sàn.',
+    security: bearer,
+    request: { params: ProductListingsParams },
+    responses: {
+      200: { description: 'Danh sách', ...json(ProductListingList) },
+      ...auth,
+      404: problemResponse('`not_found`: sản phẩm không có hoặc của công ty khác'),
     },
   });
   registry.registerPath({

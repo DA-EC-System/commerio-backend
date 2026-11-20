@@ -159,6 +159,23 @@ describe('danh sách tồn', () => {
     expect(idsOf((await inv(c.ceo.token).get('/stock?negative=true&belowMin=true')).body)).toEqual([a.variantId]);
   });
 
+  it('productId chỉ trả SKU của sản phẩm đó, gộp AND với lọc khác; sản phẩm công ty khác trả rỗng; sai dạng 422 (#467)', async () => {
+    const c = await createCompany();
+    const a = await createVariant(c.companyId);
+    const b = await createVariant(c.companyId);
+    await receive(c.companyId, a.variantId, 2, 1000);
+    await receive(c.companyId, b.variantId, 2, 1000);
+    await inv(c.ceo.token).put(`/stock/${a.variantId}/reorder-rule`, { minQty: 5, version: 1 });
+
+    expect(idsOf((await inv(c.ceo.token).get(`/stock?productId=${a.productId}`)).body)).toEqual([a.variantId]);
+    expect(idsOf((await inv(c.ceo.token).get(`/stock?productId=${b.productId}&belowMin=true`)).body)).toEqual([]);
+    const other = await createVariant(B.companyId);
+    expect((await inv(c.ceo.token).get(`/stock?productId=${other.productId}`)).body.items).toEqual([]);
+    const bad = await inv(c.ceo.token).get('/stock?productId=abc');
+    expect(bad.status).toBe(422);
+    expect(bad.body.errors).toHaveProperty('productId');
+  });
+
   it('AC2: mọi dòng có drift false; body parse được bằng StockPage', async () => {
     const { c } = await fourVariants();
     const res = await inv(c.ceo.token).get('/stock');
