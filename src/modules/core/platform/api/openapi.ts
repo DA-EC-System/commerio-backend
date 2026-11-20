@@ -12,6 +12,7 @@ import {
   DeadJobPage,
   DeadJobParams,
   LockCompanyBody,
+  ReleaseTaxCodeBody,
   ModuleParams,
   PlatformAuditPage,
   PlatformAuditQuery,
@@ -49,14 +50,15 @@ export function registerPlatformOpenApi(registry: OpenAPIRegistry): void {
     summary: 'Sửa địa chỉ đăng ký, tổ chức chịu trách nhiệm hàng hoá',
     description:
       'Cần `platform.company.manage`. Ô không gửi thì giữ nguyên, `null` = theo tên, địa chỉ công ty. ' +
-      '`effectiveResponsible` là giá trị điền sẵn khi ghép danh mục và lúc đẩy lên sàn.',
+      '`effectiveResponsible` là giá trị điền sẵn khi ghép danh mục và lúc đẩy lên sàn. ' +
+      '`taxCode` chỉ nhập được khi công ty đang không có mã số thuế (#459); không nhận mã vừa bị gỡ khỏi chính công ty.',
     security: bearer,
     request: { body: json(UpdateCompanyProfileBody) },
     responses: {
       200: { description: 'Hồ sơ sau khi sửa', ...json(CompanyProfile) },
       ...companyAuth,
-      409: problemResponse('`version_conflict`, kèm `current`'),
-      422: problemResponse('`validation_failed`'),
+      409: problemResponse('`version_conflict`, kèm `current`; `tax_code_taken`'),
+      422: problemResponse('`validation_failed`; `errors.taxCode` khi sai định dạng, công ty đang có mã, hoặc mã vừa bị gỡ khỏi công ty'),
     },
   });
   registry.registerPath({
@@ -127,6 +129,21 @@ export function registerPlatformOpenApi(registry: OpenAPIRegistry): void {
       },
     });
   }
+  registry.registerPath({
+    method: 'post',
+    path: '/companies/:id/release-tax-code',
+    summary: 'Gỡ mã số thuế của công ty (#459): công ty giữ mã không phải của mình',
+    description: `${adminOnly} Ghi nhật ký nền tảng (\`company.tax_code_released\` kèm lý do), gửi thư báo CEO bằng việc nền.`,
+    security: bearer,
+    request: { params: CompanyParams, body: json(ReleaseTaxCodeBody) },
+    responses: {
+      200: { description: 'Công ty với `taxCode: null`', ...json(Company) },
+      ...adminAuth,
+      404: problemResponse('`not_found`'),
+      409: problemResponse('`invalid_transition` (đã không có mã số thuế), `version_conflict` kèm `current`'),
+      422: problemResponse('`validation_failed`: `errors.reason`, `errors.version`'),
+    },
+  });
   registry.registerPath({
     method: 'get',
     path: '/audit-logs',
