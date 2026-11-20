@@ -868,6 +868,9 @@ export const CategorySyncResult = z
 
 // Spec sàn của sản phẩm (#400 lát 8, Documents/21 §18.5).
 export const ProductSpecParams = z.object({ productId: z.string().max(60), platform: z.string().max(40) });
+export const ProductSpecQuery = z.object({
+  categoryId: z.string().trim().min(1).max(60).optional().meta({ description: 'Leaf chưa lưu cần tính gợi ý ghép trục (#448); không gửi thì theo leaf của spec' }),
+});
 const specValue = z.union([z.string().trim().max(500), z.array(z.string().trim().max(500)).max(50)]);
 export const ProductSpecBody = z
   .object({
@@ -897,9 +900,20 @@ export const ProductSpecSchema = z
   })
   .strict()
   .meta({ id: 'ProductSpec' });
+export const VariantCapabilitiesSchema = z
+  .object({
+    maxAxes: z.number().int().min(0),
+    customAxisName: z.boolean().meta({ description: 'false: sàn từ chối tên trục tự đặt (Lazada)' }),
+    salesRequired: z.array(z.string()).meta({ description: 'Sales attribute bắt buộc phải có trong `axisMap`' }),
+  })
+  .strict()
+  .meta({ id: 'VariantCapabilities' });
 export const ProductSpecView = z
   .object({
     spec: ProductSpecSchema.nullable(),
+    suggestedAxisMap: z.record(z.string(), z.string()).nullable().meta({ description: 'attributeId → mã sales attribute hoặc `__custom`; null khi không có leaf hay chưa có attribute' }),
+    suggestedValueMap: z.record(z.string(), z.string()).nullable().meta({ description: 'attributeValueId → mã lựa chọn của sales attribute' }),
+    variantCapabilities: VariantCapabilitiesSchema.nullable(),
     missing: z.array(
       z
         .object({

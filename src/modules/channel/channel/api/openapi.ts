@@ -20,6 +20,7 @@ import {
   ApplyCategoryResult,
   ProductSpecBody,
   ProductSpecParams,
+  ProductSpecQuery,
   ProductSpecView,
   PlatformCategoriesQuery,
   PlatformCategoryPage,
@@ -345,14 +346,14 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     method: 'get',
     path: '/products/:productId/specs/:platform',
     summary: 'Thông tin sàn của sản phẩm (category, attribute, ánh xạ trục) (#400)',
-    description: 'Cần `channel.shop.view`. `missing` tính theo attribute hiện có của leaf. Chưa có spec: `spec: null`, `missing: []`.',
+    description: 'Cần `channel.shop.view`. `missing` tính theo attribute hiện có của leaf. Chưa có spec: `spec: null`, `missing: []`. `suggestedAxisMap`, `suggestedValueMap`, `variantCapabilities` (#448) tính cho leaf `?categoryId` (chưa lưu) hoặc leaf của spec; null khi không có leaf hay chưa có attribute của leaf.',
     security: bearer,
-    request: { params: ProductSpecParams },
+    request: { params: ProductSpecParams, query: ProductSpecQuery },
     responses: {
       200: { description: 'Spec', ...json(ProductSpecView) },
       ...auth,
       404: problemResponse('`not_found`: sản phẩm không có hoặc của công ty khác'),
-      422: problemResponse('`marketplace_unsupported`'),
+      422: problemResponse('`marketplace_unsupported`; `validation_failed` kèm `errors.categoryId` (category không phải lá đang dùng được)'),
     },
   });
   registry.registerPath({
@@ -368,7 +369,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
       ...auth,
       404: problemResponse('`not_found`'),
       409: problemResponse('`version_conflict` kèm `current`; `shop_not_connected`: TikTok chưa có gian hàng `active` và chưa có bản attribute nào'),
-      422: problemResponse('`validation_failed` kèm `errors` theo ô (`externalCategoryId`, `attributes.<code>`, `axisMap.<attributeId>`, `valueMap.<id>`); `marketplace_unsupported`'),
+      422: problemResponse('`validation_failed` kèm `errors` theo ô (`externalCategoryId`, `attributes.<code>`, `axisMap.<attributeId>` kể cả `__custom` ở sàn không nhận tên trục tự đặt, `valueMap.<id>`); `marketplace_unsupported`'),
       503: problemResponse('`marketplace_unavailable`: sàn lỗi khi chưa có bản attribute nào'),
     },
   });

@@ -73,7 +73,7 @@ describe('spec sàn của sản phẩm', () => {
   it('chưa có spec: spec null, missing rỗng', async () => {
     const res = await get();
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ spec: null, missing: [], remote: null });
+    expect(res.body).toEqual({ spec: null, missing: [], remote: null, suggestedAxisMap: null, suggestedValueMap: null, variantCapabilities: null });
   });
 
   it('AC-7: thiếu attribute bắt buộc 422 theo ô; lần đầu tự lấy attribute leaf (A16); đọc lại vẫn rỗng', async () => {

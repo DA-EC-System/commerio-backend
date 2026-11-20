@@ -63,6 +63,7 @@ import {
   ProductSpecBody,
   ProductListingsParams,
   ProductSpecParams,
+  ProductSpecQuery,
   ShopParams,
   TokenBody,
   ConfirmPriceBody,
@@ -255,9 +256,10 @@ export function channelRouter(ctx: ModuleContext): Router {
     },
   );
 
-  router.get('/products/:productId/specs/:platform', view, validate({ params: ProductSpecParams }), async (_req, res) => {
+  router.get('/products/:productId/specs/:platform', view, validate({ params: ProductSpecParams, query: ProductSpecQuery }), async (_req, res) => {
     const { productId, platform } = validated<typeof ProductSpecParams>(res, 'params');
-    res.json(await getProductSpec(ctx, actor(res).companyId, productId, platform));
+    const { categoryId } = validated<typeof ProductSpecQuery>(res, 'query');
+    res.json(await getProductSpec(ctx, actor(res).companyId, productId, platform, { ...(categoryId !== undefined && { categoryId }) }));
   });
 
   // Gọi sàn lấy attribute leaf (khi thiếu/cũ) ngoài giao dịch; service tự mở `withCompany` (A16).
