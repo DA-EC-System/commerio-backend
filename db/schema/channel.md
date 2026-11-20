@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V117**, 18 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
+Phiên bản **V118**, 18 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
 **Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
 
@@ -131,6 +131,8 @@ Cột:
   Lỗi lần đẩy gần nhất của riêng SKU này (§18.4): `{ code, message, at }`, null khi đã đồng bộ.
 - `price_sync_error` jsonb · null
 - `last_pushed_at` timestamptz · null
+- `last_price_pushed_at` timestamptz · null
+  Lần sàn nhận giá app đẩy gần nhất (#360). So giá sàn bị sửa ngoài app chờ 15 phút sau mốc này; không dùng `last_pushed_at` vì lần đẩy tồn cũng ghi mốc đó, SKU đổi tồn mỗi chu kỳ sẽ không bao giờ được so giá.
 - `external_image_urls` text[] · null: mã bên ngoài (sàn, cổng thanh toán)
   Ảnh đã đưa lên sàn (URL trên sàn), dùng lại cho lần đẩy sau.
 - `listed_price` numeric(18,2) · null
