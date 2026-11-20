@@ -68,7 +68,7 @@ jobs:
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version-file: .nvmrc
-          cache: npm
+          # Không cache npm: job này chạy code nhánh PR trong ngữ cảnh main, cache lưu ra sẽ dùng chung với CI/deploy.
       - name: Lấy script của workflow trước khi chuyển sang nhánh PR
         run: |
           cp -r scripts/ci/migration-regen "$RUNNER_TEMP/bot"
@@ -89,7 +89,7 @@ jobs:
           name: regen-${{ matrix.pr.number }}
           path: ${{ runner.temp }}/out
           retention-days: 7
-          if-no-files-found: ignore
+          if-no-files-found: error
 
   push:
     needs: [list, regen]

@@ -76,9 +76,18 @@ process() {
   local number=$1 branch=$2 sha=$3
   local dir="$ARTIFACTS/regen-$number" body status rc
   body=$(mktemp)
-  # Tải đúng gói regen-<số PR> của run này (download-artifact giải nén phẳng khi chỉ có một gói, dễ lẫn).
-  gh run download "$RUN_ID" -R "$REPO" -n "regen-$number" -D "$dir" > /dev/null 2>&1 || echo "Không tải được gói regen-$number"
-  status=$(cat "$dir/status" 2> /dev/null || echo missing)
+  # Chỉ nhận gói khi job regen của chính PR này thành công: tên gói trong một run là duy nhất, nên nếu code nhánh PR
+  # khác tải trước một gói trùng tên regen-<số PR> thì bước tải gói của job này lỗi và job không thành công.
+  local regen_job
+  regen_job=$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs" --paginate     --jq ".jobs[] | select(.name | startswith(\"regen ($number,\")) | .conclusion" | head -n 1)
+  status=missing
+  if [ "$regen_job" = success ]; then
+    # Tải đúng gói regen-<số PR> của run này (download-artifact giải nén phẳng khi chỉ có một gói, dễ lẫn).
+    gh run download "$RUN_ID" -R "$REPO" -n "regen-$number" -D "$dir" > /dev/null 2>&1 || echo "Không tải được gói regen-$number"
+    status=$(cat "$dir/status" 2> /dev/null || echo missing)
+  else
+    echo "Job regen của #$number kết thúc: ${regen_job:-không thấy}"
+  fi
   echo "::group::#$number ($branch): job regen báo $status"
 
   merge_main "$sha" "$MAIN_SHA" "$RUNNER_TEMP/conflicts-$number"
@@ -173,7 +182,7 @@ process() {
       case $status in
         regen_failed) what="\`npm run db:regen\` lỗi (drizzle-kit hỏi đổi tên cột/bảng cũng tính là lỗi, phải trả lời trên máy)" ;;
         check_failed) what="\`npm run db:ci-check\` không đạt sau khi sinh lại" ;;
-        missing) what="job sinh lại không trả kết quả (lỗi giữa chừng hoặc quá giờ)" ;;
+        missing) what="job sinh lại không thành công hoặc không trả kết quả (lỗi giữa chừng, quá giờ, tải gói lỗi)" ;;
         *) what="job sinh lại báo \`$status\`" ;;
       esac
       {
