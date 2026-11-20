@@ -1,6 +1,6 @@
 {
-  "id": "ce9b22aa-f365-48db-aab1-7289ba59822a",
-  "prevId": "d53cfae5-aa21-4c45-b4bc-40798d3a41b7",
+  "id": "a0f0a7f9-ff88-49d9-923a-95e543e36ade",
+  "prevId": "34ddfdc2-e4fa-47de-9d2b-ef7f3706b737",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -8017,6 +8017,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": false
+        },
+        "test_base": {
+          "name": "test_base",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false
         },
         "created_at": {
           "name": "created_at",
