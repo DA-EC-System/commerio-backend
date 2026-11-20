@@ -113,3 +113,32 @@ export function headObject(config: StorageConfig, target: { bucket: string; key:
 export function setHeadObject(fake: HeadObject | null): void {
   head = fake ?? headFromStore;
 }
+
+/** Ghi tệp lên kho từ máy chủ (#498: ảnh tải từ sàn về), một thao tác Class A của R2. */
+export type PutObject = (
+  config: StorageConfig,
+  target: { bucket: string; key: string; contentType: string; body: Uint8Array },
+) => Promise<void>;
+
+const putToStore: PutObject = async (config, target) => {
+  await s3(config).send(
+    new PutObjectCommand({
+      Bucket: target.bucket,
+      Key: target.key,
+      ContentType: target.contentType,
+      ContentLength: target.body.byteLength,
+      Body: target.body,
+    }),
+  );
+};
+
+let put: PutObject = putToStore;
+
+export function putObject(...args: Parameters<PutObject>): ReturnType<PutObject> {
+  return put(...args);
+}
+
+/** Test thay kho bằng bản giả (không gọi mạng); `null` trả về kho thật. */
+export function setPutObject(fake: PutObject | null): void {
+  put = fake ?? putToStore;
+}

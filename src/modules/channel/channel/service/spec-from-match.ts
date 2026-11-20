@@ -1,4 +1,4 @@
-import { sendJob } from '../../../core/index.ts';
+import { ingestRemoteImage, sendJob } from '../../../core/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { logger } from '../../../../shared/logger.ts';
@@ -7,7 +7,7 @@ import { findListingById, type ListingRow, setListingCategory } from '../reposit
 import { findCategory, leafAttributesOf } from '../repository/platform-categories.ts';
 import { findSpec, insertSpec, recordRemoteFacts } from '../repository/product-specs.ts';
 import { findShopRow } from '../repository/shops.ts';
-import { getAdapter, type MarketplaceAdapter, MarketplaceError, type RemoteProductCategory } from './marketplaces/index.ts';
+import { getAdapter, type MarketplaceAdapter, MarketplaceError, type RemoteProductCategory, type RemoteProductFacts } from './marketplaces/index.ts';
 import { ensureLeaf } from './platform-categories.ts';
 import type { ProductPort } from './product-port.ts';
 import { specProductOf } from './product-specs.ts';
@@ -15,6 +15,8 @@ import { type SpecFromMatchJob, specFromMatchQueue } from './shop-jobs.ts';
 import { shopSession } from './shops.ts';
 
 const BATCH = 200;
+/** Trần ảnh sản phẩm của catalog (P8). */
+const PRODUCT_IMAGE_MAX = 9;
 
 /**
  * Xếp việc dựng spec từ sàn cho các listing vừa ghép có hiệu lực (#400 lát 12). Đi chung giao dịch ghép đang mở: rollback thì
@@ -30,7 +32,9 @@ export async function sendSpecFromMatch(companyId: string, shopId: string, listi
  * lần (ngoài giao dịch) category lá, attribute và trường dùng chung (`productCategory`); luôn ghi `listings.external_category_id`
  * (không tăng `version`). Mỗi sản phẩm Commerio của các listing có biến thể, một giao dịch:
  * - điền trường dùng chung đang trống qua cổng `fillProductFacts` của catalog (xuất xứ đổi từ lựa chọn sàn sang mã ISO, thương
- *   hiệu bỏ thương hiệu mặc định của sàn, mô tả, cân nặng và kích thước theo SKU đã ghép), cả khi spec đã có;
+ *   hiệu bỏ thương hiệu mặc định của sàn, mô tả, cân nặng và kích thước theo SKU đã ghép), cả khi spec đã có; sản phẩm chưa có
+ *   ảnh (bảng size) thì trước giao dịch tải ảnh sàn về kho tệp (`ingestRemoteImage`, tối đa 9 ảnh, mỗi sản phẩm sàn tải một
+ *   lần) rồi truyền id tệp, catalog chỉ gắn khi vẫn còn trống (#498); ảnh lỗi bỏ qua, không làm hỏng ghép;
  * - chưa có spec của sàn thì tạo spec `source = 'match'`, `version = 1` (bản đọc từ sàn, khác bản chép `version = 0`), attribute
  *   đổi sang mã lựa chọn của leaf (`remoteSpecAttributes`, nguồn `match`), mọi trục `__custom`; spec có sẵn giữ nguyên attribute
  *   (người dùng đã chọn);
@@ -70,7 +74,7 @@ export async function runSpecFromMatch(port: ProductPort, job: SpecFromMatchJob)
     }
     if (!remote) continue;
     const { externalCategoryId } = remote;
-    const { products, lacking } = await inCompany(async () => {
+    const { products, lacking, gaps } = await inCompany(async () => {
       await setListingCategory(
         group.map((r) => r.id),
         externalCategoryId,
@@ -81,7 +85,8 @@ export async function runSpecFromMatch(port: ProductPort, job: SpecFromMatchJob)
       for (const v of variants) products.set(v.productId, [...(products.get(v.productId) ?? []), v.id]);
       const lacking = new Set<string>();
       for (const productId of products.keys()) if (!(await findSpec(productId, shop.platform))) lacking.add(productId);
-      return { products, lacking };
+      const gaps = products.size ? ((await port.productMediaGaps?.([...products.keys()])) ?? new Map()) : new Map();
+      return { products, lacking, gaps };
     });
     if (!products.size) continue;
     if (lacking.size && adapter.leafAttributes) {
@@ -95,14 +100,18 @@ export async function runSpecFromMatch(port: ProductPort, job: SpecFromMatchJob)
     const shared = sharedFacts(adapter, remote);
     const skuOfVariant = new Map(group.flatMap((r) => (r.variantId && r.externalSkuId ? [[r.variantId, r.externalSkuId] as const] : [])));
     const measures = new Map(remote.facts.skus.map((s) => [s.externalSkuId, s]));
+    const media = remoteMedia(shop.companyId, remote.facts);
     for (const [productId, variantIds] of products) {
       const variants = variantIds.flatMap((variantId) => {
         const m = measures.get(skuOfVariant.get(variantId) ?? '');
         return m ? [{ variantId, weightG: m.weightG, lengthMm: m.lengthMm, widthMm: m.widthMm, heightMm: m.heightMm }] : [];
       });
       const facts: RemoteSpecFacts = { shopName: shop.shopName, ...shared, variants };
+      const gap = gaps.get(productId);
+      const imageFileIds = gap?.images ? await media.images() : [];
+      const sizeChartFileId = gap?.sizeChart ? await media.sizeChart() : null;
       await inCompany(async () => {
-        await port.fillProductFacts?.(productId, { ...shared, variants }, { shopId: shop.id, shopName: shop.shopName });
+        await port.fillProductFacts?.(productId, { ...shared, variants, imageFileIds, sizeChartFileId }, { shopId: shop.id, shopName: shop.shopName });
         if (lacking.has(productId)) {
           const category = await findCategory(shop.platform, externalCategoryId);
           const leaf: PlatformAttribute[] | null = category?.attributesFetchedAt ? await leafAttributesOf(shop.platform, externalCategoryId) : null;
@@ -129,6 +138,19 @@ export async function runSpecFromMatch(port: ProductPort, job: SpecFromMatchJob)
       });
     }
   }
+}
+
+/** Ảnh, ảnh bảng size của một sản phẩm sàn đưa vào kho tệp khi cần lần đầu, dùng lại cho mọi sản phẩm Commerio cùng ghép (#498). */
+function remoteMedia(companyId: string, facts: RemoteProductFacts) {
+  let images: Promise<string[]> | undefined;
+  let chart: Promise<string | null> | undefined;
+  return {
+    images: () =>
+      (images ??= Promise.all(facts.imageUrls.slice(0, PRODUCT_IMAGE_MAX).map((url) => ingestRemoteImage(companyId, url, 'product_image'))).then((ids) =>
+        ids.filter((id): id is string => id !== null),
+      )),
+    sizeChart: () => (chart ??= facts.sizeChartUrl ? ingestRemoteImage(companyId, facts.sizeChartUrl, 'product_image') : Promise.resolve(null)),
+  };
 }
 
 /**

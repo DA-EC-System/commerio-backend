@@ -38,4 +38,4 @@ export type { ArchiveBlockerSource, CatalogContext } from './service/usage.ts';
 export { productImageUrls, productSizeChartUrls } from './service/product-images.ts';
 // Hệ thống tự khôi phục SKU lưu trữ khi có hàng vào; inventory gọi trong `applyChange` (#204).
 export { restoreArchivedBySystem } from './service/business-status.ts';
-export { fillProductFacts, type FactsSource, type ProductFacts, type VariantFacts } from './service/product-facts.ts';
+export { fillProductFacts, productMediaGaps, type FactsSource, type ProductFacts, type VariantFacts } from './service/product-facts.ts';
