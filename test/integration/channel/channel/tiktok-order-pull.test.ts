@@ -79,7 +79,7 @@ let sku: string;
 const auth = (r: request.Test) => r.set('Authorization', `Bearer ${company.ceo.token}`);
 
 beforeAll(async () => {
-  company = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany({ optionalModules: [] });
   shopExternalId = `74950${Math.floor(Math.random() * 1e12)}`;
   const res = await auth(request(testApp()).post('/api/v1/channel/shops/tiktok/token')).send({ accessToken: `TTP_${randomUUID().slice(0, 12)}` });
   expect(res.status).toBe(201);

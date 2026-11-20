@@ -153,7 +153,7 @@ describe('stream đang mở (AC-1, AC-3, AC-4, AC-5, AC-9, A9)', () => {
   });
 
   it('bảy loại mới tới đúng vai trò, payload parse bằng schema strict (AC4)', async () => {
-    const { companyId, ceo: owner } = await createCompany({ optionalModules: ['channel'] });
+    const { companyId, ceo: owner } = await createCompany({ optionalModules: [] });
     const [ceo, admin, sale, warehouse] = await Promise.all([
       connect(owner.token),
       addMember(companyId, 'admin').then((m) => connect(m.token)),

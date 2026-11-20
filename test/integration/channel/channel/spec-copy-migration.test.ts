@@ -88,7 +88,7 @@ const ruleOf = (c: PoolClient, platform: string, externalId: string) =>
 let a: Awaited<ReturnType<typeof createCompany>>;
 let b: Awaited<ReturnType<typeof createCompany>>;
 beforeAll(async () => {
-  [a, b] = await Promise.all([createCompany({ optionalModules: ['channel'] }), createCompany({ optionalModules: ['channel'] })]);
+  [a, b] = await Promise.all([createCompany({ optionalModules: [] }), createCompany({ optionalModules: [] })]);
 });
 
 describe('migration BE3: chép lần cuối rồi xoá ghép danh mục (#400 AC-S7)', () => {

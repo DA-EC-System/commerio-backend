@@ -23,7 +23,7 @@ afterAll(() => resetAdapters());
 const app = () => request(testApp());
 let co: Awaited<ReturnType<typeof createCompany>>;
 beforeAll(async () => {
-  co = await createCompany({ optionalModules: ['channel'] });
+  co = await createCompany({ optionalModules: [] });
 });
 
 /** Gian hàng `active` mà `return_window_days` null, như gian hàng thiết lập trước khi bắt buộc. */
@@ -112,7 +112,7 @@ describe('PATCH /channel/shops/:id — returnWindowDays (#362)', () => {
     const viewer = await addMember(co.companyId, await createCustomRole(co.companyId, ['channel.shop.view']));
     expect((await patch(id, { version, returnWindowDays: 7 }, viewer.token)).status).toBe(403);
     expect((await patch(id, { returnWindowDays: 0 }, viewer.token)).status, '403 trước validate').toBe(403);
-    const other = await createCompany({ optionalModules: ['channel'] });
+    const other = await createCompany({ optionalModules: [] });
     expect((await patch(id, { version, returnWindowDays: 7 }, other.ceo.token)).status).toBe(404);
     expect((await patch('khong-phai-uuid', { version, returnWindowDays: 7 })).status).toBe(404);
     expect((await patch(randomUUID(), { version, returnWindowDays: 7 })).status).toBe(404);

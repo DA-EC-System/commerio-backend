@@ -34,7 +34,7 @@ afterAll(() => resetAdapters());
 let company: Awaited<ReturnType<typeof createCompany>>;
 
 beforeAll(async () => {
-  company = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany({ optionalModules: [] });
 });
 
 /** Gian hàng `active` mới cho mỗi ca: sự kiện đọc theo gian hàng không lẫn giữa các ca. */

@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V112**, 16 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
+Phiên bản **V114**, 16 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
 **Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
 
@@ -101,7 +101,8 @@ Cột:
 
 - `id` uuid · khoá chính · mặc định `gen_random_uuid()`
 - `name` text · not null
-- `tax_code` text · not null
+- `tax_code` text · null
+  Dạng chuẩn hoá (`domain/tax-code.ts`); null khi quản trị nền tảng gỡ hoặc mã cũ không hợp lệ (#459).
 - `address` text · null
   Hồ sơ công ty (#292): địa chỉ đăng ký; tổ chức chịu trách nhiệm hàng hoá, null = theo tên, địa chỉ công ty.
 - `responsible_name` text · null
@@ -112,6 +113,10 @@ Cột:
 - `created_at` timestamptz · not null · mặc định `now()`
 - `updated_at` timestamptz · not null · mặc định `now()`
 - `version` integer · not null · mặc định `1`
+
+Ràng buộc và index:
+
+- unique (`tax_code`) `companies_tax_code_unique`
 
 Trỏ vào bảng này:
 

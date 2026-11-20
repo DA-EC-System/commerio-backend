@@ -3,20 +3,33 @@
 <!-- Sinh tự động bởi `npm run db:docs` từ db/migrations. Không sửa tay. -->
 
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
-Mới nhất: **V112**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+Mới nhất: **V114**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
 
-## V112 · 20/11/2026 · bo-cot-dang-huy-cu
+## V114 · 20/11/2026 · bo-cot-dang-huy-cu
 
-`db/migrations/20261120090159_bo-cot-dang-huy-cu.sql` · sinh từ schema
+`db/migrations/20261120094957_bo-cot-dang-huy-cu.sql` · sinh từ schema
 
 - `order.orders`: − cột `cancelling`; + check `orders_cancel_pending_open`, `orders_cancel_requested_open`
 
-## V111 · 20/11/2026 · bo-co-dang-huy-cu
+## V113 · 20/11/2026 · bo-co-dang-huy-cu
 
-`db/migrations/20261120090149_bo-co-dang-huy-cu.sql` · viết tay
+`db/migrations/20261120094954_bo-co-dang-huy-cu.sql` · viết tay
 
 - viết tay: dữ liệu
 - Bỏ trigger, hàm giữ cột cờ cũ `cancelling` bằng `cancel_pending` (#417 bước một); dọn hai cờ chờ sàn của đơn đã dừng trước CHECK (#427), viết tay, chạy lại được.
+
+## V112 · 20/11/2026 · mst-unique
+
+`db/migrations/20261120085710_mst-unique.sql` · sinh từ schema
+
+- `core.companies`: đổi cột `tax_code` (thành null); + unique `companies_tax_code_unique`
+
+## V111 · 20/11/2026 · mst-chuan-hoa-kenh-ban-loi
+
+`db/migrations/20261120085707_mst-chuan-hoa-kenh-ban-loi.sql` · viết tay
+
+- viết tay: dữ liệu
+- #459: chuẩn hoá mã số thuế công ty, đặt NULL mã sai định dạng hoặc trùng (giữ công ty cũ nhất), bật Kênh bán (phân hệ lõi) cho mọi công ty.
 
 ## V110 · 20/11/2026 · dong-san-pham-moi
 
