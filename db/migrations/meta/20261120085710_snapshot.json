@@ -1,6 +1,6 @@
 {
-  "id": "019ebd53-8a50-400a-8476-c0486567275d",
-  "prevId": "c74bdf34-1b85-4da1-8d12-3432155072db",
+  "id": "9f10c5cd-0978-4af9-8670-2c9c3889f082",
+  "prevId": "78075c6f-07a2-4b3f-8e67-9cbf0bb0db1e",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -12685,8 +12685,14 @@
           "primaryKey": false,
           "notNull": false
         },
-        "new_product_name": {
-          "name": "new_product_name",
+        "new_parent_product_id": {
+          "name": "new_parent_product_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "new_parent_name": {
+          "name": "new_parent_name",
           "type": "text",
           "primaryKey": false,
           "notNull": false
@@ -12697,8 +12703,8 @@
           "primaryKey": false,
           "notNull": false
         },
-        "new_variant_attrs": {
-          "name": "new_variant_attrs",
+        "new_option_values": {
+          "name": "new_option_values",
           "type": "jsonb",
           "primaryKey": false,
           "notNull": false
@@ -12819,7 +12825,15 @@
       "checkConstraints": {
         "purchase_request_lines_item": {
           "name": "purchase_request_lines_item",
-          "value": "\"product\".\"purchase_request_lines\".\"variant_id\" is not null or \"product\".\"purchase_request_lines\".\"new_product_name\" is not null"
+          "value": "\"product\".\"purchase_request_lines\".\"variant_id\" is not null or \"product\".\"purchase_request_lines\".\"new_parent_product_id\" is not null or \"product\".\"purchase_request_lines\".\"new_parent_name\" is not null"
+        },
+        "purchase_request_lines_one_parent": {
+          "name": "purchase_request_lines_one_parent",
+          "value": "\"product\".\"purchase_request_lines\".\"new_parent_product_id\" is null or \"product\".\"purchase_request_lines\".\"new_parent_name\" is null"
+        },
+        "purchase_request_lines_new_parent_group": {
+          "name": "purchase_request_lines_new_parent_group",
+          "value": "\"product\".\"purchase_request_lines\".\"new_parent_name\" is null or \"product\".\"purchase_request_lines\".\"new_group_id\" is not null"
         },
         "purchase_request_lines_ordered": {
           "name": "purchase_request_lines_ordered",

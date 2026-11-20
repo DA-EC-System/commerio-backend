@@ -45,6 +45,7 @@ export const LOGICAL_REFS: Readonly<Record<string, string>> = {
   'product.product_variants.source_request_line_id': 'product.purchase_request_lines',
   'product.products.size_chart_file_id': 'core.files',
   'product.purchase_request_lines.new_group_id': 'product.product_groups',
+  'product.purchase_request_lines.new_parent_product_id': 'product.products',
   'product.purchase_requests.source_return_id': 'product.supplier_returns',
   'product.stock_document_lines.actual_variant_id': 'product.product_variants',
   'product.supplier_returns.replacement_request_id': 'product.purchase_requests',

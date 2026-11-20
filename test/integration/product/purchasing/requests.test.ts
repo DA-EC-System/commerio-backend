@@ -42,7 +42,7 @@ describe('lập và sửa đề nghị', () => {
       note: 'Hàng thu đông',
       lines: [
         { variantId, quantity: 10, unitCost: 120000 },
-        { newProduct: { name: 'Áo khoác gió', groupId }, quantity: 5, unitCost: 200000 },
+        { newProduct: { parentId: null, parentName: 'Áo khoác gió', groupId, optionValues: {} }, quantity: 5, unitCost: 200000 },
       ],
     });
     expect(res.status).toBe(201);
@@ -73,8 +73,8 @@ describe('lập và sửa đề nghị', () => {
         { variantId: discontinued, quantity: 1, unitCost: 1000 },
         { variantId: A.v1, quantity: 1, unitCost: 1000 },
         { variantId: A.v1, quantity: 2, unitCost: 1000 },
-        { newProduct: { name: taken!.name, groupId: A.groupId }, quantity: 1, unitCost: 1000 },
-        { newProduct: { name: newName(), groupId: randomUUID() }, quantity: 1, unitCost: 1000 },
+        { newProduct: { parentId: null, parentName: taken!.name, groupId: A.groupId, optionValues: {} }, quantity: 1, unitCost: 1000 },
+        { newProduct: { parentId: null, parentName: newName(), groupId: randomUUID(), optionValues: {} }, quantity: 1, unitCost: 1000 },
       ],
     });
     expect(res.status).toBe(422);
@@ -82,7 +82,7 @@ describe('lập và sửa đề nghị', () => {
       supplierId: 'Nhà cung cấp đã ngừng giao dịch',
       'lines.0.variantId': 'SKU đã ngừng nhập',
       'lines.2.variantId': 'Sản phẩm bị lặp',
-      'lines.3.newProduct.name': 'Đã có sản phẩm cùng tên',
+      'lines.3.newProduct.parentName': 'Đã có sản phẩm cùng tên',
       'lines.4.newProduct.groupId': 'Chọn nhóm hàng',
     });
   });
@@ -228,7 +228,7 @@ describe('gửi duyệt và duyệt', () => {
 
   it('duyệt sinh sản phẩm và SKU theo mẫu SKU của công ty cho dòng sản phẩm mới', async () => {
     const name = newName();
-    const r = await createRequest(A.requester, A.supplierId, [{ newProduct: { name, groupId: A.groupId }, quantity: 5, unitCost: 90000 }]);
+    const r = await createRequest(A.requester, A.supplierId, [{ newProduct: { parentId: null, parentName: name, groupId: A.groupId, optionValues: {} }, quantity: 5, unitCost: 90000 }]);
     const body = await runActions([[A.requester, 'submit'], [A.ceo, 'approve']], r.id, r.version);
     const line = body.lines[0]!;
     expect(line.variantId).not.toBeNull();
@@ -243,7 +243,7 @@ describe('gửi duyệt và duyệt', () => {
 
   it('tên sản phẩm mới bị dùng trước lúc duyệt: 422 và không đổi trạng thái', async () => {
     const name = newName();
-    const r = await createRequest(A.requester, A.supplierId, [{ newProduct: { name, groupId: A.groupId }, quantity: 1, unitCost: 1000 }]);
+    const r = await createRequest(A.requester, A.supplierId, [{ newProduct: { parentId: null, parentName: name, groupId: A.groupId, optionValues: {} }, quantity: 1, unitCost: 1000 }]);
     const submitted = await act(A.requester, r.id, 'submit', { version: r.version });
     await testPool().query('insert into product.products (company_id, group_id, name, code) values ($1, $2, $3, $4)', [
       A.companyId,
@@ -253,7 +253,7 @@ describe('gửi duyệt và duyệt', () => {
     ]);
     const res = await act(A.ceo, r.id, 'approve', { version: submitted.body.version });
     expect(res.status).toBe(422);
-    expect(res.body.errors).toEqual({ 'lines.0.newProduct.name': 'Đã có sản phẩm cùng tên' });
+    expect(res.body.errors).toEqual({ 'lines.0.newProduct.parentName': 'Đã có sản phẩm cùng tên. Trả về cho người lập sửa dòng này' });
     expect((await pur(A.ceo).get(`/requests/${r.id}`)).body.status).toBe('pending_approval');
   });
 
