@@ -3,7 +3,7 @@ import { boolean, check, date, index, integer, jsonb, pgSchema, text, timestamp,
 import { approval, approvalCheck, money, timestamps, version } from '../../../../shared/db/columns.ts';
 
 // Mọi bảng của module con `purchasing` khai báo trong schema của module lớn `product` (Documents/19 D1).
-// Số chứng từ cấp từ `product.doc_counters` (inventory). `variant_id`, `group_id` (catalog), người làm (staff)
+// Số chứng từ cấp từ `product.doc_counters` (inventory). `variant_id`, `new_parent_product_id`, `new_group_id` (catalog), người làm (staff)
 // là uuid thường: không đặt khoá ngoại sang module con khác.
 export const purchasingSchema = pgSchema('product');
 
@@ -88,9 +88,14 @@ export const purchaseRequestLines = purchasingSchema.table(
       .notNull()
       .references(() => purchaseRequests.id),
     variantId: uuid('variant_id'),
-    newProductName: text('new_product_name'),
+    /** Dòng sản phẩm mới thuộc sản phẩm cha có sẵn (catalog `products`). */
+    newParentProductId: uuid('new_parent_product_id'),
+    /** Tên sản phẩm cha mới (đã gộp khoảng trắng); các dòng cùng tên (chữ thường) trong đề nghị gộp một cha. */
+    newParentName: text('new_parent_name'),
+    /** Nhóm hàng của cha mới; cha có sẵn thì trống. */
     newGroupId: uuid('new_group_id'),
-    newVariantAttrs: jsonb('new_variant_attrs'),
+    /** Giá trị phân loại theo thứ tự trục, mảng `[{ axis, value }]` (object jsonb tự sắp lại khoá, mất thứ tự trục). */
+    newOptionValues: jsonb('new_option_values').$type<{ axis: string; value: string }[]>(),
     orderedQty: integer('ordered_qty').notNull(),
     receivedQty: integer('received_qty').notNull().default(0),
     defectiveQty: integer('defective_qty').notNull().default(0),
@@ -106,7 +111,9 @@ export const purchaseRequestLines = purchasingSchema.table(
     // Một SKU một dòng trong một đề nghị; dòng sản phẩm mới (`variant_id` trống) không bị chặn.
     unique('purchase_request_lines_request_variant_uq').on(t.requestId, t.variantId),
     index().on(t.variantId),
-    check('purchase_request_lines_item', sql`${t.variantId} is not null or ${t.newProductName} is not null`),
+    check('purchase_request_lines_item', sql`${t.variantId} is not null or ${t.newParentProductId} is not null or ${t.newParentName} is not null`),
+    check('purchase_request_lines_one_parent', sql`${t.newParentProductId} is null or ${t.newParentName} is null`),
+    check('purchase_request_lines_new_parent_group', sql`${t.newParentName} is null or ${t.newGroupId} is not null`),
     check('purchase_request_lines_ordered', sql`${t.orderedQty} > 0`),
     check('purchase_request_lines_excluded_reason', sql`not ${t.excluded} or ${t.excludedReason} is not null`),
     check(
