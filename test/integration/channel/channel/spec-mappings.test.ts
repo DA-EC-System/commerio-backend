@@ -165,6 +165,15 @@ describe('ánh xạ thông số sang sàn', () => {
     expect(res.body.items.map((i: { code: string }) => i.code).sort()).toEqual([MATERIAL, MATERIAL2].sort());
     expect((await request(app).get('/api/v1/channel/platforms/lazada/attribute-catalog?search=a').set(auth(ceo.token))).status).toBe(422);
   });
+
+  it('attribute-catalog: tìm không dấu theo nhãn, theo mã không phân biệt hoa thường', async () => {
+    const find = async (q: string) =>
+      (await request(app).get(`/api/v1/channel/platforms/lazada/attribute-catalog?search=${encodeURIComponent(q)}`).set(auth(ceo.token))).body.items.map(
+        (i: { code: string }) => i.code,
+      );
+    expect(await find(`phong cach ${tag}`)).toEqual([STYLE]);
+    expect(await find(STYLE.toUpperCase())).toEqual([STYLE]);
+  });
 });
 
 describe('tự điền thông số khi đọc và lưu spec', () => {

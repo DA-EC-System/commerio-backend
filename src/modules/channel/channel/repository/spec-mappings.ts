@@ -1,8 +1,8 @@
 // Ánh xạ thông số của công ty sang attribute của sàn (#509, Documents/21 §18.8.1, Documents/19 mục 3.3). Chạy trong
 // `withCompany` của bên gọi (RLS); `platform_category_attributes` dùng chung mọi công ty, chỉ đọc.
-import { and, asc, eq, ilike, inArray, ne, or } from 'drizzle-orm';
+import { and, asc, eq, inArray, ne } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
-import type { AttributeInput, AttributeKind, AttributeOption } from '../domain/product-spec.ts';
+import { type AttributeInput, type AttributeKind, type AttributeOption, normalizePath } from '../domain/product-spec.ts';
 import type { FieldMapping } from '../domain/spec-resolve.ts';
 import { type Marketplace, platformCategoryAttributes, specFieldMappings, specOptionMappings } from './schema.ts';
 
@@ -127,20 +127,16 @@ export async function searchAttributeCatalog(
   kind: AttributeKind | undefined,
   limit = 50,
 ): Promise<CatalogAttribute[]> {
-  const pattern = `%${search.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+  // So không dấu, không phân biệt hoa thường trên nhãn và mã (người dùng gõ "mau" vẫn ra "Màu sắc"): lọc trong bộ nhớ, bảng
+  // attribute leaf của một sàn chỉ vài nghìn dòng (staging 21/11/2026: Lazada 1784, TikTok 216).
+  const needle = normalizePath(search);
   const rows = await getDb()
     .select(attrColumns)
     .from(platformCategoryAttributes)
-    .where(
-      and(
-        eq(platformCategoryAttributes.platform, platform),
-        kind ? eq(platformCategoryAttributes.kind, kind) : undefined,
-        or(ilike(platformCategoryAttributes.label, pattern), ilike(platformCategoryAttributes.code, pattern)),
-      ),
-    )
-    .orderBy(asc(platformCategoryAttributes.code))
-    .limit(limit * 40);
-  return mergeByCode(rows).slice(0, limit);
+    .where(and(eq(platformCategoryAttributes.platform, platform), kind ? eq(platformCategoryAttributes.kind, kind) : undefined))
+    .orderBy(asc(platformCategoryAttributes.code));
+  const hits = rows.filter((r) => normalizePath(r.label).includes(needle) || normalizePath(r.code).includes(needle));
+  return mergeByCode(hits).slice(0, limit);
 }
 
 /** Attribute gộp theo mã cho các mã cho trước (nhãn, lựa chọn để kiểm `PUT` và hiện ở `GET`). */
