@@ -184,7 +184,7 @@ export async function startSalesBackground(ctx: SalesContext): Promise<() => Pro
   // `AppContext` khai bắt buộc; thiếu (ctx dựng tay) thì không khởi động việc nền thay vì chốt đơn theo 7 ngày.
   if (!returnPoliciesOf) throw new Error('startSalesBackground cần ctx.returnPoliciesOf');
   // Kiểm hàng hoàn của yêu cầu trả ghi sổ thì đóng yêu cầu, hoàn tiền (#202, §11.2).
-  registerConsumer('inventory.return_inspected', onReturnInspected, { consumer: 'sales-return-inspected' });
+  registerConsumer('inventory.return_inspected', (event) => onReturnInspected(event, ctx), { consumer: 'sales-return-inspected' });
   // Kiện đổi trạng thái sau khi đơn hoàn tất: tính lại kết quả, bật Cần xử lý khi kiện mở lại (#236 PR 3, 5.5).
   registerConsumer('fulfillment.package_status_changed', onPackageStatusChanged, { consumer: 'sales-package-reopened' });
   registerSalesMetrics();

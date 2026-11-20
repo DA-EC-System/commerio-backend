@@ -245,6 +245,11 @@ export const listings = channelSchema.table(
     stockSyncError: jsonb('stock_sync_error').$type<SyncError>(),
     priceSyncError: jsonb('price_sync_error').$type<SyncError>(),
     lastPushedAt: timestamp('last_pushed_at', { withTimezone: true }),
+    /**
+     * Lần sàn nhận giá app đẩy gần nhất (#360). So giá sàn bị sửa ngoài app chờ 15 phút sau mốc này; không dùng
+     * `last_pushed_at` vì lần đẩy tồn cũng ghi mốc đó, SKU đổi tồn mỗi chu kỳ sẽ không bao giờ được so giá.
+     */
+    lastPricePushedAt: timestamp('last_price_pushed_at', { withTimezone: true }),
     /** Ảnh đã đưa lên sàn (URL trên sàn), dùng lại cho lần đẩy sau. */
     externalImageUrls: text('external_image_urls').array(),
     listedPrice: money('listed_price'),
@@ -505,7 +510,7 @@ export const productSpecs = channelSchema.table(
   ],
 );
 
-export type PriceCalcTrigger = 'push' | 'target_changed' | 'config_activated';
+export type PriceCalcTrigger = 'push' | 'target_changed' | 'config_activated' | 'cost';
 export const priceCalcStatus = channelSchema.enum('price_calc_status', ['pending_confirm', 'confirmed', 'pushed', 'superseded']);
 
 /**
@@ -538,7 +543,10 @@ export const priceCalculations = channelSchema.table(
     netReceived: money('net_received').notNull(),
     marginPct: numeric('margin_pct', { precision: 7, scale: 2 }),
     belowFloor: boolean('below_floor'),
-    /** Vì sao có lần tính: đẩy lần đầu, đổi giá muốn bán, kích hoạt cấu hình (đổi giá vốn không tạo lần tính). */
+    /**
+     * Vì sao có lần tính: đẩy lần đầu, đổi giá muốn bán, kích hoạt cấu hình, giá vốn tăng làm giá đang bán dưới giá thấp
+     * nhất (`cost`, #225: `target_net` là max(giá muốn bán, giá thấp nhất làm tròn lên đồng)).
+     */
     trigger: text('trigger').$type<PriceCalcTrigger>().notNull(),
     status: priceCalcStatus('status').notNull().default('pending_confirm'),
     confirmedBy: uuid('confirmed_by'),
@@ -552,7 +560,7 @@ export const priceCalculations = channelSchema.table(
     check('price_calculations_floor', sql`not ${t.belowFloor} or ${t.status} in ('pending_confirm', 'superseded')`),
     check('price_calculations_confirmed', sql`${t.status} not in ('confirmed', 'pushed') or ${t.confirmedBy} is not null`),
     check('price_calculations_cost_floor', sql`(${t.cost} is null) = (${t.belowFloor} is null)`),
-    check('price_calculations_trigger', sql`${t.trigger} in ('push', 'target_changed', 'config_activated')`),
+    check('price_calculations_trigger', sql`${t.trigger} in ('push', 'target_changed', 'config_activated', 'cost')`),
     uniqueIndex('price_calculations_one_pending').on(t.shopId, t.variantId).where(sql`${t.status} = 'pending_confirm'`),
   ],
 );
@@ -605,6 +613,11 @@ export const remoteSkus = channelSchema.table(
     titleEn: text('title_en'),
     state: text('state').notNull().$type<'review' | 'live' | 'rejected' | 'hold' | 'inactive'>(),
     quantity: integer('quantity').notNull(),
+    /**
+     * Giá gốc trên sàn lúc đọc (`RemoteSku.price`: Lazada `skus[].price`, TikTok `tax_exclusive_price`), để hộp ghép so với
+     * giá app (#460). null khi sàn không trả hoặc bản sao đọc trước #460.
+     */
+    price: money('price'),
     /** Lần gần nhất đọc thấy SKU này trên sàn. */
     seenAt: timestamp('seen_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -612,6 +625,7 @@ export const remoteSkus = channelSchema.table(
     uniqueIndex('remote_skus_shop_external_sku_uq').on(t.shopId, t.externalSkuId),
     check('remote_skus_state', sql`${t.state} in ('review', 'live', 'rejected', 'hold', 'inactive')`),
     check('remote_skus_quantity', sql`${t.quantity} >= 0`),
+    check('remote_skus_price', sql`${t.price} >= 0`),
   ],
 );
 

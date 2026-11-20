@@ -122,6 +122,16 @@ export async function findReturnsWithNote(shopId: string, statuses: readonly Ret
     .limit(limit);
 }
 
+/** Yêu cầu đã đóng của gian hàng chờ báo sàn đồng ý hoàn tiền (`refund_approval = pending`, #392), cũ trước. */
+export async function findReturnsAwaitingRefundApproval(shopId: string, limit: number): Promise<ReturnRow[]> {
+  return getDb()
+    .select()
+    .from(returnRequests)
+    .where(and(eq(returnRequests.shopId, shopId), eq(returnRequests.refundApproval, 'pending')))
+    .orderBy(returnRequests.updatedAt, returnRequests.id)
+    .limit(limit);
+}
+
 /** Ghi theo `version` và trạng thái đang có; false khi bản ghi vừa đổi (bên gọi đọc lại, 409). */
 export async function updateReturnAt(id: string, version: number, from: ReturnStatus, patch: ReturnPatch): Promise<boolean> {
   const rows = await getDb()

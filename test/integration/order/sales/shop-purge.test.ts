@@ -88,6 +88,25 @@ describe('đơn, yêu cầu trả của gian hàng (#398)', () => {
     expect(await count('select count(*) as n from "order".return_request_lines where request_id = any($1)', [s.rOther, s.rManual])).toBe(2);
   });
 
+  it('gỡ ảnh minh chứng gắn vào yêu cầu trả bị xoá (#437), giữ tệp và ảnh của yêu cầu khác', async () => {
+    const s = await seed();
+    const file = randomUUID();
+    await db.query(
+      `insert into core.files (id, company_id, storage_key, file_name, content_type, size_bytes, purpose, uploaded_at)
+       values ($1, $2, $3, 'anh.jpg', 'image/jpeg', 2048, 'attachment', now())`,
+      [file, companyId, `test/${file}.jpg`],
+    );
+    for (const id of [s.r1, s.rOther]) {
+      await db.query(`insert into core.attachments (company_id, file_id, entity_type, entity_id) values ($1, $2, 'return_requests', $3)`, [companyId, file, id]);
+    }
+
+    await withCompany(companyId, async () => purgeShopOrders(await shopOrderRefs(s.s1)));
+
+    expect(await count(`select count(*) as n from core.attachments where entity_type = 'return_requests' and entity_id = any($1)`, [s.r1])).toBe(0);
+    expect(await count(`select count(*) as n from core.attachments where entity_type = 'return_requests' and entity_id = any($1)`, [s.rOther])).toBe(1);
+    expect(await count('select count(*) as n from core.files where id = any($1)', [file])).toBe(1);
+  });
+
   it('gian hàng không có đơn: không xoá gì', async () => {
     const refs = await withCompany(companyId, () => shopOrderRefs(randomUUID()));
 

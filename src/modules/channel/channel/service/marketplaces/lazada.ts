@@ -847,7 +847,7 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
 
   /** SKU của `/product/create`, `/product/update`: tiền chuỗi, gam → kg, mm → cm. */
   const skuPayload = (p: NewProduct) => ({
-    quantity: String(p.quantity),
+    ...(p.quantity !== undefined && { quantity: String(p.quantity) }),
     price: p.price,
     package_weight: String(p.weightG / 1000),
     package_length: String(p.lengthMm / 10),
@@ -1019,6 +1019,8 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
   return {
     // Yêu cầu trả (#202), file riêng `lazada-returns.ts`.
     ...lazadaReturnMethods((apiPath, params) => call(config.apiUrl, apiPath, params, 'GET')),
+    // `/image/migrate` chỉ nhận JPG, PNG (như ảnh sản phẩm); ảnh minh chứng đi qua đó trước khi vào `image_info` (#437).
+    returnImageTypes: ['image/jpeg', 'image/png'],
     ...lazadaPackingMethods((apiPath, params, method) => call(config.apiUrl, apiPath, params, method), {
       download: deps.download ?? ((url) => downloadDocument(url, { trustedOrigin: new URL(config.apiUrl).origin })),
     }),

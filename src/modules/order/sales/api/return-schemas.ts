@@ -90,11 +90,17 @@ export const ReturnRequest = ReturnRequestSummary.extend({
       ofcStatus: z.string().nullable(),
       disputeInProgress: z.boolean(),
       returnTo: z.enum(['warehouse', 'merchant']).nullable(),
+      respondBy: z.iso
+        .datetime()
+        .nullable()
+        .meta({ description: 'Hạn người bán phải trả lời trên sàn (TikTok); null khi sàn không chờ người bán hoặc sàn không báo (Lazada)' }),
     })
     .strict()
     .nullable(),
   rejectReason: z.object({ id: z.string(), label: z.string() }).strict().nullable(),
-  attachments: z.array(z.object({ id: z.uuid() })).meta({ description: 'Chưa lưu tệp đính kèm (#212): luôn rỗng' }),
+  attachments: z
+    .array(z.object({ fileId: z.uuid(), name: z.string(), url: z.string(), contentType: z.string() }).strict())
+    .meta({ description: 'Ảnh minh chứng gửi kèm bước từ chối (#437), như tệp của phiếu nhận: `url` là link ký sẵn 15 phút' }),
 })
   .strict()
   .meta({ id: 'ReturnRequest' });

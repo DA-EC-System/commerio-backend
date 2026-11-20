@@ -116,7 +116,11 @@ export interface NewProduct {
   sizeChartUri?: string;
   sellerSku: string;
   price: string;
-  quantity: number;
+  /**
+   * Tồn gửi kèm. Thiếu là không gửi: đẩy lại sản phẩm đã có trên sàn mà SKU chưa có số hay chưa tin được (#460, #223)
+   * thì giữ tồn trên sàn, lượt đẩy tồn quyết sau. Tạo mới luôn có.
+   */
+  quantity?: number;
   weightG: number;
   lengthMm: number;
   widthMm: number;
@@ -785,11 +789,21 @@ export interface MarketplaceAdapter {
     externalReturnId: string,
     externalLineIds: readonly string[],
     decision: 'accept' | 'reject' | 'refund',
-    /** `kind`: loại yêu cầu (chỉ hoàn tiền đi API riêng ở Lazada); thiếu là `return`. */
-    opts: { reasonId?: string; comment?: string; kind?: 'return' | 'refund' },
+    /**
+     * `kind`: loại yêu cầu (chỉ hoàn tiền đi API riêng ở Lazada); thiếu là `return`. `images`: ảnh minh chứng đã nằm trên
+     * sàn (chuỗi `uploadImage` trả), chỉ có khi sàn khai `returnImageTypes` (#437).
+     */
+    opts: { reasonId?: string; comment?: string; kind?: 'return' | 'refund'; images?: readonly { name: string; url: string }[] },
   ): Promise<void>;
-  /** Báo sàn kho đã nhận hàng trả (#202, §20.1 `confirmDelivery`). */
+  /** Kiểu ảnh sàn nhận làm minh chứng khi từ chối yêu cầu trả (#437); không khai là sàn chưa nhận ảnh qua app. */
+  readonly returnImageTypes?: readonly string[];
+  /** Báo sàn kho đã nhận hàng trả lúc quét, chưa kiểm hàng (#202, §20.1; Lazada `confirmDelivery`). */
   confirmReturnReceived?(accessToken: string, externalReturnId: string, externalLineIds: readonly string[]): Promise<void>;
+  /**
+   * Báo sàn người bán đã kiểm hàng trả và đồng ý hoàn tiền, sau khi phiếu kiểm hàng hoàn ghi sổ (#392; TikTok
+   * `APPROVE_RECEIVED_PACKAGE`). Sàn đã qua bước này (người bán làm trên sàn, sàn tự hoàn khi quá hạn) thì coi là xong.
+   */
+  approveReturnRefund?(accessToken: string, externalReturnId: string): Promise<void>;
   /** Lịch sử đơn ngược phía sàn (#202, §20.1). */
   returnHistory?(
     accessToken: string,
@@ -888,6 +902,11 @@ export interface RemoteReturn extends RemoteAftersale {
   returnTrackingCode: string | null;
   /** Hạn người bán phải trả lời, null khi không chờ người bán. */
   respondBy: Date | null;
+  /**
+   * Sàn báo người bán đã xử lý hàng trả về (TikTok: đồng ý hoàn tiền sau kiểm hàng, hay từ chối nhận hàng), khác với ĐVVC
+   * chỉ giao hàng về (Lazada). App còn chờ hàng về mà sàn báo vậy thì hàng được xử lý ngoài app (#392). Thiếu là false.
+   */
+  sellerHandledReceipt?: boolean;
   /** Trạng thái vận chuyển chiều về của sàn (Lazada `ofc_status`), chỉ để hiện (#202). */
   ofcStatus?: string | null;
   /** Hàng trả về kho sàn hay về người bán (Lazada `return_to_type`/`is_rtm`). */
