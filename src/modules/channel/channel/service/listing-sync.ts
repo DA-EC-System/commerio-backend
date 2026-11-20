@@ -747,7 +747,8 @@ async function checkRevisions(
 function remoteChange(action: ListingAction, rejectReason: string | null | undefined): { patch: ListingPatch; reason: string | null } {
   if (action === 'reject') {
     const reason = rejectReason ?? NO_REASON;
-    return { patch: { rejectReason: reason }, reason };
+    // `live`, `hidden` → `rejected` (#389): bỏ cách ẩn (CHECK `listings_hidden_by`).
+    return { patch: { rejectReason: reason, hiddenBy: null }, reason };
   }
   // CHECK `listings_hidden_by`: chỉ `hidden`, `live` mang `hidden_by`.
   if (action === 'delist') {
