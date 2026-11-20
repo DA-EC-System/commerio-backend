@@ -399,3 +399,30 @@ describe('ảnh, ảnh bảng size từ sàn (#498)', () => {
     expect(hits.sort()).toEqual(['/mat.jpg', '/ok/1.jpg', '/ok/2.jpg']);
   });
 });
+
+describe('runSpecFromMatch: ghép trục theo gợi ý (#448)', () => {
+  it('trục Màu (platformKind color) ra color_family, giá trị Trắng ra mã 31; trục tự đặt mà sàn không nhận tên tự đặt thì bỏ trống', async () => {
+    // Đặt cuối file: thay adapter bằng bản có mã chuẩn và caps của Lazada; afterAll trả lại.
+    registerAdapter(
+      'lazada',
+      fakeAdapter({
+        getSeller: async (accessToken) => ({ externalShopId: accessToken.slice(4), shopName: 'Shop thử', region: 'VN' }),
+        categoriesNeedToken: false,
+        productCategory,
+        productFields: { brand: 'brand', country_origin_hb: 'originCountry' },
+        defaultBrand: 'No Brand',
+        standardSalesAttributes: { color: ['color_family'], size: ['size'] },
+        variantCapabilities: (l) => ({ maxAxes: l.filter((a) => a.kind === 'sales').length, customAxisName: false, salesRequired: [] }),
+      }),
+    );
+    const v = variant([
+      { attributeId: 'A-COLOR2', attributeName: 'Màu', platformKind: 'color', valueId: 'V-WHITE', value: 'Trắng' },
+      { attributeId: 'A-MAT', attributeName: 'Chất liệu', platformKind: null, valueId: 'V-COT', value: 'Cotton' },
+    ]);
+    remote.set('item-axis', { externalCategoryId: leaf, attributes: [] });
+    await run([await listing(v.id, 'item-axis')]);
+    const spec = await specOf(v.productId);
+    expect(spec).toMatchObject({ axis_map: { 'A-COLOR2': 'color_family' }, value_map: { 'V-WHITE': '31' } });
+    expect(spec.axis_map['A-MAT']).toBeUndefined();
+  });
+});

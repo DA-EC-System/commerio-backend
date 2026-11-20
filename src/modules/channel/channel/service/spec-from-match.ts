@@ -2,7 +2,9 @@ import { ingestRemoteImage, sendJob } from '../../../core/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { logger } from '../../../../shared/logger.ts';
-import { CUSTOM_AXIS, isoOfCountryLabel, type PlatformAttribute, remoteSpecAttributes, type RemoteSpecFacts } from '../domain/product-spec.ts';
+import { isoOfCountryLabel, type PlatformAttribute, remoteSpecAttributes, type RemoteSpecFacts } from '../domain/product-spec.ts';
+import { suggestAxes } from '../domain/axis-match.ts';
+import { axisCodesOf } from '../repository/axis-mappings.ts';
 import { findListingById, type ListingRow, setListingCategory } from '../repository/listings.ts';
 import { findCategory, leafAttributesOf } from '../repository/platform-categories.ts';
 import { findSpec, insertSpec, recordRemoteFacts } from '../repository/product-specs.ts';
@@ -117,14 +119,22 @@ export async function runSpecFromMatch(port: ProductPort, job: SpecFromMatchJob)
           const leaf: PlatformAttribute[] | null = category?.attributesFetchedAt ? await leafAttributesOf(shop.platform, externalCategoryId) : null;
           const attributes = remoteSpecAttributes(leaf, remote.attributes);
           const product = specProductOf(await port.variants(undefined, { productIds: [productId] }));
+          // Trục, giá trị theo gợi ý ghép (#448): mã của công ty, mặc định theo platform_kind, __custom nếu sàn nhận tên tự đặt.
+          const { axisMap, valueMap } = suggestAxes({
+            axes: product.axes,
+            leaf,
+            companyCodes: await axisCodesOf(shop.platform),
+            standard: adapter.standardSalesAttributes ?? {},
+            caps: leaf ? (adapter.variantCapabilities?.(leaf) ?? null) : null,
+          });
           const created = await insertSpec({
             companyId: shop.companyId,
             productId,
             platform: shop.platform,
             externalCategoryId,
             attributes,
-            axisMap: Object.fromEntries(product.axes.map((a) => [a.attributeId, CUSTOM_AXIS])),
-            valueMap: {},
+            axisMap,
+            valueMap,
             fieldSources: Object.fromEntries(Object.keys(attributes).map((code) => [code, 'match' as const])),
             source: 'match',
             version: 1,

@@ -3,7 +3,14 @@
 <!-- Sinh tự động bởi `npm run db:docs` từ db/migrations. Không sửa tay. -->
 
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
-Mới nhất: **V124**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+Mới nhất: **V125**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+
+## V125 · 21/11/2026 · ghep-truc-du-lieu
+
+`db/migrations/20261120210826_ghep-truc-du-lieu.sql` · viết tay
+
+- viết tay: dữ liệu
+- Ghép trục theo platform_kind cho spec có sẵn (#448, chỉ dữ liệu, chạy lại được): trục `__custom` của channel.product_specs đổi sang mã sales attribute chuẩn đầu tiên (theo attributes.platform_kind) mà leaf của spec có (kind = 'sales'), mỗi…
 
 ## V124 · 21/11/2026 · anh-xa-truc-rls
 
