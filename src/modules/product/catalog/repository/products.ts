@@ -107,7 +107,7 @@ export async function insertProduct(
   name: string,
   description: string,
   code: string,
-  extras: Pick<ProductExtras, 'originCountry' | 'brand'> = {},
+  extras: Pick<ProductExtras, 'originCountry' | 'brand' | 'imageAttributeId'> = {},
 ) {
   const [row] = await getDb()
     .insert(products)
