@@ -481,7 +481,7 @@ export const productSpecs = channelSchema.table(
   ],
 );
 
-export type PriceCalcTrigger = 'push' | 'target_changed' | 'config_activated';
+export type PriceCalcTrigger = 'push' | 'target_changed' | 'config_activated' | 'cost';
 export const priceCalcStatus = channelSchema.enum('price_calc_status', ['pending_confirm', 'confirmed', 'pushed', 'superseded']);
 
 /**
@@ -514,7 +514,10 @@ export const priceCalculations = channelSchema.table(
     netReceived: money('net_received').notNull(),
     marginPct: numeric('margin_pct', { precision: 7, scale: 2 }),
     belowFloor: boolean('below_floor'),
-    /** Vì sao có lần tính: đẩy lần đầu, đổi giá muốn bán, kích hoạt cấu hình (đổi giá vốn không tạo lần tính). */
+    /**
+     * Vì sao có lần tính: đẩy lần đầu, đổi giá muốn bán, kích hoạt cấu hình, giá vốn tăng làm giá đang bán dưới giá thấp
+     * nhất (`cost`, #225: `target_net` là max(giá muốn bán, giá thấp nhất làm tròn lên đồng)).
+     */
     trigger: text('trigger').$type<PriceCalcTrigger>().notNull(),
     status: priceCalcStatus('status').notNull().default('pending_confirm'),
     confirmedBy: uuid('confirmed_by'),
@@ -528,7 +531,7 @@ export const priceCalculations = channelSchema.table(
     check('price_calculations_floor', sql`not ${t.belowFloor} or ${t.status} in ('pending_confirm', 'superseded')`),
     check('price_calculations_confirmed', sql`${t.status} not in ('confirmed', 'pushed') or ${t.confirmedBy} is not null`),
     check('price_calculations_cost_floor', sql`(${t.cost} is null) = (${t.belowFloor} is null)`),
-    check('price_calculations_trigger', sql`${t.trigger} in ('push', 'target_changed', 'config_activated')`),
+    check('price_calculations_trigger', sql`${t.trigger} in ('push', 'target_changed', 'config_activated', 'cost')`),
     uniqueIndex('price_calculations_one_pending').on(t.shopId, t.variantId).where(sql`${t.status} = 'pending_confirm'`),
   ],
 );

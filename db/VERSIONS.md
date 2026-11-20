@@ -3,7 +3,13 @@
 <!-- Sinh tự động bởi `npm run db:docs` từ db/migrations. Không sửa tay. -->
 
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
-Mới nhất: **V116**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+Mới nhất: **V117**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+
+## V117 · 20/11/2026 · gia-von-de-xuat-gia
+
+`db/migrations/20261120103837_gia-von-de-xuat-gia.sql` · sinh từ schema
+
+- `channel.price_calculations`: đổi check `price_calculations_trigger`
 
 ## V116 · 20/11/2026 · dang-ky-cho-ma-quyen
 
