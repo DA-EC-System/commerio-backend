@@ -19,15 +19,15 @@ const as = (token: string) => ({
 const moduleOf = (body: { code: string; [field: string]: unknown }[], code: string) => body.find((m) => m.code === code)!;
 
 describe('GET /platform/modules', () => {
-  it('CEO thấy đúng năm phân hệ tuỳ chọn, phân hệ chọn lúc đăng ký đang bật kèm người bật', async () => {
+  it('CEO thấy đúng bốn phân hệ tuỳ chọn (Kênh bán là lõi từ #459), phân hệ chọn lúc đăng ký đang bật kèm người bật', async () => {
     const { ceo } = await createCompany({ optionalModules: ['purchasing'] });
     const res = await as(ceo.token).get('/platform/modules');
     expect(res.status).toBe(200);
-    expect(res.body.map((m: { code: string }) => m.code)).toEqual(['purchasing', 'channel', 'inbox', 'assistant', 'report']);
+    expect(res.body.map((m: { code: string }) => m.code)).toEqual(['purchasing', 'inbox', 'assistant', 'report']);
     const purchasing = moduleOf(res.body, 'purchasing');
     expect(purchasing).toMatchObject({ enabled: true, hasData: false, aiConsentAt: null, aiConsentBy: null });
     expect(purchasing.enabledBy).toMatchObject({ email: ceo.email });
-    expect(moduleOf(res.body, 'channel')).toMatchObject({ enabled: false, enabledAt: null, enabledBy: null });
+    expect(moduleOf(res.body, 'inbox')).toMatchObject({ enabled: false, enabledAt: null, enabledBy: null });
   });
 
   it('Admin thiếu platform.module.manage nhận 403 forbidden; không token nhận 401', async () => {
@@ -39,22 +39,22 @@ describe('GET /platform/modules', () => {
 });
 
 describe('PUT /platform/modules/:code', () => {
-  it('bật channel: trả phân hệ và danh sách đang bật, đọc lại thấy bật, có nhật ký cùng giao dịch', async () => {
+  it('bật inbox: trả phân hệ và danh sách đang bật, đọc lại thấy bật, có nhật ký cùng giao dịch', async () => {
     const { companyId, ceo } = await createCompany({ optionalModules: [] });
-    const res = await as(ceo.token).put('/platform/modules/channel', { enabled: true });
+    const res = await as(ceo.token).put('/platform/modules/inbox', { enabled: true });
     expect(res.status).toBe(200);
-    expect(res.body.module).toMatchObject({ code: 'channel', enabled: true, hasData: false });
+    expect(res.body.module).toMatchObject({ code: 'inbox', enabled: true, hasData: false });
+    expect(res.body.enabledModules).toContain('inbox');
     expect(res.body.enabledModules).toContain('channel');
-    expect(res.body.enabledModules).toContain('catalog');
 
-    expect(moduleOf((await as(ceo.token).get('/platform/modules')).body, 'channel').enabled).toBe(true);
+    expect(moduleOf((await as(ceo.token).get('/platform/modules')).body, 'inbox').enabled).toBe(true);
     const log = await testPool().query(
       `select action, before, after from core.audit_logs
        where company_id = $1 and entity_type = 'core.company_modules' order by id`,
       [companyId],
     );
     expect(log.rows).toEqual([
-      { action: 'update', before: { module: 'channel', enabled: false }, after: { module: 'channel', enabled: true } },
+      { action: 'update', before: { module: 'inbox', enabled: false }, after: { module: 'inbox', enabled: true } },
     ]);
   });
 
@@ -106,24 +106,26 @@ describe('PUT /platform/modules/:code', () => {
 
   it('phân hệ lõi hay mã lạ: 404 module_not_found; enabled sai kiểu: 422', async () => {
     const { ceo } = await createCompany();
-    expect((await as(ceo.token).put('/platform/modules/catalog', { enabled: false })).body.type).toBe(
-      '/problems/module_not_found',
-    );
+    for (const core of ['catalog', 'channel']) {
+      expect((await as(ceo.token).put(`/platform/modules/${core}`, { enabled: false })).body.type).toBe(
+        '/problems/module_not_found',
+      );
+    }
     expect((await as(ceo.token).put('/platform/modules/khong-co', { enabled: true })).status).toBe(404);
-    expect((await as(ceo.token).put('/platform/modules/channel', { enabled: 'yes' })).status).toBe(422);
+    expect((await as(ceo.token).put('/platform/modules/inbox', { enabled: 'yes' })).status).toBe(422);
   });
 
   it('Admin không bật được phân hệ: 403 forbidden trước khi kiểm body', async () => {
     const { companyId } = await createCompany();
     const admin = await addMember(companyId, 'admin');
-    expect((await as(admin.token).put('/platform/modules/channel', {})).body.type).toBe('/problems/forbidden');
+    expect((await as(admin.token).put('/platform/modules/inbox', {})).body.type).toBe('/problems/forbidden');
   });
 
   it('hai lần bật cùng lúc: một 200, một 409 module_state_changed, một dòng nhật ký', async () => {
     const { companyId, ceo } = await createCompany({ optionalModules: [] });
     // Phân hệ chưa từng bật thì chưa có dòng để khoá: dựng dòng đang tắt rồi khoá nó.
     await testPool().query(
-      "insert into core.company_modules (company_id, module_code, enabled) values ($1, 'inbox', false)",
+      "insert into core.company_modules (company_id, module_code, enabled) values ($1, 'inbox', false) on conflict do nothing",
       [companyId],
     );
     const results = await raceBehindLock(

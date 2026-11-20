@@ -59,7 +59,7 @@ beforeAll(async () => {
      values ('lazada', $1, 'Áo thun', true, 'Áo > Áo thun', 'ao > ao thun', now()), ('lazada', $2, 'Áo', false, 'Áo', 'ao', now())`,
     [leaf, branch],
   );
-  const c = await createCompany({ optionalModules: ['channel'] });
+  const c = await createCompany({ optionalModules: [] });
   ceo = { token: c.ceo.token, companyId: c.companyId };
   productId = (await createVariant(c.companyId)).productId;
 });
@@ -122,7 +122,7 @@ describe('spec sàn của sản phẩm', () => {
   });
 
   it('AC-S2: sản phẩm công ty khác, id sai dạng: 404', async () => {
-    const other = await createCompany({ optionalModules: ['channel'] });
+    const other = await createCompany({ optionalModules: [] });
     expect((await get(other.ceo.token)).status).toBe(404);
     expect((await put({ externalCategoryId: leaf, attributes: { material: '11' }, version: null }, other.ceo.token)).status).toBe(404);
     expect((await get(ceo.token, 'khong-phai-uuid')).status).toBe(404);

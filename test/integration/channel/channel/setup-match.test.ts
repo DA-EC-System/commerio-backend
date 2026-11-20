@@ -81,7 +81,7 @@ afterAll(() => {
 
 /** Gian hàng `connecting` của công ty đã có gian hàng xong thiết lập (được `push`); `vListed` đã có listing ở gian hàng. */
 async function connectingShop() {
-  const c = await createCompany({ optionalModules: ['channel'] });
+  const c = await createCompany({ optionalModules: [] });
   await testPool().query(
     "insert into channel.shops (company_id, platform, external_shop_id, shop_name, status, order_cutoff_at) values ($1, 'lazada', $2, 'Cũ', 'active', now())",
     [c.companyId, randomUUID()],

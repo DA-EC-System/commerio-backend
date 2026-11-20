@@ -40,7 +40,7 @@ const queued = async () =>
 
 describe('route đồng bộ cây: allowShrink', () => {
   it('người không phải quản trị nền tảng gửi cờ: 403 forbidden, không xếp việc; không gửi cờ thì 202', async () => {
-    const { ceo } = await createCompany({ optionalModules: ['channel'] });
+    const { ceo } = await createCompany({ optionalModules: [] });
     await testPool().query("delete from pgboss.job where name = 'channel.category_sync' and data->>'platform' = 'shopee'");
     const res = await post(ceo.token, { allowShrink: true });
     expect(res.status).toBe(403);
@@ -52,7 +52,7 @@ describe('route đồng bộ cây: allowShrink', () => {
   });
 
   it('quản trị nền tảng gửi cờ: 202, việc mang allowShrink; cờ sai kiểu 422', async () => {
-    const { ceo } = await createCompany({ optionalModules: ['channel'] });
+    const { ceo } = await createCompany({ optionalModules: [] });
     await testPool().query('update core.accounts set is_platform_admin = true where email = $1', [ceo.email]);
     await testPool().query("delete from pgboss.job where name = 'channel.category_sync' and data->>'platform' = 'shopee'");
     expect((await post(ceo.token, { allowShrink: 'yes' })).status).toBe(422);

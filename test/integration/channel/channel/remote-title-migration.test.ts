@@ -29,7 +29,7 @@ async function rolledBack(fn: (c: pg.PoolClient) => Promise<void>) {
 
 describe('dữ liệu cũ cho cờ "Tên trên sàn đã đổi" (#396, AC-6)', () => {
   it('listing chưa gỡ đang ghép lấy tên trong bản sao làm mốc, tên tiếng Anh để lần đọc sau lấy; dòng khác giữ nguyên', async () => {
-    const { companyId } = await createCompany({ optionalModules: ['channel'] });
+    const { companyId } = await createCompany({ optionalModules: [] });
     const { rows } = await testPool().query<{ id: string }>(
       "insert into channel.shops (company_id, platform, external_shop_id, shop_name) values ($1, 'lazada', $2, 'Shop Thử') returning id",
       [companyId, randomUUID()],

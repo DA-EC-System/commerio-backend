@@ -1,6 +1,6 @@
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
-import { registerBody, uniqueEmail } from '../../helpers/company.ts';
+import { registerBody, uniqueEmail, uniqueTaxCode } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
 
@@ -19,7 +19,7 @@ describe('đăng ký trùng email đồng thời (#51)', () => {
         names.map((name) =>
           request(app)
             .post('/api/v1/identity/register')
-            .send(registerBody(email, { company: { name, taxCode: '0312345678' } })),
+            .send(registerBody(email, { company: { name, taxCode: uniqueTaxCode() } })),
         ),
       );
 

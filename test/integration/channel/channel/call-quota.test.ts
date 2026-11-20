@@ -67,7 +67,7 @@ async function setUsed(companyId: string, calls: number) {
 }
 
 beforeAll(async () => {
-  company = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany({ optionalModules: [] });
   const res = await app()
     .post('/api/v1/channel/shops/lazada/token')
     .set('Authorization', `Bearer ${company.ceo.token}`)

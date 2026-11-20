@@ -163,7 +163,7 @@ const accountIdOf = async (email: string) =>
   (await testPool().query<{ id: string }>('select id from core.accounts where email = $1', [email])).rows[0]!.id;
 
 beforeAll(async () => {
-  company = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany({ optionalModules: [] });
   admin = await addMember(company.companyId, 'admin');
   sale = await addMember(company.companyId, 'sale');
   const res = await as(app().post('/api/v1/channel/shops/lazada/token'), company.ceo.token).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });

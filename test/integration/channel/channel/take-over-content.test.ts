@@ -76,7 +76,7 @@ const takeOver = (listingId: string, version: number, token?: string, shop = sho
   auth(app().post(`/api/v1/channel/shops/${shop}/listings/${listingId}/take-over-content`), token).send({ version });
 
 beforeAll(async () => {
-  company = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany({ optionalModules: [] });
   const res = await auth(app().post('/api/v1/channel/shops/lazada/token')).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
   shopId = res.body.shop.id;
   await activateShop(shopId);
@@ -312,7 +312,7 @@ describe('take-over-content (#399)', () => {
 
   it('404: listing của công ty khác, mã sai dạng', async () => {
     const l = await matched();
-    const other = await createCompany({ optionalModules: ['channel'] });
+    const other = await createCompany({ optionalModules: [] });
     const res = await takeOver(l.id, l.version, other.ceo.token);
     expect(res.status).toBe(404);
     expect((await takeOver('khong-phai-uuid', 1)).status).toBe(404);

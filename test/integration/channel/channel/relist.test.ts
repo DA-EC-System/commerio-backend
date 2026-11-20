@@ -40,7 +40,7 @@ const app = () => request(testApp());
 
 /** Gian hàng `active` đã thiết lập có listing `live` theo các SellerSku, rồi ngắt (listing gỡ do ngắt). */
 async function disconnectedShop(skus: string[], unmanaged: { sellerSku: string; approvedBy: string; requestedBy: string }[] = []) {
-  const company = await createCompany({ optionalModules: ['channel'] });
+  const company = await createCompany({ optionalModules: [] });
   const token = `tok-${randomUUID().slice(0, 12)}`;
   const auth = (r: request.Test) => r.set('Authorization', `Bearer ${company.ceo.token}`);
   const res = await auth(app().post('/api/v1/channel/shops/lazada/token')).send({ accessToken: token });
@@ -212,7 +212,7 @@ describe('nối lại gian hàng đã ngắt (#219 A6)', () => {
 
 describe('việc đẩy đang giữ khi mất uỷ quyền (#219 AC-23)', () => {
   it('hai listing của cùng gian hàng bị giữ; nối lại thì cả hai việc chạy lại, không rơi việc nào', async () => {
-    const company = await createCompany({ optionalModules: ['channel'] });
+    const company = await createCompany({ optionalModules: [] });
     const token = `tok-${randomUUID().slice(0, 12)}`;
     const auth = (r: request.Test) => r.set('Authorization', `Bearer ${company.ceo.token}`);
     const shopId = (await auth(app().post('/api/v1/channel/shops/lazada/token')).send({ accessToken: token })).body.shop.id as string;
