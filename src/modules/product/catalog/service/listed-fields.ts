@@ -1,7 +1,7 @@
 // SKU còn listing chưa gỡ thì không xoá trống trường bắt buộc chung (US-SP-03 dòng 7, Documents/25 §5.1, §5.2; review
 // #345): lần đẩy, đồng bộ sau sẽ thiếu số liệu sàn bắt buộc. Trường của SKU (giá muốn bán, cân nặng, ba cạnh) xét listing
 // của chính SKU đó, vì mỗi SKU là một sản phẩm trên sàn; ảnh ở cha dùng cho listing của mọi SKU nên xét mọi SKU của cha.
-// Tên, danh mục, mã SKU không xoá được qua API. Ngưỡng tồn (route của inventory, `minQty: null` ở sửa hàng loạt) chưa chặn.
+// Tên, nhóm hàng, mã SKU không xoá được qua API. Ngưỡng tồn (route của inventory, `minQty: null` ở sửa hàng loạt) chưa chặn.
 // Đọc hiện diện không khoá: listing tạo xen giữa lúc kiểm và lúc ghi thì lọt, cùng loại D10.
 import type { VariantRow } from '../repository/variants.ts';
 import { type CatalogContext, requirePort } from './usage.ts';

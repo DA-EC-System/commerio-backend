@@ -17,14 +17,12 @@ import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
 import { activateShop, fakeAdapter, seedSpecs } from './helpers.ts';
 
-const categoryId = randomUUID();
 const productId = randomUUID();
 const variant = (sku: string, extra: Partial<ListingVariant> = {}): ListingVariant => ({
   id: randomUUID(),
   productId,
   productName: 'Áo thun',
   sku,
-  categoryId,
   attributesLabel: 'Đen / M',
   productCode: 'SP-TEST',
   attributes: [],
@@ -41,7 +39,7 @@ const ok = variant('CMR-OK');
 const noPrice = variant('CMR-NOPRICE');
 const noDims = variant('CMR-NODIMS', { weightG: null });
 // Spec sàn theo sản phẩm cha (#400): sản phẩm khác, danh mục chưa ghép.
-const unmapped = variant('CMR-UNMAPPED', { categoryId: randomUUID(), productId: randomUUID() });
+const unmapped = variant('CMR-UNMAPPED', { productId: randomUUID() });
 const paused = variant('CMR-PAUSED', { businessStatus: 'paused' });
 const archived = variant('CMR-ARCHIVED', { archived: true });
 const all = [ok, noPrice, noDims, unmapped, paused, archived];
@@ -181,8 +179,8 @@ describe('đẩy listing: request chỉ kiểm và xếp việc', () => {
   // Spec chỉ đến từ migration (bản chép `version = 0`), `PUT` spec hay ghép SKU. Ca này không chứng minh việc bỏ chép lười
   // (BE3; bảng ghép cũ đã xoá nên typecheck và schema bảo đảm), chỉ kiểm mã chặn khi thiếu spec và khi spec chép bị đánh changed.
   it('#400: sản phẩm chưa có spec → category_unmapped, không tạo spec; bản chép version 0 bị đồng bộ đánh changed → spec_incomplete', async () => {
-    const first = variant(`CMR-A18-${randomUUID().slice(0, 6)}`, { productId: randomUUID(), categoryId: randomUUID() });
-    const second = variant(`CMR-A18-${randomUUID().slice(0, 6)}`, { productId: first.productId, categoryId: first.categoryId, weightG: null });
+    const first = variant(`CMR-A18-${randomUUID().slice(0, 6)}`, { productId: randomUUID() });
+    const second = variant(`CMR-A18-${randomUUID().slice(0, 6)}`, { productId: first.productId, weightG: null });
     all.push(first, second);
     legacy.add(first.productId);
     catalogImages.set(first.productId, CATALOG);

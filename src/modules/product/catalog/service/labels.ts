@@ -22,7 +22,7 @@ export interface SkuLabels extends ListingPresence {
 /** Trường chung của cha mà bên gọi tự có; ảnh phân loại một phần do `skuLabels` hỏi một lần cho cả lô. */
 export type ParentInput = Omit<ParentFields, 'variantImagesPartial'>;
 
-/** Nhãn cho các SKU (có thể của nhiều sản phẩm); `parentOf` cho trường chung của cha (tên, danh mục, số ảnh). */
+/** Nhãn cho các SKU (có thể của nhiều sản phẩm); `parentOf` cho trường chung của cha (tên, số ảnh). */
 export async function skuLabels(
   ctx: CatalogContext,
   rows: readonly VariantRow[],
@@ -64,7 +64,6 @@ export async function variantReadinessOf(
       readinessOf(
         {
           name: v.productName,
-          categoryId: v.categoryId,
           imageCount: withImage.has(v.productId) ? 1 : 0,
           variantImagesPartial: partial.has(v.productId),
         },

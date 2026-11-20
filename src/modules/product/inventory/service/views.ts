@@ -75,7 +75,7 @@ export function toStockLevel(v: VariantSummary, level: LevelRow | undefined, vie
     productName: v.productName,
     sku: v.sku,
     attributesLabel: attributesLabel(v),
-    category: { id: v.categoryId, name: v.categoryName },
+    group: { id: v.groupId, name: v.groupName },
     onHand,
     reserved,
     locked,

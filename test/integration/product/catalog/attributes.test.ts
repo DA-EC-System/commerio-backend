@@ -1,6 +1,7 @@
+import { randomUUID } from 'node:crypto';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { createCompany } from '../../helpers/company.ts';
-import { type AttributeBody, api, auditOf, createAttribute, createCategory, createProduct, valueId, uniq, archiveSku } from './helpers.ts';
+import { type AttributeBody, api, auditOf, createAttribute, createGroup, createProduct, valueId, uniq, archiveSku } from './helpers.ts';
 
 // Thuộc tính và mã giá trị (UC-CP-01; Documents/21 5.2, 5.3, V21, V24).
 let token: string;
@@ -56,16 +57,21 @@ describe('POST /catalog/attributes', () => {
     expect(res.body.errors['values.1.code']).toBe('Nhập mã');
   });
 
-  it('giá trị trùng (không phân biệt hoa thường), danh sách rỗng, giá trị quá 40 ký tự → 422 (AC-18)', async () => {
+  it('giá trị trùng (không phân biệt hoa thường), danh sách rỗng, tên quá 15 ký tự, giá trị quá 20 ký tự → 422 (AC-18, #447)', async () => {
     const dup = await api(token).post('/attributes', { name: uniq('X'), values: [{ value: 'Đen', code: 'D1' }, { value: 'đen', code: 'D2' }] });
     expect(dup.status).toBe(422);
     expect(dup.body.errors.values).toBe('Có giá trị bị trùng');
     const empty = await api(token).post('/attributes', { name: uniq('X'), values: [] });
     expect(empty.body.errors.values).toBe('Thêm ít nhất một giá trị');
-    const long = await api(token).post('/attributes', { name: uniq('X'), values: [{ value: 'A'.repeat(41) }] });
+    const long = await api(token).post('/attributes', { name: uniq('X'), values: [{ value: 'A'.repeat(21) }] });
+    expect(long.status).toBe(422);
     expect(long.body.errors['values.0.value']).toBeTruthy();
-    const longName = await api(token).post('/attributes', { name: 'A'.repeat(41), values: [{ value: 'A' }] });
+    const longName = await api(token).post('/attributes', { name: 'A'.repeat(16), values: [{ value: 'A' }] });
+    expect(longName.status).toBe(422);
     expect(longName.body.errors.name).toBeTruthy();
+    // Đúng biên thì qua: tên 15 ký tự, giá trị 20 ký tự.
+    const edge = await api(token).post('/attributes', { name: `B${randomUUID().slice(0, 8)}`.padEnd(15, 'x'), values: [{ value: 'A'.repeat(20) }] });
+    expect(edge.status, JSON.stringify(edge.body)).toBe(201);
   });
 
   it('tên trùng → 409 name_taken (AC-18)', async () => {
@@ -86,7 +92,7 @@ describe('PUT /catalog/attributes/:id', () => {
       { id: valueId(a, 'L'), value: 'L' },
       { value: 'XL' },
     ]);
-    expect(res.status).toBe(200);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(res.body.version).toBe(2);
     expect(res.body.values.map((v: { value: string; code: string }) => `${v.value}:${v.code}`)).toEqual([
       'S:SMALL',
@@ -111,8 +117,8 @@ describe('PUT /catalog/attributes/:id', () => {
 
   it('bỏ giá trị đang có biến thể dùng → 409 in_use, không đổi gì (AC-6); inUse, productCount đúng (AC-7)', async () => {
     const a = await createAttribute(token, uniq('Màu'), ['Đen', 'Trắng']);
-    const category = await createCategory(token, uniq('Áo'));
-    await createProduct(token, { name: uniq('Áo'), categoryId: category.id, variants: [[valueId(a, 'Đen')]] });
+    const group = await createGroup(token, uniq('Áo'));
+    await createProduct(token, { name: uniq('Áo'), groupId: group.id, variants: [[valueId(a, 'Đen')]] });
 
     const list = await api(token).get('/attributes');
     const fresh = list.body.find((x: AttributeBody) => x.id === a.id) as AttributeBody;
@@ -170,7 +176,7 @@ describe('PUT /catalog/attributes/:id', () => {
 
 describe('DELETE /catalog/attributes/:id', () => {
   it('thiếu ?version= → 422 errors.version; xoá thuộc tính chưa dùng → 204 (AC-20)', async () => {
-    const a = await createAttribute(token, uniq('Chất liệu'), ['Cotton', 'Lụa']);
+    const a = await createAttribute(token, uniq('Chất'), ['Cotton', 'Lụa']);
     const missing = await api(token).delete(`/attributes/${a.id}`);
     expect(missing.status).toBe(422);
     expect(missing.body.errors.version).toBeTruthy();
@@ -183,10 +189,10 @@ describe('DELETE /catalog/attributes/:id', () => {
 
   it('thuộc tính có biến thể dùng (kể cả đã ngừng bán) → 409 in_use (AC-6)', async () => {
     const a = await createAttribute(token, uniq('Màu'), ['Đen', 'Trắng']);
-    const category = await createCategory(token, uniq('Áo'));
+    const group = await createGroup(token, uniq('Áo'));
     const product = await createProduct(token, {
       name: uniq('Áo'),
-      categoryId: category.id,
+      groupId: group.id,
       variants: [[valueId(a, 'Đen')], [valueId(a, 'Trắng')]],
     });
     await archiveSku(token, product.id, product.variants[0]!.id);

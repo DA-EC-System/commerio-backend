@@ -81,7 +81,7 @@ const RequestLineInput = z
     newProduct: z
       .object({
         name: z.string('Nhập tên sản phẩm mới').trim().min(1, 'Nhập tên sản phẩm mới').max(120, 'Tối đa 120 ký tự'),
-        categoryId: z.string('Chọn danh mục'),
+        groupId: z.string('Chọn nhóm hàng'),
       })
       .nullish(),
     quantity,
@@ -257,7 +257,7 @@ export const PurchaseRequestLine = z
     sku: z.string().nullable(),
     productName: z.string(),
     attributesLabel: z.string(),
-    newProduct: z.object({ name: z.string(), categoryId: z.string(), categoryName: z.string() }).strict().nullable(),
+    newProduct: z.object({ name: z.string(), groupId: z.string(), groupName: z.string() }).strict().nullable(),
     quantity: z.number().int(),
     unitCost: money,
     excluded: z.boolean(),

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { countLabels, mainLabel, readinessOf } from '#src/modules/product/catalog/domain/labels.ts';
 
 // Độ hoàn thiện, nhãn chính, đếm nhãn của SKU (#204, Documents/21 §17.1, 25 §5.1, §5.2; D7, D8 Thành sửa 16/11/2026).
-const parent = { name: 'Áo thun', categoryId: 'c1', imageCount: 1, variantImagesPartial: false };
+const parent = { name: 'Áo thun', imageCount: 1, variantImagesPartial: false };
 const full = { targetNetPrice: '150000.00', minQty: 5, weightG: 250, lengthMm: 200, widthMm: 100, heightMm: 30 };
 
 describe('readinessOf', () => {
@@ -12,12 +12,12 @@ describe('readinessOf', () => {
 
   it('mỗi trường thiếu ra đúng phần tử, theo thứ tự cố định', () => {
     const r = readinessOf(
-      { name: ' ', categoryId: null, imageCount: 0, variantImagesPartial: true },
+      { name: ' ', imageCount: 0, variantImagesPartial: true },
       { targetNetPrice: null, minQty: null, weightG: null, lengthMm: 200, widthMm: null, heightMm: 30 },
     );
     expect(r).toEqual({
       readiness: 'incomplete',
-      missing: ['name', 'category', 'image', 'variantImages', 'price', 'minQty', 'weight', 'dimensions'],
+      missing: ['name', 'image', 'variantImages', 'price', 'minQty', 'weight', 'dimensions'],
     });
   });
 

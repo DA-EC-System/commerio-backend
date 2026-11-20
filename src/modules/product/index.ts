@@ -1,4 +1,4 @@
-// API công khai của module lớn `product` (Hàng hoá & kho: danh mục, tồn, mua hàng).
+// API công khai của module lớn `product` (Hàng hoá & kho: nhóm hàng, tồn, mua hàng).
 // Module lớn khác chỉ được import từ file này; module con trong cùng module lớn gọi nhau qua index.ts của module con.
 import { type ModuleContext, type ModuleDefinition, withContext } from '../../shared/module.ts';
 import { type BulkEditPorts, catalogModule, variantReadinessOf } from './catalog/index.ts';

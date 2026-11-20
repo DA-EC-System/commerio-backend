@@ -80,7 +80,6 @@ const variant: ListingVariant = {
   productId: randomUUID(),
   productName: 'Áo thun',
   sku: 'CMR-OS-1',
-  categoryId: randomUUID(),
   attributesLabel: 'Trắng',
   productCode: 'SP-TEST',
   attributes: [],

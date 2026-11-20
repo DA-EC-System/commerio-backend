@@ -4,7 +4,7 @@ import { orderedNow } from './attributes.ts';
 import {
   attributes,
   attributeValues,
-  categories,
+  productGroups,
   productAttributeValueImages,
   products,
   productVariants,
@@ -109,7 +109,7 @@ export async function updateVariantIfVersion(id: string, version: number, patch:
 }
 
 /**
- * Biến thể kèm sản phẩm, danh mục và giá trị thuộc tính theo `position`; theo thứ tự tạo. Đúng 2 câu (inventory gọi khi
+ * Biến thể kèm sản phẩm, nhóm hàng và giá trị thuộc tính theo `position`; theo thứ tự tạo. Đúng 2 câu (inventory gọi khi
  * đang khoá dòng tồn). `image`: tệp ảnh phân loại theo giá trị của SKU ở thuộc tính gắn ảnh (#340), null khi chưa có.
  */
 export async function findVariants(filter: { productId?: string; productIds?: readonly string[]; ids?: readonly string[] } = {}) {
@@ -133,12 +133,12 @@ export async function findVariants(filter: { productId?: string; productIds?: re
       description: products.description,
       originCountry: products.originCountry,
       brand: products.brand,
-      categoryId: categories.id,
-      categoryName: categories.name,
+      groupId: productGroups.id,
+      groupName: productGroups.name,
     })
     .from(productVariants)
     .innerJoin(products, eq(products.id, productVariants.productId))
-    .innerJoin(categories, eq(categories.id, products.categoryId))
+    .innerJoin(productGroups, eq(productGroups.id, products.groupId))
     .where(
       and(
         filter.productId ? eq(productVariants.productId, filter.productId) : undefined,
