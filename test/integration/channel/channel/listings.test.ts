@@ -79,6 +79,7 @@ setProductPort(port);
 
 const createProduct = vi.fn(async (_t: string, p: NewProduct) => ({ externalProductId: `item-${p.sellerSku}`, externalSkuId: `sku-${p.sellerSku}`, live: false }));
 const deactivate = vi.fn(async () => {});
+const removeVariants = vi.fn(async () => {});
 registerAdapter(
   'lazada',
   fakeAdapter({
@@ -88,6 +89,7 @@ registerAdapter(
     uploadImage: async (_t, url) => `https://slatic.test/${encodeURIComponent(url)}`,
     createProduct,
     deactivate,
+    removeVariants,
   }),
 );
 afterAll(async () => {
@@ -445,6 +447,32 @@ describe('gỡ listing', () => {
     expect(again.status).toBe(409);
     expect(again.body.code).toBe('invalid_transition');
     expect((await auth(app().post(`/api/v1/channel/shops/${shopId}/listings/${noPrice.id}/delist`)).send({ version: 1 })).status).toBe(404);
+  });
+
+  it('sản phẩm sàn còn SKU khác: gỡ riêng phân loại, bỏ mã sàn khỏi listing; SKU cuối cùng thì tắt (#295, §18.8.4)', async () => {
+    const [a, b] = [fresh('CMR-GO-A'), fresh('CMR-GO-B')];
+    const item = `item-go-${randomUUID().slice(0, 6)}`;
+    for (const v of [a, b]) {
+      await testPool().query(
+        `insert into channel.listings (company_id, shop_id, variant_id, seller_sku, status, external_product_id, external_sku_id, content_source)
+         values ($1, $2, $3, $4, 'live', $5, $6, 'app')`,
+        [company.companyId, shopId, v.id, v.sku, item, `sku-${v.sku}`],
+      );
+    }
+    deactivate.mockClear();
+    const delist = async (v: { id: string }) => {
+      const [row] = await rowsOf(v.id);
+      return auth(app().post(`/api/v1/channel/shops/${shopId}/listings/${v.id}/delist`)).send({ version: row.version });
+    };
+    expect((await delist(a)).status).toBe(200);
+    expect(removeVariants).toHaveBeenCalledWith(expect.any(String), item, [`sku-${a.sku}`]);
+    expect(deactivate).not.toHaveBeenCalled();
+    expect((await rowsOf(a.id))[0]).toMatchObject({ status: 'delisted', external_product_id: null, external_sku_id: null });
+    removeVariants.mockClear();
+    expect((await delist(b)).status).toBe(200);
+    expect(removeVariants).not.toHaveBeenCalled();
+    expect(deactivate).toHaveBeenCalledWith(expect.any(String), item, `sku-${b.sku}`);
+    expect((await rowsOf(b.id))[0]).toMatchObject({ status: 'delisted', external_product_id: item });
   });
 
   it('listing đang pushing thì gỡ 409 invalid_transition (21 §18.6.4)', async () => {

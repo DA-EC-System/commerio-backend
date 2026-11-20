@@ -27,6 +27,7 @@ import {
   findListingRow,
   type ListingPatch,
   type ListingRow,
+  remoteProductListings,
 } from '../repository/listings.ts';
 import { syncedPathsOf } from '../repository/platform-categories.ts';
 import { findRemoteSkuRow, remoteSkuRowsOf } from '../repository/remote-skus.ts';
@@ -587,7 +588,11 @@ async function enqueue(
   }
 }
 
-/** Gỡ khỏi sàn (§18.3): tắt sản phẩm trên sàn rồi chuyển `delisted`, giữ ghép để đẩy lại. */
+/**
+ * Gỡ khỏi sàn (§18.3, §18.8.4): sản phẩm sàn còn SKU khác (listing chưa gỡ cùng mã sản phẩm, hoặc bản sao SKU sàn) và adapter
+ * có `removeVariants` thì gỡ riêng phân loại đó (TikTok bỏ khỏi `skus`, có duyệt lại; Lazada xoá SKU) và bỏ mã sàn khỏi listing,
+ * nên đẩy lại là thêm phân loại; SKU cuối cùng thì tắt trên sàn như cũ, giữ mã sàn để đẩy lại là bật lại. Rồi chuyển `delisted`.
+ */
 export async function delistListing(actor: Actor, shopId: string, variantId: string, version: number): Promise<ChannelListing> {
   const { adapter, accessToken } = await withCompany(actor.companyId, () => shopSession(shopId));
   const row = await withCompany(actor.companyId, () => findListingRow(shopId, variantId));
@@ -597,11 +602,23 @@ export async function delistListing(actor: Actor, shopId: string, variantId: str
   }
   assertTransition(listingMachine, row.status, 'delist', { actor, view: toListing(row) });
   const { externalProductId, externalSkuId } = row;
+  let removed = false;
   if (externalProductId && externalSkuId) {
-    await onMarketplace(() => adapter.deactivate(accessToken, externalProductId, externalSkuId));
+    const remove = adapter.removeVariants;
+    const hasSiblings = await withCompany(actor.companyId, async () => {
+      const siblings = (await remoteProductListings([{ shopId: row.shopId, externalProductId }])).filter((l) => l.id !== row.id && l.externalSkuId);
+      return siblings.length > 0 || (await countRemoteSkusOfProduct(row.shopId, externalProductId)) > 1;
+    });
+    if (remove && hasSiblings) {
+      await onMarketplace(() => remove(accessToken, externalProductId, [externalSkuId]));
+      removed = true;
+    } else {
+      await onMarketplace(() => adapter.deactivate(accessToken, externalProductId, externalSkuId));
+    }
   }
+  const dropped = removed ? { externalProductId: null, externalSkuId: null, externalImageUrls: null } : {};
   const updated = await withCompany(actor.companyId, () =>
-    moveListing(row, 'delist', actor, { hiddenBy: null, platformStock: 0 }),
+    moveListing(row, 'delist', actor, { hiddenBy: null, platformStock: 0, ...dropped }),
   );
   return toListing(updated, await withCompany(actor.companyId, () => requesterNames([updated])));
 }
