@@ -379,7 +379,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
       409: problemResponse(
         '`category_unmapped` (chưa có spec); `spec_incomplete` (`categoryStatus` khác `ok` hoặc `missing` khác rỗng); `version_conflict` kèm `current`; `category_change_in_progress` (còn listing `queued`); `category_in_sync` (không listing nào lệch category); `size_chart_missing` (category mới bắt buộc bảng size mà sản phẩm chưa có)',
       ),
-      422: problemResponse('`validation_failed`; `marketplace_unsupported` (sàn chưa hỗ trợ đổi category, Lazada)'),
+      422: problemResponse('`validation_failed`; `marketplace_unsupported` (adapter sàn không hỗ trợ đổi category)'),
     },
   });
   registry.registerPath({
