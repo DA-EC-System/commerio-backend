@@ -3,13 +3,23 @@
 <!-- Sinh tự động bởi `npm run db:docs` từ db/migrations. Không sửa tay. -->
 
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
-Mới nhất: **V118**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+Mới nhất: **V119**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
 
-## V118 · 20/11/2026 · gia-ban-sao-sku-san
+## V119 · 20/11/2026 · tran-hoan-tien-du-lieu
 
-`db/migrations/20261120104359_gia-ban-sao-sku-san.sql` · sinh từ schema
+`db/migrations/20261120105607_tran-hoan-tien-du-lieu.sql` · viết tay
 
+- viết tay: dữ liệu
+- #355: hoàn tiền khách chỉ ghi tới mức doanh thu đã ghi của các dòng trả (Documents/25 mục 10.1, E174).
+
+## V118 · 20/11/2026 · tra-tiktok-dong-y-hoan-tien-gia-ban-sao-sku-san-moc-day-gia-listing-gia-von-de-x
+
+`db/migrations/20261120105603_tra-tiktok-dong-y-hoan-tien-gia-ban-sao-sku-san-moc-day-gia-listing-gia-von-de-x.sql` · sinh từ schema
+
+- `channel.listings`: + cột `last_price_pushed_at`
+- `channel.price_calculations`: đổi check `price_calculations_trigger`
 - `channel.remote_skus`: + cột `price`; + check `remote_skus_price`
+- `order.return_requests`: + cột `respond_by`, `refund_approval`; + index `return_requests_refund_approval_pending_idx`; + check `return_requests_refund_approval`
 
 ## V117 · 20/11/2026 · doi-category-san
 

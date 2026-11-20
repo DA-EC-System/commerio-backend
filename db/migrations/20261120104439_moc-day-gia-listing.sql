@@ -1,1 +1,0 @@
-ALTER TABLE "channel"."listings" ADD COLUMN "last_price_pushed_at" timestamp with time zone;

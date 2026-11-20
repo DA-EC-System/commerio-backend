@@ -1,2 +1,0 @@
-ALTER TABLE "channel"."price_calculations" DROP CONSTRAINT "price_calculations_trigger";--> statement-breakpoint
-ALTER TABLE "channel"."price_calculations" ADD CONSTRAINT "price_calculations_trigger" CHECK ("channel"."price_calculations"."trigger" in ('push', 'target_changed', 'config_activated', 'cost'));

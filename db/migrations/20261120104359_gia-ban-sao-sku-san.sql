@@ -1,2 +1,0 @@
-ALTER TABLE "channel"."remote_skus" ADD COLUMN "price" numeric(18, 2);--> statement-breakpoint
-ALTER TABLE "channel"."remote_skus" ADD CONSTRAINT "remote_skus_price" CHECK ("channel"."remote_skus"."price" >= 0);
