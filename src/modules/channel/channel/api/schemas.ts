@@ -1028,3 +1028,28 @@ export const CategorySyncBody = z
   })
   .default({})
   .meta({ id: 'CategorySyncInput' });
+
+// Ánh xạ trục phân loại sang sales attribute của sàn (#448, Documents/21 §18.8.1).
+export const AxisMappingParams = z.object({ platform: z.string().max(40), attributeId: z.string().max(60) });
+export const AxisMappingBody = z
+  .object({
+    codes: z
+      .array(z.object({ attributeCode: z.string('Chọn mã thuộc tính').trim().min(1, 'Chọn mã thuộc tính').max(60) }).strict())
+      .max(10, 'Tối đa 10 mã')
+      .meta({ description: 'Thứ tự là `priority` (đầu tiên ưu tiên nhất); `[]` là bỏ ánh xạ' }),
+  })
+  .strict()
+  .meta({ id: 'AxisMappingInput' });
+const AXIS_KIND = z.enum(['color', 'size', 'volume', 'flavor']).nullable();
+export const AxisMappingItemSchema = z
+  .object({
+    attributeId: z.uuid(),
+    platformKind: AXIS_KIND,
+    codes: z.array(
+      z.object({ attributeCode: z.string(), attributeLabel: z.string().nullable(), priority: z.number().int().min(1) }).strict(),
+    ),
+    defaultCodes: z.array(z.string()).meta({ description: 'Mặc định của adapter theo `platformKind`, chỉ đọc' }),
+  })
+  .strict()
+  .meta({ id: 'AxisMappingItem' });
+export const AxisMappingList = z.object({ items: z.array(AxisMappingItemSchema) }).strict().meta({ id: 'AxisMappingList' });

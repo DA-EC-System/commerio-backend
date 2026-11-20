@@ -3,7 +3,20 @@
 <!-- Sinh tự động bởi `npm run db:docs` từ db/migrations. Không sửa tay. -->
 
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
-Mới nhất: **V122**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+Mới nhất: **V124**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+
+## V124 · 21/11/2026 · anh-xa-truc-rls
+
+`db/migrations/20261120205213_anh-xa-truc-rls.sql` · viết tay
+
+- viết tay: RLS
+- Ánh xạ trục phân loại sang sales attribute của sàn (#448, Documents/19 §3.3): RLS company_isolation cho channel.axis_mappings (vòng lặp của 0002 chỉ chạy một lần).
+
+## V123 · 21/11/2026 · anh-xa-truc
+
+`db/migrations/20261120205157_anh-xa-truc.sql` · sinh từ schema
+
+- + bảng `channel.axis_mappings`
 
 ## V122 · 20/11/2026 · bo-daily-channel-summary
 

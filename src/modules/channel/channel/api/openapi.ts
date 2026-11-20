@@ -13,6 +13,10 @@ import {
   ShopWarehousesView,
   CategorySyncBody,
   ApplyCategoryBody,
+  AxisMappingBody,
+  AxisMappingItemSchema,
+  AxisMappingList,
+  AxisMappingParams,
   ApplyCategoryResult,
   ProductSpecBody,
   ProductSpecParams,
@@ -366,6 +370,35 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
       409: problemResponse('`version_conflict` kèm `current`; `shop_not_connected`: TikTok chưa có gian hàng `active` và chưa có bản attribute nào'),
       422: problemResponse('`validation_failed` kèm `errors` theo ô (`externalCategoryId`, `attributes.<code>`, `axisMap.<attributeId>`, `valueMap.<id>`); `marketplace_unsupported`'),
       503: problemResponse('`marketplace_unavailable`: sàn lỗi khi chưa có bản attribute nào'),
+    },
+  });
+  registry.registerPath({
+    method: 'get',
+    path: '/platforms/:platform/axis-mappings',
+    summary: 'Ánh xạ trục phân loại của công ty sang sales attribute của sàn (#448)',
+    description:
+      'Cần `catalog.product.view`. Mỗi thuộc tính phân loại của công ty một dòng: `codes` là ánh xạ của công ty theo `priority`, `defaultCodes` là mặc định của adapter theo `platformKind` (chỉ đọc). Không gọi sàn.',
+    security: bearer,
+    request: { params: PlatformParams },
+    responses: {
+      200: { description: 'Danh sách', ...json(AxisMappingList) },
+      ...auth,
+      422: problemResponse('`marketplace_unsupported`'),
+    },
+  });
+  registry.registerPath({
+    method: 'put',
+    path: '/platforms/:platform/axis-mappings/:attributeId',
+    summary: 'Đặt ánh xạ trục của một thuộc tính trên sàn (#448)',
+    description:
+      'Cần `catalog.group.manage`. `codes` thay cả danh sách (thứ tự là `priority`, `[]` là bỏ). Mỗi mã phải là sales attribute đã gặp ở ít nhất một leaf của sàn. Ghi nhật ký.',
+    security: bearer,
+    request: { params: AxisMappingParams, body: { content: { 'application/json': { schema: AxisMappingBody } } } },
+    responses: {
+      200: { description: 'Dòng đã lưu', ...json(AxisMappingItemSchema) },
+      ...auth,
+      404: problemResponse('`not_found`: không phải thuộc tính của công ty'),
+      422: problemResponse('`validation_failed` kèm `errors["codes.<i>.attributeCode"]` (trùng, không phải sales attribute đã gặp); `marketplace_unsupported`'),
     },
   });
   registry.registerPath({

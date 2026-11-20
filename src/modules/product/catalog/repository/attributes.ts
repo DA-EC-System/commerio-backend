@@ -140,3 +140,11 @@ export function findValuesWithAttribute(ids: readonly string[]) {
     .from(attributeValues)
     .where(inArray(attributeValues.id, [...ids]));
 }
+
+/** Thuộc tính phân loại của công ty (id, tên, `platform_kind`) theo thứ tự tạo; cho channel ghép trục (#448). Gọi trong `withCompany`. */
+export async function findAttributeKinds() {
+  return getDb()
+    .select({ id: attributes.id, name: attributes.name, platformKind: attributes.platformKind })
+    .from(attributes)
+    .orderBy(asc(attributes.createdAt), asc(attributes.id));
+}

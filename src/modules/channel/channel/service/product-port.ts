@@ -17,6 +17,7 @@ import {
   productSizeChartUrls,
   standardPricesOf,
   type VariantSummary,
+  attributeKindsOf,
 } from '../../../product/index.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
 
@@ -56,6 +57,8 @@ export interface ListingVariant {
 }
 
 export interface ProductPort {
+  /** Thuộc tính phân loại của công ty (#448); thiếu (bản giả của test) thì coi là không có thuộc tính nào. */
+  attributes?(): Promise<{ id: string; name: string; platformKind: 'color' | 'size' | 'volume' | 'flavor' | null }[]>;
   /** Bỏ trống `ids` = mọi biến thể của công ty; `opts.productIds` lọc theo sản phẩm, `[]` là rỗng (#400 A13). */
   variants(ids?: readonly string[], opts?: { productIds?: readonly string[] }): Promise<ListingVariant[]>;
   standardPrices(ids: readonly string[]): Promise<Map<string, Decimal | null>>;
@@ -126,6 +129,7 @@ let override: ProductPort | null = null;
 export function productPort(ctx: ModuleContext): ProductPort {
   return (
     override ?? {
+      attributes: attributeKindsOf,
       variants: async (ids, opts) => (await getVariants(ids, opts)).map(toListingVariant),
       standardPrices: (ids) => standardPricesOf(ctx, ids),
       availableOf,

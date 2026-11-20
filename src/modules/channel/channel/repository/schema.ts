@@ -12,6 +12,7 @@ import {
   numeric,
   pgSchema,
   primaryKey,
+  smallint,
   text,
   timestamp,
   unique,
@@ -517,6 +518,31 @@ export const productSpecs = channelSchema.table(
     check('product_specs_category_status', sql`${t.categoryStatus} in ('ok', 'changed', 'removed')`),
     check('product_specs_version', sql`${t.version} >= 0`),
     check('product_specs_remote', sql`(${t.remoteFacts} is null) = (${t.remoteReadAt} is null)`),
+  ],
+);
+
+/**
+ * Ánh xạ thuộc tính phân loại của công ty sang sales attribute của sàn (#448, Documents/19 §3.3, Documents/21 §18.8.3 nguồn
+ * 2): mỗi (thuộc tính, sàn) một danh sách mã theo `priority` (1 là ưu tiên nhất). Thuộc tính có `platform_kind` không cần
+ * dòng: dùng mặc định của adapter; có dòng thì dòng thắng. `attribute_id` trỏ `product.attributes`, không có khoá ngoại chéo
+ * schema. RLS (migration `*_anh-xa-truc-rls`).
+ */
+export const axisMappings = channelSchema.table(
+  'axis_mappings',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    companyId: uuid('company_id').notNull(),
+    attributeId: uuid('attribute_id').notNull(),
+    platform: marketplace('platform').notNull(),
+    /** Mã sales attribute của sàn (`platform_category_attributes.code`, `kind = 'sales'`). */
+    attributeCode: text('attribute_code').notNull(),
+    priority: smallint('priority').notNull(),
+    ...timestamps,
+  },
+  (t) => [
+    unique('axis_mappings_code_uq').on(t.companyId, t.attributeId, t.platform, t.attributeCode),
+    unique('axis_mappings_priority_uq').on(t.companyId, t.attributeId, t.platform, t.priority),
+    check('axis_mappings_priority', sql`${t.priority} >= 1`),
   ],
 );
 

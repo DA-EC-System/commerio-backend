@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V122** (`20261120165800_bo-daily-channel-summary`): 91 bảng trong 6 schema, 68 khoá ngoại, 77 cột tham chiếu không có khoá ngoại. Lịch sử từng phiên bản: [VERSIONS.md](VERSIONS.md).
+Phiên bản **V124** (`20261120205213_anh-xa-truc-rls`): 92 bảng trong 6 schema, 68 khoá ngoại, 78 cột tham chiếu không có khoá ngoại. Lịch sử từng phiên bản: [VERSIONS.md](VERSIONS.md).
 
 Nguồn: snapshot của migration mới nhất, comment trong `src/modules/<lớn>/<con>/repository/schema.ts`, khoá ngoại, trigger, index, EXCLUDE viết tay trong migration. Cột, kiểu, ràng buộc, quan hệ của từng bảng ở `db/schema/<schema>.md`.
 
@@ -113,11 +113,12 @@ Chi tiết: [schema/finance.md](schema/finance.md)
 - `finance.unmatched_receipts` (finance): Tiền về không gán được vào đơn (không có mã, lệch tiền, đơn đã huỷ); gán hoặc hoàn sau (UC-PF-07).
 - `finance.webhook_events` (payment): Webhook cổng đã nhận (sau khi kiểm chữ ký), chống xử lý lặp.
 
-## `channel` · Kênh bán · lớp 5 · 18 bảng
+## `channel` · Kênh bán · lớp 5 · 19 bảng
 
 Chi tiết: [schema/channel.md](schema/channel.md)
 
 - `channel.api_usage` (channel): Số lời gọi sàn trong một ngày (giờ Việt Nam) (#102 A7, #215).
+- `channel.axis_mappings` (channel): Ánh xạ thuộc tính phân loại của công ty sang sales attribute của sàn (#448, Documents/19 §3.3, Documents/21 §18.8.3 nguồn 2): mỗi (thuộc tính, sàn) một danh sách mã theo `priority` (1 là ưu tiên nhất…
 - `channel.conversation_notes` (inbox): Ghi chú nội bộ trên hội thoại, khách không thấy.
 - `channel.conversation_tags` (inbox)
 - `channel.conversations` (inbox)

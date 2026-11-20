@@ -29,6 +29,7 @@ export const LOGICAL_REFS: Readonly<Record<string, string>> = {
   supplier_id: 'product.suppliers',
   variant_id: 'product.product_variants',
   // Tên mang nghĩa riêng.
+  'channel.axis_mappings.attribute_id': 'product.attributes',
   'channel.listings.pending_variant_id': 'product.product_variants',
   'channel.price_calculations.fee_version_id': 'finance.config_versions',
   'channel.price_calculations.min_margin_version_id': 'finance.config_versions',
