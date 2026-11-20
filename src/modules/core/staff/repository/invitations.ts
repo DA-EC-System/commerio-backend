@@ -303,3 +303,13 @@ export async function pendingJoinsByEmail(email: string): Promise<{ companyId: s
     .orderBy(desc(t.submittedAt));
   return rows.map((r) => ({ companyId: r.companyId, passwordHash: r.passwordHash! }));
 }
+
+/** Số lời mời (link mời, yêu cầu tham gia) chưa thu hồi của công ty đang chọn (#461 onboarding). */
+export async function countLiveInvitations(): Promise<number> {
+  const companyId = requireCompanyId('countLiveInvitations');
+  const [row] = await getDb()
+    .select({ n: count() })
+    .from(invitations)
+    .where(and(eq(invitations.companyId, companyId), sql`${invitations.status} <> 'revoked'`));
+  return row?.n ?? 0;
+}

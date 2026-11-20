@@ -6,7 +6,7 @@ Quyết định kiến trúc nằm ở repo tài liệu của đồ án: `Docume
 
 ## Kiến trúc
 
-Modular monolith: một mã nguồn, 6 module lớn gồm 18 module con; mỗi module con bốn lớp; mỗi module lớn một schema PostgreSQL. Một Docker image chạy ba tiến trình:
+Modular monolith: một mã nguồn, 6 module lớn gồm 19 module con; mỗi module con bốn lớp; mỗi module lớn một schema PostgreSQL. Một Docker image chạy ba tiến trình:
 
 | Tiến trình | File | Việc |
 |---|---|---|

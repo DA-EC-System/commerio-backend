@@ -40,7 +40,11 @@ export { docRefsOf as stockDocumentRefs, docsFromSource as stockDocumentsFrom } 
 // Phiếu kho có duyệt (#208): xuất huỷ chờ xử lý cho phiếu trả NCC bị huỷ (#210), kiểm kê đầu kỳ cho channel (#245).
 export { createOpeningStocktake, createQuarantineWriteOff } from './service/documents.ts';
 // Trạng thái phiếu kiểm kê đầu kỳ cho channel (#198, #245).
-export { docStatusesOf as stockDocumentStatusOf } from './repository/documents.ts';
+export {
+  docStatusesOf as stockDocumentStatusOf,
+  openingStockState,
+  type OpeningStockState,
+} from './repository/documents.ts';
 export { setSupplierReturnPort, type SupplierReturnPort } from './service/document-views.ts';
 export { recheckThresholds, setIncomingSource } from './service/thresholds.ts';
 // Lý do chặn lưu trữ SKU phần kho cho catalog (#204); `product/index.ts` nối vào `ctx` của catalog.

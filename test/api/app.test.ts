@@ -70,10 +70,10 @@ describe('khung api', () => {
     }
   });
 
-  it('đủ 18 module con (bỏ pricing, Documents/19 D9), tên không trùng', () => {
+  it('đủ 19 module con (bỏ pricing, Documents/19 D9; thêm onboarding không bảng, #461), tên không trùng', () => {
     // `returns` là router thứ hai của `sales`, gắn tại /api/v1/returns (Documents/21 §20), không phải module con.
     const names = modules.map((m) => m.name).filter((n) => n !== 'returns');
-    expect(names).toHaveLength(18);
-    expect(new Set(names).size).toBe(18);
+    expect(names).toHaveLength(19);
+    expect(new Set(names).size).toBe(19);
   });
 });
