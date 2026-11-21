@@ -1,6 +1,6 @@
 {
-  "id": "8fcd973b-7c51-4ca6-a7e5-f33805535985",
-  "prevId": "2a90337e-d515-46a6-bc97-c2a4d85b91d9",
+  "id": "7af0e871-16a9-4fe6-8050-69284e64d493",
+  "prevId": "56ce8740-5681-47ea-abf7-6f31ad7180ce",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -14050,7 +14050,7 @@
           "name": "variant_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "declared_qty": {
           "name": "declared_qty",

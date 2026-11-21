@@ -974,6 +974,20 @@
       "when": 1795240638567,
       "tag": "20261121055718_dong-phieu-nhan-chua-co-sku",
       "breakpoints": true
+    },
+    {
+      "idx": 139,
+      "version": "7",
+      "when": 1795240947352,
+      "tag": "20261121060227_danh-muc-chuan",
+      "breakpoints": true
+    },
+    {
+      "idx": 140,
+      "version": "7",
+      "when": 1795240949249,
+      "tag": "20261121060229_danh-muc-chuan-du-lieu",
+      "breakpoints": true
     }
   ]
 }
