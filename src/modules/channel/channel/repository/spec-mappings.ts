@@ -1,5 +1,6 @@
-// Ánh xạ thông số của công ty sang attribute của sàn (#509, Documents/21 §18.8.1, Documents/19 mục 3.3). Chạy trong
-// `withCompany` của bên gọi (RLS); `platform_category_attributes` dùng chung mọi công ty, chỉ đọc.
+// Ánh xạ thông số sang attribute của sàn (#509, Documents/21 §18.8.1, Documents/19 mục 3.3). Hai tầng: `company_id` NULL là
+// ánh xạ nền tảng của thông số, lựa chọn chuẩn (chỉ migration ghi), có giá trị là của công ty. Chạy trong `withCompany` của
+// bên gọi: RLS cho đọc cả hai tầng, chỉ ghi dòng của công ty. `platform_category_attributes` dùng chung, chỉ đọc.
 import { and, asc, eq, inArray, ne } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
 import { type AttributeInput, type AttributeKind, type AttributeOption, normalizePath } from '../domain/product-spec.ts';
@@ -11,7 +12,7 @@ export interface MappingCodeInput {
   options: { optionId: string; platformOptionId: string }[];
 }
 
-/** Mọi ánh xạ của công ty trên một sàn, kèm ánh xạ lựa chọn của từng mã; `fieldIds` để lọc (đẩy một sản phẩm). */
+/** Mọi ánh xạ công ty đọc được (nền tảng và của công ty) trên một sàn, kèm ánh xạ lựa chọn của từng mã; `fieldIds` để lọc (đẩy một sản phẩm). */
 export async function mappingsOf(platform: Marketplace, fieldIds?: readonly string[]): Promise<FieldMapping[]> {
   if (fieldIds && fieldIds.length === 0) return [];
   const db = getDb();
@@ -62,17 +63,21 @@ export async function replaceFieldMapping(companyId: string, platform: Marketpla
   if (options.length) await db.insert(specOptionMappings).values(options);
 }
 
-/** Ánh xạ mặc định khi tạo công ty; dòng trùng (mã đã có) bỏ qua để chạy lại được. */
-export async function seedFieldMappings(
+/**
+ * Thông số chuẩn (#dữ liệu chung, chốt 3): mã là của nền tảng, công ty chỉ thay ánh xạ các lựa chọn riêng của mình. Xoá
+ * tường minh theo `company_id` (RLS cũng chỉ cho xoá dòng của công ty), rồi chèn lại.
+ */
+export async function replaceCompanyOptionMappings(
   companyId: string,
   platform: Marketplace,
-  rows: readonly { fieldId: string; attributeCode: string; priority: number }[],
+  fieldId: string,
+  options: readonly { optionId: string; attributeCode: string; platformOptionId: string }[],
 ): Promise<void> {
-  if (!rows.length) return;
-  await getDb()
-    .insert(specFieldMappings)
-    .values(rows.map((r) => ({ ...r, companyId, platform })))
-    .onConflictDoNothing();
+  const db = getDb();
+  await db
+    .delete(specOptionMappings)
+    .where(and(eq(specOptionMappings.companyId, companyId), eq(specOptionMappings.fieldId, fieldId), eq(specOptionMappings.platform, platform)));
+  if (options.length) await db.insert(specOptionMappings).values(options.map((o) => ({ ...o, companyId, fieldId, platform })));
 }
 
 /** Dọn khi catalog xoá thông số (`catalog.spec_field_deleted`). */

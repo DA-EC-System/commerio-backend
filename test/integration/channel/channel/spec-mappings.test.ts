@@ -10,6 +10,7 @@ import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/ser
 import { createVariant } from '../../helpers/catalog.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
+import { asCompany } from '../../helpers/rls.ts';
 import { testApp } from '../../helpers/http.ts';
 import { fakeAdapter } from './helpers.ts';
 
@@ -111,9 +112,15 @@ const putMapping = (fieldId: string, codes: object[], token = ceo.token) =>
 const listMappings = (token = ceo.token) => request(app).get('/api/v1/channel/platforms/lazada/spec-mappings').set(auth(token));
 
 describe('ánh xạ thông số sang sàn', () => {
-  it('seed: công ty mới có ánh xạ mặc định cho thông số mặc định', async () => {
-    const { rows } = await testPool().query(`select count(*)::int as n from channel.spec_field_mappings where company_id = $1`, [ceo.companyId]);
-    expect(rows[0].n).toBeGreaterThan(0);
+  it('công ty mới không nhận bản chép ánh xạ; thông số chuẩn dùng ánh xạ nền tảng (company_id NULL)', async () => {
+    const db = testPool();
+    const own = await db.query(`select count(*)::int as n from channel.spec_field_mappings where company_id = $1`, [ceo.companyId]);
+    expect(own.rows[0].n).toBe(0);
+    const shared = await db.query(
+      `select m.attribute_code from channel.spec_field_mappings m join product.spec_fields f on f.id = m.field_id
+       where m.company_id is null and f.company_id is null and f.code = 'chat_lieu' and m.platform = 'lazada' order by m.priority limit 1`,
+    );
+    expect(shared.rows[0]?.attribute_code).toBe('clothing_material');
   });
 
   it('thay tập mã: thứ tự là priority; lựa chọn đã ánh xạ hiện nhãn sàn; đọc lại qua GET', async () => {
@@ -125,9 +132,10 @@ describe('ánh xạ thông số sang sàn', () => {
     expect(SpecMappingSchema.parse(res.body).codes.map((c) => [c.attributeCode, c.priority])).toEqual([[MATERIAL, 1], [MATERIAL2, 2]]);
     const list = SpecMappingList.parse((await listMappings()).body);
     const row = list.items.find((i) => i.fieldId === materialField.id)!;
+    expect(row).toMatchObject({ scope: 'company', editable: true });
     expect(row.codes[0]!.options).toEqual([
-      { optionId: materialField.cotton, platformOptionId: 'm1', platformLabel: 'Bông' },
-      { optionId: materialField.poly, platformOptionId: null, platformLabel: null },
+      { optionId: materialField.cotton, platformOptionId: 'm1', platformLabel: 'Bông', scope: 'company', editable: true },
+      { optionId: materialField.poly, platformOptionId: null, platformLabel: null, scope: 'company', editable: true },
     ]);
   });
 
@@ -187,6 +195,110 @@ describe('ánh xạ thông số sang sàn', () => {
       );
     expect(await find(`phong cach ${tag}`)).toEqual([STYLE]);
     expect(await find(STYLE.toUpperCase())).toEqual([STYLE]);
+  });
+});
+
+describe('hai tầng: ánh xạ của thông số chuẩn do nền tảng giữ (dữ liệu chung, chốt 3)', () => {
+  // Thông số chuẩn giả của lượt chạy (company_id NULL) kèm một lựa chọn chuẩn và một lựa chọn riêng của công ty `ceo`.
+  let std: { id: string; stdOption: string; ownOption: string };
+  const STD_CODE = `t509_std_${tag}`;
+  const STD2_CODE = `t509_std2_${tag}`;
+
+  beforeAll(async () => {
+    const db = testPool();
+    for (const code of [STD_CODE, STD2_CODE]) {
+      await db.query(
+        `insert into channel.platform_category_attributes (platform, external_category_id, code, label, kind, input, options, tier, fetched_at)
+         values ('lazada', $1, $2, $2, 'property', 'select', '[{"id":"s1","label":"Lụa"},{"id":"s2","label":"Lanh"}]', 'category', now())`,
+        [leaf, code],
+      );
+    }
+    const f = await db.query<{ id: string }>(
+      `insert into product.spec_fields (company_id, code, name, input, allow_custom) values (null, $1, $1, 'select', false) returning id`,
+      [`std_${tag}`],
+    );
+    const id = f.rows[0]!.id;
+    const o1 = await db.query<{ id: string }>(`insert into product.spec_field_options (company_id, field_id, value, position) values (null, $1, 'Lụa', 1) returning id`, [id]);
+    const o2 = await db.query<{ id: string }>(`insert into product.spec_field_options (company_id, field_id, value, position) values ($1, $2, 'Lanh riêng', 2) returning id`, [
+      ceo.companyId,
+      id,
+    ]);
+    std = { id, stdOption: o1.rows[0]!.id, ownOption: o2.rows[0]!.id };
+    await db.query(`insert into channel.spec_field_mappings (company_id, field_id, platform, attribute_code, priority) values (null, $1, 'lazada', $2, 1)`, [id, STD_CODE]);
+    await db.query(
+      `insert into channel.spec_option_mappings (company_id, field_id, option_id, platform, attribute_code, platform_option_id) values (null, $1, $2, 'lazada', $3, 's1')`,
+      [id, std.stdOption, STD_CODE],
+    );
+  });
+
+  it('GET: thông số chuẩn scope platform, không sửa được mã, không gợi ý; lựa chọn riêng editable', async () => {
+    const row = SpecMappingList.parse((await listMappings()).body).items.find((i) => i.fieldId === std.id)!;
+    expect(row).toMatchObject({ scope: 'platform', editable: false, suggestions: [] });
+    expect(row.codes.map((c) => c.attributeCode)).toEqual([STD_CODE]);
+    expect(row.codes[0]!.options).toEqual([
+      { optionId: std.stdOption, platformOptionId: 's1', platformLabel: 'Lụa', scope: 'platform', editable: false },
+      { optionId: std.ownOption, platformOptionId: null, platformLabel: null, scope: 'company', editable: true },
+    ]);
+  });
+
+  it('PUT đổi tập mã của thông số chuẩn: 403 platform_managed, ánh xạ nền tảng giữ nguyên', async () => {
+    const res = await putMapping(std.id, [{ attributeCode: STD2_CODE }]);
+    expect(res.status).toBe(403);
+    expect(res.body.type).toMatch(/platform_managed$/);
+    expect((await putMapping(std.id, [])).status).toBe(403);
+    const { rows } = await testPool().query(`select attribute_code from channel.spec_field_mappings where field_id = $1`, [std.id]);
+    expect(rows.map((r) => r.attribute_code)).toEqual([STD_CODE]);
+  });
+
+  it('PUT đổi ánh xạ của lựa chọn chuẩn: 403', async () => {
+    const res = await putMapping(std.id, [{ attributeCode: STD_CODE, options: [{ optionId: std.stdOption, platformOptionId: 's2' }] }]);
+    expect(res.status).toBe(403);
+  });
+
+  it('PUT giữ tập mã: ánh xạ lựa chọn riêng thành dòng của công ty; công ty khác không thấy dòng đó', async () => {
+    const res = await putMapping(std.id, [
+      { attributeCode: STD_CODE, options: [{ optionId: std.stdOption, platformOptionId: 's1' }, { optionId: std.ownOption, platformOptionId: 's2' }] },
+    ]);
+    expect(res.status).toBe(200);
+    expect(SpecMappingSchema.parse(res.body).codes[0]!.options.find((o) => o.optionId === std.ownOption)).toMatchObject({ platformOptionId: 's2', platformLabel: 'Lanh' });
+    const { rows } = await testPool().query(`select company_id from channel.spec_option_mappings where option_id = $1`, [std.ownOption]);
+    expect(rows).toEqual([{ company_id: ceo.companyId }]);
+    const seen = SpecMappingList.parse((await listMappings(other.token)).body).items.find((i) => i.fieldId === std.id);
+    expect(seen?.codes[0]?.options.find((o) => o.optionId === std.ownOption)).toBeUndefined();
+    expect((await putMapping(std.id, [{ attributeCode: STD_CODE, options: [{ optionId: std.ownOption, platformOptionId: 'zz' }] }])).status).toBe(422);
+  });
+
+  it('tự điền khi đẩy: lựa chọn riêng trên thông số chuẩn gửi đúng id lựa chọn sàn công ty đã ánh xạ', async () => {
+    const pid = (await createVariant(ceo.companyId)).productId;
+    await testPool().query(`insert into product.product_spec_values (company_id, product_id, field_id, option_id) values ($1, $2, $3, $4)`, [
+      ceo.companyId,
+      pid,
+      std.id,
+      std.ownOption,
+    ]);
+    const res = await request(app)
+      .put(`/api/v1/channel/products/${pid}/specs/lazada`)
+      .set(auth(ceo.token))
+      .send({ externalCategoryId: leaf, attributes: { [STYLE]: 'Basic' }, version: null });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.resolved[STD_CODE]).toEqual({ value: 's2', source: 'catalog', fieldId: std.id });
+  });
+
+  it('thông số riêng không lấy được mã đã thuộc thông số chuẩn: 422', async () => {
+    const res = await putMapping(styleField, [{ attributeCode: STD_CODE }]);
+    expect(res.status).toBe(422);
+    expect(res.body.errors['codes.0.attributeCode']).toBeDefined();
+  });
+
+  it('RLS: công ty đọc được dòng nền tảng nhưng không xoá, không sửa, không chèn dòng nền tảng được', async () => {
+    await asCompany(ceo.companyId, async (c) => {
+      expect((await c.query(`select 1 from channel.spec_field_mappings where field_id = $1`, [std.id])).rowCount).toBe(1);
+      expect((await c.query(`delete from channel.spec_field_mappings where field_id = $1`, [std.id])).rowCount).toBe(0);
+      expect((await c.query(`update channel.spec_field_mappings set priority = 9 where field_id = $1`, [std.id])).rowCount).toBe(0);
+      await expect(
+        c.query(`insert into channel.spec_field_mappings (company_id, field_id, platform, attribute_code, priority) values (null, $1, 'tiktok', 'x', 1)`, [std.id]),
+      ).rejects.toThrow(/row-level security/);
+    });
   });
 });
 

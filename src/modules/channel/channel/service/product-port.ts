@@ -32,8 +32,13 @@ export interface SpecFieldInfo {
   input: CatalogSpecValue['input'];
   unit: string | null;
   allowCustom: boolean;
-  options: { id: string; value: string; position: number }[];
+  options: { id: string; value: string; position: number; scope?: DataScope }[];
+  /** Tầng dữ liệu (dữ liệu chung, chốt 22/11/2026): `platform` là thông số chuẩn, ánh xạ sang sàn chỉ nền tảng sửa. */
+  scope?: DataScope;
 }
+
+/** Dòng chuẩn của nền tảng (dùng chung mọi công ty) hay dòng riêng của công ty; thiếu thì coi là `company`. */
+export type DataScope = 'platform' | 'company';
 
 export interface ListingVariant {
   id: string;
@@ -72,7 +77,7 @@ export interface ListingVariant {
 
 export interface ProductPort {
   /** Thuộc tính phân loại của công ty (#448); thiếu (bản giả của test) thì coi là không có thuộc tính nào. */
-  attributes?(): Promise<{ id: string; name: string; platformKind: 'color' | 'size' | 'volume' | 'flavor' | null }[]>;
+  attributes?(): Promise<{ id: string; name: string; platformKind: 'color' | 'size' | 'volume' | 'flavor' | null; scope?: DataScope }[]>;
   /** Bỏ trống `ids` = mọi biến thể của công ty; `opts.productIds` lọc theo sản phẩm, `[]` là rỗng (#400 A13). */
   variants(ids?: readonly string[], opts?: { productIds?: readonly string[] }): Promise<ListingVariant[]>;
   standardPrices(ids: readonly string[]): Promise<Map<string, Decimal | null>>;

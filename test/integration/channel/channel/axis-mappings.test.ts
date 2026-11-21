@@ -8,16 +8,18 @@ import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/ser
 import { setProductPort } from '#src/modules/channel/channel/service/product-port.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
+import { asCompany } from '../../helpers/rls.ts';
 import { testApp } from '../../helpers/http.ts';
 import { fakeAdapter } from './helpers.ts';
 
 const app = testApp();
-const colorId = randomUUID();
 const powerId = randomUUID();
 const noneId = randomUUID();
+// Thuộc tính chuẩn của nền tảng (dữ liệu chung, chốt 3): ánh xạ do nền tảng giữ, công ty chỉ đọc.
+const colorId = randomUUID();
 const attributes = [
-  { id: colorId, name: 'Màu sắc', platformKind: 'color' as const },
-  { id: powerId, name: 'Dung lượng pin', platformKind: null },
+  { id: colorId, name: 'Màu sắc', platformKind: 'color' as const, scope: 'platform' as const },
+  { id: powerId, name: 'Dung lượng pin', platformKind: null, scope: 'company' as const },
 ];
 setProductPort({
   attributes: async () => attributes,
@@ -67,8 +69,8 @@ describe('axis-mappings', () => {
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     AxisMappingList.parse(res.body);
     expect(res.body.items).toEqual([
-      { attributeId: colorId, platformKind: 'color', codes: [], defaultCodes: ['100000'] },
-      { attributeId: powerId, platformKind: null, codes: [], defaultCodes: [] },
+      { attributeId: colorId, platformKind: 'color', scope: 'platform', editable: false, codes: [], defaultCodes: ['100000'] },
+      { attributeId: powerId, platformKind: null, scope: 'company', editable: true, codes: [], defaultCodes: [] },
     ]);
   });
 
@@ -106,6 +108,31 @@ describe('axis-mappings', () => {
     });
     const rows = await testPool().query('select attribute_code from channel.axis_mappings where company_id = $1', [companyId]);
     expect(rows.rows).toEqual([{ attribute_code: code1 }]);
+  });
+
+  it('PUT thuộc tính chuẩn: 403 platform_managed, không ghi gì; dòng nền tảng hiện cho mọi công ty, công ty không xoá được', async () => {
+    const res = await put(colorId, [code1]);
+    expect(res.status).toBe(403);
+    expect(res.body.type).toMatch(/platform_managed$/);
+    const db = testPool();
+    await db.query(`insert into channel.axis_mappings (company_id, attribute_id, platform, attribute_code, priority) values (null, $1, 'tiktok', $2, 1)`, [colorId, code2]);
+    const list = await request(app).get(url()).set('Authorization', `Bearer ${ceo}`);
+    expect(list.body.items[0].codes).toEqual([{ attributeCode: code2, attributeLabel: 'Công suất', priority: 1 }]);
+    await asCompany(companyId, async (c) => {
+      expect((await c.query(`delete from channel.axis_mappings where attribute_id = $1`, [colorId])).rowCount).toBe(0);
+      await expect(
+        c.query(`insert into channel.axis_mappings (company_id, attribute_id, platform, attribute_code, priority) values (null, $1, 'lazada', 'x', 1)`, [colorId]),
+      ).rejects.toThrow(/row-level security/);
+    });
+    await db.query(`delete from channel.axis_mappings where attribute_id = $1`, [colorId]);
+  });
+
+  it('RLS: công ty không đọc được ánh xạ trục của công ty khác', async () => {
+    await put(powerId, [code1]);
+    const other = await createCompany({ optionalModules: [] });
+    await asCompany(other.companyId, async (c) => {
+      expect((await c.query(`select 1 from channel.axis_mappings where attribute_id = $1`, [powerId])).rowCount).toBe(0);
+    });
   });
 
   it('PUT: quá 10 mã 422; thuộc tính không phải của công ty 404; sàn lạ 422; Sale không có catalog.group.manage 403', async () => {

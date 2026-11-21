@@ -401,12 +401,13 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/platforms/:platform/axis-mappings/:attributeId',
     summary: 'Đặt ánh xạ trục của một thuộc tính trên sàn (#448)',
     description:
-      'Cần `catalog.group.manage`. `codes` thay cả danh sách (thứ tự là `priority`, `[]` là bỏ). Mỗi mã phải là sales attribute đã gặp ở ít nhất một leaf của sàn. Ghi nhật ký.',
+      'Cần `catalog.group.manage`. Chỉ thuộc tính riêng của công ty. `codes` thay cả danh sách (thứ tự là `priority`, `[]` là bỏ). Mỗi mã phải là sales attribute đã gặp ở ít nhất một leaf của sàn. Ghi nhật ký.',
     security: bearer,
     request: { params: AxisMappingParams, body: { content: { 'application/json': { schema: AxisMappingBody } } } },
     responses: {
       200: { description: 'Dòng đã lưu', ...json(AxisMappingItemSchema) },
       ...auth,
+      403: problemResponse('Thiếu quyền; `platform_managed`: thuộc tính chuẩn, ánh xạ do nền tảng giữ'),
       404: problemResponse('`not_found`: không phải thuộc tính của công ty'),
       422: problemResponse('`validation_failed` kèm `errors["codes.<i>.attributeCode"]` (trùng, không phải sales attribute đã gặp); `marketplace_unsupported`'),
     },
@@ -425,12 +426,13 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/platforms/:platform/spec-mappings/:fieldId',
     summary: 'Thay tập mã ánh xạ của một thông số trên một sàn (#509)',
     description:
-      'Cần `catalog.group.manage`. Thứ tự mảng là `priority`, `[]` là bỏ. Bỏ một mã thì bỏ luôn ánh xạ lựa chọn của mã đó. Mã phải là attribute property đã gặp ở leaf nào đó của sàn; mỗi mã của sàn chỉ ánh xạ cho một thông số. Ghi nhật ký.',
+      'Cần `catalog.group.manage`. Thứ tự mảng là `priority`, `[]` là bỏ. Bỏ một mã thì bỏ luôn ánh xạ lựa chọn của mã đó. Mã phải là attribute property đã gặp ở leaf nào đó của sàn; mỗi mã của sàn chỉ ánh xạ cho một thông số (tính cả mã của thông số chuẩn). Thông số chuẩn (`scope = platform`): gửi đúng tập mã hiện có, chỉ ánh xạ lựa chọn riêng của công ty được thay. Ghi nhật ký.',
     security: bearer,
     request: { params: SpecMappingParams, body: { content: { 'application/json': { schema: SpecMappingBody } } } },
     responses: {
       200: { description: 'Ánh xạ sau khi lưu', ...json(SpecMappingSchema) },
       ...auth,
+      403: problemResponse('Thiếu quyền; `platform_managed`: thông số chuẩn mà đổi tập mã hay ánh xạ lựa chọn chuẩn'),
       404: problemResponse('`not_found`: thông số không có hoặc của công ty khác'),
       422: problemResponse('`validation_failed` kèm `errors["codes.<i>.attributeCode"]`, `errors["codes.<i>.options.<j>"]`; `marketplace_unsupported`'),
     },
