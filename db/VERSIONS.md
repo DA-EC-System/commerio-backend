@@ -3,7 +3,22 @@
 <!-- Sinh tự động bởi `npm run db:docs` từ db/migrations. Không sửa tay. -->
 
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
-Mới nhất: **V139**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+Mới nhất: **V141**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+
+## V141 · 21/11/2026 · danh-muc-chuan-du-lieu
+
+`db/migrations/20261121060918_danh-muc-chuan-du-lieu.sql` · viết tay
+
+- viết tay: RLS, dữ liệu
+- Danh mục chuẩn 27 (#531, Documents/21 mục 5.7, 19 §3.2; `.claude/issues/luong-san-pham/du-lieu-chuan.md`).
+
+## V140 · 21/11/2026 · danh-muc-chuan
+
+`db/migrations/20261121060914_danh-muc-chuan.sql` · sinh từ schema
+
+- + bảng `product.group_allowed_attributes`
+- `product.attributes`: đổi check `attributes_platform_kind`
+- `product.product_groups`: + cột `renamed_from`, `split_into`; + check `product_groups_merge_platform`
 
 ## V139 · 21/11/2026 · dong-phieu-nhan-chua-co-sku
 

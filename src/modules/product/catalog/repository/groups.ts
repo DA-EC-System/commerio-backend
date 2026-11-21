@@ -36,6 +36,10 @@ const columns = {
   // Mẫu thông số (#510, Documents/21 mục 5.5).
   specFieldCount: sql<number>`(select count(*)::int from product.group_spec_fields g where g.group_id = product_groups.id)`,
   requiredCount: sql<number>`(select count(*)::int from product.group_spec_fields g where g.group_id = product_groups.id and g.required)`,
+  // Gộp danh mục cũ (#531, Documents/21 mục 5.7): danh mục tách ra theo thứ tự của mảng.
+  renamedFrom: productGroups.renamedFrom,
+  splitInto: sql<{ id: string; name: string }[]>`coalesce((select json_agg(json_build_object('id', s.id, 'name', s.name) order by x.n)
+    from unnest(product_groups.split_into) with ordinality as x(id, n) join product.product_groups s on s.id = x.id), '[]'::json)`,
 };
 
 export type GroupRow = Awaited<ReturnType<typeof findGroups>>[number];
