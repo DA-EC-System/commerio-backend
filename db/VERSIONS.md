@@ -3,18 +3,18 @@
 <!-- Sinh tự động bởi `npm run db:docs` từ db/migrations. Không sửa tay. -->
 
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
-Mới nhất: **V144**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+Mới nhất: **V146**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
 
-## V144 · 21/11/2026 · bang-san-fk
+## V146 · 21/11/2026 · bang-san-fk
 
-`db/migrations/20261121061645_bang-san-fk.sql` · viết tay
+`db/migrations/20261121115038_bang-san-fk.sql` · viết tay
 
 - viết tay: quyền, khoá ngoại, dữ liệu
 - Danh mục sàn channel.marketplaces (Documents/19 mục 3.3, 21/11/2026): chèn các sàn, commerio_app chỉ đọc, khoá ngoại từ mọi cột platform của channel; gắn lại hai khoá ngoại ghép đã gỡ khi đổi kiểu.
 
-## V143 · 21/11/2026 · bang-san
+## V145 · 21/11/2026 · bang-san
 
-`db/migrations/20261121061636_bang-san.sql` · sinh từ schema
+`db/migrations/20261121115033_bang-san.sql` · sinh từ schema
 
 - + bảng `channel.marketplaces`
 - `channel.api_usage`: đổi cột `platform` (kiểu channel.marketplace → text)
@@ -31,12 +31,25 @@ Mới nhất: **V144**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
 - − enum `channel.marketplace`
 - − enum `order.channel_kind`
 
-## V142 · 21/11/2026 · bang-san-go-khoa
+## V144 · 21/11/2026 · bang-san-go-khoa
 
-`db/migrations/20261121061619_bang-san-go-khoa.sql` · viết tay
+`db/migrations/20261121115023_bang-san-go-khoa.sql` · viết tay
 
 - viết tay
 - Gỡ khoá ngoại ghép spec_option_mappings_field_fk (viết tay ở *_anh-xa-hai-tang-du-lieu) trước khi đổi cột platform từ enum sang text (Documents/19 mục 3.3, 21/11/2026): Postgres không đổi kiểu từng bảng được khi khoá ngoại ghép còn.
+
+## V143 · 21/11/2026 · ban-soan-truoc-rls
+
+`db/migrations/20261121101636_ban-soan-truoc-rls.sql` · viết tay
+
+- viết tay: RLS
+- RLS cho bảng mới `product.purchase_product_drafts` (bản soạn trước sản phẩm mới, Documents/19, 21 mục 16.3; vòng lặp của 0002 chỉ chạy một lần).
+
+## V142 · 21/11/2026 · ban-soan-truoc
+
+`db/migrations/20261121101614_ban-soan-truoc.sql` · sinh từ schema
+
+- + bảng `product.purchase_product_drafts`
 
 ## V141 · 21/11/2026 · danh-muc-chuan-du-lieu
 

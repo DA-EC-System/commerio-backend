@@ -38,6 +38,7 @@ const EXPECTED_TABLES: Record<string, readonly string[]> = {
     'product_spec_values',
     'product_variants',
     'products',
+    'purchase_product_drafts',
     'purchase_request_lines',
     'purchase_requests',
     'spec_field_options',

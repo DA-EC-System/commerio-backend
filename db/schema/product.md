@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V144**, 27 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
+Phiên bản **V146**, 28 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
 **Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
 
@@ -486,9 +486,47 @@ Trỏ vào bảng này:
 - `product.product_spec_values.product_id` (khoá ngoại)
 - `product.product_variants.product_id` (khoá ngoại)
 - `product.product_attribute_value_images.product_id, attribute_id` (khoá ngoại viết tay)
+- `product.purchase_product_drafts.product_id` (tham chiếu, không có khoá ngoại)
 - `product.purchase_request_lines.new_parent_product_id` (tham chiếu, không có khoá ngoại)
 - `channel.product_specs.product_id` (tham chiếu, không có khoá ngoại)
 - `channel.shop_products.product_id` (tham chiếu, không có khoá ngoại)
+
+## `product.purchase_product_drafts`
+
+Bản soạn trước nội dung của **một sản phẩm cha mới** trên một đề nghị (Documents/19 `purchase_product_drafts`, 21 mục 16.3 "Bản soạn trước", 29 bước 1); các dòng cùng tên cha mới dùng chung. `parent_key` = tên cha mới chữ thường đã gộp khoảng trắng. Ghi sổ phiếu nhận tạo cha thì chép sang sản phẩm và đặt `product_id`; từ đó phần sản phẩm chỉ đọc. `image_file_ids`, `size_chart_file_id`, `option_images.fileId` là tệp của module files (không khoá ngoại chéo, như `product_images.file_id`); `specs` jsonb không khoá ngoại tới `spec_fields` vì mẫu nhóm có thể đổi trước lúc hàng về, kiểm lại lúc chép. `variant_facts` khoá theo `optionValues` của dòng (dòng nháp có thể xoá, thêm lại). `updated_by`: người soạn gần nhất, nhật ký lúc chép ghi người này.
+
+Khai ở `src/modules/product/purchasing/repository/schema.ts` · module con `purchasing` · theo công ty (`company_id`)
+
+Cột:
+
+- `id` uuid · khoá chính · mặc định `gen_random_uuid()`
+- `company_id` uuid · not null → `core.companies` (theo công ty)
+- `request_id` uuid · not null → `product.purchase_requests.id` (khoá ngoại, ON DELETE cascade)
+- `parent_key` text · not null
+- `description` text · null
+- `brand` text · null
+- `origin_country` text · null
+- `image_file_ids` uuid[] · not null · mặc định `'{}'::uuid[]`
+- `size_chart_file_id` uuid · null → `core.files.id` (tham chiếu, không có khoá ngoại)
+- `specs` jsonb · not null · mặc định `'[]'::jsonb`
+  Cùng hình dạng `specs` của `POST /catalog/products` (21 mục 5.5): `[{ fieldId, optionIds?, newValues?, value? }]`.
+- `image_axis` text · null
+  Tên trục gắn ảnh (không phải số thứ tự: trục của cha mới xếp theo thứ tự dòng).
+- `option_images` jsonb · not null · mặc định `'[]'::jsonb`
+- `variant_defaults` jsonb · not null · mặc định `'{}'::jsonb`
+- `variant_facts` jsonb · not null · mặc định `'[]'::jsonb`
+- `product_id` uuid · null → `product.products.id` (tham chiếu, không có khoá ngoại)
+- `updated_by` uuid · null → `core.accounts` (người thao tác)
+- `created_at` timestamptz · not null · mặc định `now()`
+- `updated_at` timestamptz · not null · mặc định `now()`
+- `version` integer · not null · mặc định `1`
+
+Ràng buộc và index:
+
+- unique (`request_id`, `parent_key`) `purchase_product_drafts_request_parent_uq`
+- check `purchase_product_drafts_images`: `cardinality(image_file_ids) <= 9`
+- check `purchase_product_drafts_brand`: `brand is null or char_length(brand) <= 100`
+- check `purchase_product_drafts_origin`: `origin_country is null or origin_country ~ '^[A-Z]{2}$'`
 
 ## `product.purchase_request_lines`
 
@@ -584,6 +622,7 @@ Ràng buộc và index:
 Trỏ vào bảng này:
 
 - `product.goods_receipts.request_id` (khoá ngoại)
+- `product.purchase_product_drafts.request_id` (khoá ngoại)
 - `product.purchase_request_lines.request_id` (khoá ngoại)
 - `product.supplier_returns.replacement_request_id` (tham chiếu, không có khoá ngoại)
 - `finance.supplier_invoices.purchase_request_id` (tham chiếu, không có khoá ngoại)
