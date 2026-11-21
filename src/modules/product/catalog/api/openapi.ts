@@ -5,6 +5,12 @@ import {
   AddVariantBody,
   Attribute,
   AttributeBody,
+  AttributeValueBody,
+  AttributeValueParams,
+  GroupHiddenBody,
+  GroupListQuery,
+  SpecOptionBody,
+  SpecOptionParams,
   BusinessStatusBody,
   BusinessStatusResult,
   BulkEditPage,
@@ -47,6 +53,8 @@ const common = {
   403: problemResponse('Chưa chọn công ty, công ty hoặc tài khoản bị khoá, hoặc thiếu quyền (`forbidden`)'),
 };
 const invalid = { 422: problemResponse('Dữ liệu không hợp lệ (`validation_failed`, `errors` theo ô)') };
+/** Ghi vào dòng nền tảng (Documents/21 mục 5.6): ghi đè 403 chung. */
+const platform = { 403: problemResponse('Thiếu quyền (`forbidden`), hoặc dữ liệu chuẩn của nền tảng (`platform_managed`)') };
 const missing = (what: string) => ({ 404: problemResponse(`Không tìm thấy ${what} (kể cả của công ty khác)`) });
 
 /** Đường dẫn Swagger của module `catalog`, viết tương đối với /api/v1/catalog (Documents/21 5.2, 5.3). */
@@ -57,7 +65,8 @@ export function registerCatalogOpenApi(registry: OpenAPIRegistry): void {
   path({
     method: 'get',
     path: '/groups',
-    summary: 'Danh sách nhóm hàng',
+    summary: 'Nhóm nền tảng và nhóm của công ty (`scope`); mặc định bỏ nhóm nền tảng công ty đã ẩn',
+    request: { query: GroupListQuery },
     responses: { 200: json('Nhóm hàng, sắp theo tên', z.object({ items: z.array(ProductGroup) })) },
   });
   path({
@@ -70,7 +79,7 @@ export function registerCatalogOpenApi(registry: OpenAPIRegistry): void {
   path({
     method: 'put',
     path: '/groups/:id',
-    summary: 'Sửa nhóm hàng',
+    summary: 'Sửa nhóm hàng. Nhóm nền tảng: chỉ `{ suggest, version }` (cài đặt của công ty)',
     request: { params: IdParams, body: body(UpdateGroupBody) },
     responses: {
       200: json('Nhóm sau khi sửa', ProductGroup),
@@ -82,9 +91,16 @@ export function registerCatalogOpenApi(registry: OpenAPIRegistry): void {
   path({
     method: 'delete',
     path: '/groups/:id',
-    summary: 'Xoá nhóm hàng chưa có sản phẩm nào (kể cả đã lưu trữ)',
+    summary: 'Xoá nhóm hàng của công ty chưa có sản phẩm nào (kể cả đã lưu trữ)',
     request: { params: IdParams, query: VersionQuery },
-    responses: { 204: noContent, 409: problemResponse('`in_use` hoặc `version_conflict`'), ...missing('nhóm hàng'), ...invalid },
+    responses: { 204: noContent, ...platform, 409: problemResponse('`in_use` hoặc `version_conflict`'), ...missing('nhóm hàng'), ...invalid },
+  });
+  path({
+    method: 'put',
+    path: '/groups/:id/hidden',
+    summary: 'Ẩn hoặc hiện nhóm nền tảng cho công ty; không đụng sản phẩm đang ở nhóm. Gọi lại cùng giá trị là 200',
+    request: { params: IdParams, body: body(GroupHiddenBody) },
+    responses: { 200: json('Nhóm sau khi đổi', ProductGroup), ...missing('nhóm hàng'), 422: problemResponse('Nhóm của công ty (`errors.hidden`)') },
   });
   path({
     method: 'post',
@@ -108,19 +124,19 @@ export function registerCatalogOpenApi(registry: OpenAPIRegistry): void {
   path({
     method: 'put',
     path: '/groups/:id/template',
-    summary: 'Đặt mẫu thông số và trục chuẩn của nhóm; tăng `version` nhóm. Không chạm sản phẩm',
+    summary: 'Đặt mẫu thông số và trục chuẩn của nhóm; tăng `version`. Nhóm nền tảng: chỉ phần của công ty, sau dòng chuẩn. Không chạm sản phẩm',
     request: { params: IdParams, body: body(GroupTemplateBody) },
     responses: {
       200: json('Mẫu sau khi sửa', GroupTemplate),
       409: problemResponse('`version_conflict` (kèm `current` là mẫu mới nhất)'),
       ...missing('nhóm hàng'),
-      422: problemResponse('`errors.axisAttributeIds`, `errors["fields.<i>.fieldId"]`'),
+      422: problemResponse('`errors.axisAttributeIds` (gửi cho nhóm nền tảng), `errors["fields.<i>.fieldId"]` (không có, đã có trong mẫu chuẩn)'),
     },
   });
   path({
     method: 'get',
     path: '/spec-fields',
-    summary: 'Thư viện thông số của công ty, xếp theo tên',
+    summary: 'Thư viện thông số: nền tảng và của công ty (`scope`), xếp theo tên',
     responses: { 200: json('Thông số', z.object({ items: z.array(SpecField) })) },
   });
   path({
@@ -142,6 +158,7 @@ export function registerCatalogOpenApi(registry: OpenAPIRegistry): void {
     responses: {
       200: json('Thông số sau khi sửa', SpecField),
       409: problemResponse('`version_conflict`, `name_taken`, hoặc `in_use` (xoá lựa chọn đang dùng, `errors["options.<i>"]`)'),
+      ...platform,
       ...missing('thông số'),
       422: problemResponse('`errors.unit` (đổi đơn vị khi đã có giá trị), `errors["options.<i>"]`'),
     },
@@ -154,8 +171,34 @@ export function registerCatalogOpenApi(registry: OpenAPIRegistry): void {
     responses: {
       204: noContent,
       409: problemResponse('`in_use` kèm `groupCount`, `productCount`, `groups: { id, name }[]` (≤ 20), hoặc `version_conflict`'),
+      ...platform,
       ...missing('thông số'),
       ...invalid,
+    },
+  });
+  path({
+    method: 'post',
+    path: '/spec-fields/:id/options',
+    summary: 'Thêm lựa chọn riêng của công ty vào thông số nền tảng kiểu chọn; đứng sau lựa chọn chuẩn',
+    request: { params: IdParams, body: body(SpecOptionBody) },
+    responses: {
+      201: json('Lựa chọn vừa thêm', z.object({ id: z.uuid(), value: z.string(), position: z.number().int(), scope: z.literal('company'), inUse: z.boolean() })),
+      409: problemResponse('Trùng lựa chọn có sẵn ở cả hai tầng (`name_taken`)'),
+      ...missing('thông số'),
+      422: problemResponse('Thông số của công ty hoặc không phải kiểu chọn (`errors.value`)'),
+    },
+  });
+  path({
+    method: 'delete',
+    path: '/spec-fields/:id/options/:optionId',
+    summary: 'Xoá lựa chọn riêng của công ty; phát `catalog.spec_option_deleted`',
+    request: { params: SpecOptionParams },
+    responses: {
+      204: noContent,
+      409: problemResponse('Có sản phẩm đang dùng (`in_use`)'),
+      ...platform,
+      ...missing('lựa chọn'),
+      422: problemResponse('Thông số của công ty (`errors.value`)'),
     },
   });
   path({
@@ -176,8 +219,8 @@ export function registerCatalogOpenApi(registry: OpenAPIRegistry): void {
   path({
     method: 'get',
     path: '/attributes',
-    summary: 'Danh sách thuộc tính và giá trị',
-    responses: { 200: json('Thuộc tính theo thứ tự tạo', z.array(Attribute)) },
+    summary: 'Thuộc tính và giá trị: nền tảng và của công ty (`scope`)',
+    responses: { 200: json('Thuộc tính nền tảng trước, rồi theo thứ tự tạo', z.array(Attribute)) },
   });
   path({
     method: 'post',
@@ -194,6 +237,7 @@ export function registerCatalogOpenApi(registry: OpenAPIRegistry): void {
     responses: {
       200: json('Thuộc tính sau khi sửa', Attribute),
       409: problemResponse('`version_conflict`, `name_taken`, hoặc `in_use` (bỏ giá trị đang dùng)'),
+      ...platform,
       ...missing('thuộc tính'),
       ...invalid,
     },
@@ -206,8 +250,34 @@ export function registerCatalogOpenApi(registry: OpenAPIRegistry): void {
     responses: {
       204: noContent,
       409: problemResponse('`in_use` hoặc `version_conflict`'),
+      ...platform,
       ...missing('thuộc tính'),
       ...invalid,
+    },
+  });
+  path({
+    method: 'post',
+    path: '/attributes/:id/values',
+    summary: 'Thêm giá trị riêng của công ty vào thuộc tính nền tảng; mã bỏ trống thì sinh, trùng thì thêm hậu tố số',
+    request: { params: IdParams, body: body(AttributeValueBody) },
+    responses: {
+      201: json('Giá trị vừa thêm', z.object({ id: z.uuid(), value: z.string(), code: z.string(), scope: z.literal('company'), inUse: z.boolean() })),
+      409: problemResponse('Trùng giá trị có sẵn (`name_taken`)'),
+      ...missing('thuộc tính'),
+      422: problemResponse('Thuộc tính của công ty (`errors.value`) hoặc mã trùng (`errors.code`)'),
+    },
+  });
+  path({
+    method: 'delete',
+    path: '/attributes/:id/values/:valueId',
+    summary: 'Xoá giá trị riêng của công ty trên thuộc tính nền tảng',
+    request: { params: AttributeValueParams },
+    responses: {
+      204: noContent,
+      409: problemResponse('SKU đang dùng (`in_use`)'),
+      ...platform,
+      ...missing('giá trị'),
+      422: problemResponse('Thuộc tính của công ty (`errors.value`)'),
     },
   });
 

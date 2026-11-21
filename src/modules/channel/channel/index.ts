@@ -8,6 +8,7 @@ import { registerChannelConsumer, workChannelQueue } from './service/background-
 import { runCategoryApply } from './service/category-apply.ts';
 import { runListingPush } from './service/listing-push.ts';
 import { runProductPush } from './service/product-push.ts';
+import { runProductRegroup } from './service/product-regroup.ts';
 import { runRemoteSkusRefresh } from './service/remote-skus.ts';
 import { runSpecFromMatch } from './service/spec-from-match.ts';
 import { onAvailableChanged } from './service/listing-sync.ts';
@@ -20,6 +21,7 @@ import {
   categoryApplyQueue,
   listingPushQueue,
   productPushQueue,
+  productRegroupQueue,
   listingSyncQueue,
   openOrderPullQueue,
   orderPullQueue,
@@ -67,6 +69,8 @@ export const channelModule: ModuleDefinition = {
     await workChannelQueue(listingPushQueue, (job) => runListingPush(port, job));
     // Đẩy theo cha (#295): một sản phẩm sàn nhiều phân loại.
     await workChannelQueue(productPushQueue, (job) => runProductPush(port, job));
+    // Gom lại dữ liệu cũ (#295): tạo một sản phẩm nhiều phân loại rồi xoá các sản phẩm lẻ.
+    await workChannelQueue(productRegroupQueue, (job, attempt) => runProductRegroup(port, job, attempt));
     // Đổi category trên sàn (#467): mỗi (gian hàng, sản phẩm sàn) một việc, như đẩy listing.
     await workChannelQueue(categoryApplyQueue, (job, attempt) => runCategoryApply(port, job, attempt));
     // Tải lại SKU sàn chạy nền (#361): handler bọc `asManual`, lời gọi sàn vẫn tính như bấm tay.

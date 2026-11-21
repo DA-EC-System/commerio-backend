@@ -1,6 +1,6 @@
 // Adapter Lazada Open Platform (Documents/tich-hop-san/lazada.md §2, §3, §7.1). Cách ký chép từ scripts/smoke/lazada.ts.
 import { createHmac } from 'node:crypto';
-import { LAZADA_SPEC_MAPPINGS } from './lazada-spec-mappings.ts';
+import { LAZADA_ATTRIBUTE_LABELS, LAZADA_SPEC_MAPPINGS } from './lazada-spec-mappings.ts';
 import type { LedgerKind } from '../../../../finance/index.ts';
 import {
   type CascadeLevel,
@@ -49,6 +49,7 @@ import { type LazadaCreatedSku, associatedSkuId, lazadaSkuIdentity, lazadaVariat
 import { lazadaReturnMethods } from './lazada-returns.ts';
 import { downloadDocument } from './image-source.ts';
 import { lazadaPackingMethods, type LazadaPackingDeps } from './lazada-packing.ts';
+import { lazadaDeleteMethods } from './lazada-delete.ts';
 
 export interface LazadaConfig {
   appKey: string | undefined;
@@ -1117,6 +1118,7 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
     productFields: { brand: 'brand', country_origin_hb: 'originCountry' },
     defaultBrand: DEFAULT_BRAND,
     defaultSpecMappings: LAZADA_SPEC_MAPPINGS,
+    defaultAttributeLabels: LAZADA_ATTRIBUTE_LABELS,
     async categoryTree(accessToken) {
       const params = { ...(accessToken && { access_token: accessToken }), language_code: 'vi_VN' };
       return lazadaCategoryNodes((await call(config.apiUrl, '/category/tree/get', params, 'GET')).data);
@@ -1165,7 +1167,7 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
       // Nhiều SKU (#295): tra mọi SellerSku; thấy đủ và cùng một sản phẩm thì trả sản phẩm đó, thấy một phần thì từ chối.
       const skus = productSkus(p);
       const sellerSkus = skus.map((s) => s.sellerSku);
-      const found = await skusIn(accessToken, sellerSkus, 'all');
+      const found = p.skipExistingSkuCheck ? [] : await skusIn(accessToken, sellerSkus, 'all'); // #295 regroup: bỏ chống trùng
       const existing = existingFromSkus(sellerSkus, sellerSkus.map((sku) => existingSku(found, sku)));
       if (existing) {
         return existing;
@@ -1241,8 +1243,16 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
       return { skus, live: data.item_status === 'Active' };
     },
     // Gỡ phân loại (#295): RemoveProduct `sku_id_list` = JSON mảng `SkuId_<item>_<sku>` (đo 21/11/2026, L3); giá trị trục
-    // không còn SKU nào dùng thì sàn tự bỏ. Gỡ hết SKU thì mất cả item: bên gọi không gọi hàm này khi đó.
+    // không còn SKU nào dùng thì sàn tự bỏ. Gỡ hết SKU thì sàn xoá cả item (gọi thật 21/11/2026 trên staging: đọc lại báo
+    // E207, request_id 2141336017952241347675401), nên đọc item trước: không còn SKU nào khác chưa xoá thì `last_variant`
+    // như TikTok, bên gọi tắt SKU thay vì gỡ. Bản sao SKU sàn của app có thể cũ, không dùng để quyết.
     async removeVariants(accessToken, itemId, skuIds) {
+      const data = (await call(config.apiUrl, '/product/item/get', { access_token: accessToken, item_id: itemId }, 'GET')).data as Row | undefined;
+      const gone = new Set(skuIds.map(String));
+      const rest = ((Array.isArray(data?.skus) ? data.skus : []) as Row[]).filter(
+        (x) => !gone.has(String(x.SkuId ?? '')) && String(x.Status ?? '').toLowerCase() !== 'deleted',
+      );
+      if (!rest.length) throw new MarketplaceError('rejected', 'last_variant', 'Không gỡ được SKU cuối cùng của sản phẩm trên sàn; tắt SKU');
       await removeSkus(accessToken, itemId, skuIds);
     },
     // UpdateProduct (open.lazada.com "Update a product", tra 11/11/2026): payload như `/product/create`, `SkuId` bắt buộc
@@ -1506,5 +1516,7 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
         };
       });
     },
+    // Xoá sản phẩm sàn cho gom lại dữ liệu cũ (#295).
+    ...lazadaDeleteMethods((apiPath, params, method) => call(config.apiUrl, apiPath, params, method)),
   };
 }

@@ -25,6 +25,7 @@ const EXPECTED_TABLES: Record<string, readonly string[]> = {
   product: [
     'attribute_values',
     'attributes',
+    'company_group_settings',
     'company_product_settings',
     'doc_counters',
     'goods_receipt_lines',
@@ -47,6 +48,8 @@ const EXPECTED_TABLES: Record<string, readonly string[]> = {
     'supplier_return_lines',
     'supplier_returns',
     'suppliers',
+    // Bảng tạm của migration hai tầng (#521); migration channel đọc rồi xoá.
+    'tier_merge_remap',
     'variant_attribute_values',
   ],
   order: [

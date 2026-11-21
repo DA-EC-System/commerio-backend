@@ -122,7 +122,7 @@ export function toVariantView(
   return {
     id: v.id,
     sku: v.sku,
-    attributes: v.attributes.map(({ code: _, platformKind: __, ...a }) => a),
+    attributes: v.attributes.map(({ code: _, platformKind: __, scope: ___, valueScope: ____, ...a }) => a),
     archivedAt: v.archivedAt?.toISOString() ?? null,
     businessStatus: v.businessStatus,
     standardPrice: toDong(standardPrice),

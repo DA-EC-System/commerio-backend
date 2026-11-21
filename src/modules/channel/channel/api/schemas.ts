@@ -1162,3 +1162,18 @@ export const AttributeCatalogList = z
   })
   .strict()
   .meta({ id: 'AttributeCatalogList' });
+
+/** Gom lại dữ liệu cũ (#295, 21 §18.8.4). `separateProducts`: gian hàng mà các SKU chưa gỡ của sản phẩm nằm ở hơn một sản phẩm sàn. */
+export const SeparateProduct = z
+  .object({
+    shopId: z.uuid(),
+    platform: z.string(),
+    productCount: z.number().int().min(2).meta({ description: 'Số sản phẩm sàn khác nhau (`external_product_id`) của listing chưa gỡ' }),
+  })
+  .strict()
+  .meta({ id: 'SeparateProduct' });
+export const ProductListingListWithSeparate = ProductListingList.extend({ separateProducts: z.array(SeparateProduct) })
+  .strict()
+  .meta({ id: 'ProductListingListWithSeparate' });
+export const RegroupParams = z.object({ id: z.string(), productId: z.string().max(60) });
+export const RegroupQueued = z.object({ queued: z.literal(true) }).strict().meta({ id: 'RegroupQueued' });

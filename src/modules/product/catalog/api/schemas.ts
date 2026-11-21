@@ -18,6 +18,11 @@ const name = (what: string, max: number) =>
     .max(max, `Tên ${what} tối đa ${max} ký tự`);
 
 const version = z.number('Thiếu version').int().positive();
+/** `version` của `company_group_settings` khi ghi lên nhóm nền tảng: 0 là công ty chưa có dòng cài đặt (Documents/21 mục 5.6). */
+const settingsVersion = z.number('Thiếu version').int().nonnegative();
+
+/** Tầng của dòng dữ liệu chuẩn (Documents/21 mục 5.6): `platform` dùng chung mọi công ty, chỉ đọc; `company` của công ty. */
+const Scope = z.enum(['platform', 'company']).meta({ id: 'DataScope', description: '`platform`: dữ liệu chuẩn dùng chung, công ty không sửa được' });
 
 /** `id` sai định dạng trả 404 ở service (như bản ghi không tồn tại), nên ở đây chỉ là chuỗi. */
 export const IdParams = z.object({ id: z.string() });
@@ -74,7 +79,23 @@ export const GroupBody = z
       .meta({ description: 'Chép trục chuẩn và mẫu thông số của nhóm này (#510); PUT thay mẫu cũ. Cần catalog.group.manage' }),
   })
   .meta({ id: 'ProductGroupRequest' });
-export const UpdateGroupBody = GroupBody.extend({ version }).meta({ id: 'UpdateProductGroupRequest' });
+export const UpdateGroupBody = GroupBody.extend({
+  name: name('nhóm hàng', 60).optional().meta({ description: 'Bắt buộc với nhóm của công ty; nhóm nền tảng gửi thì 422 `errors.name`' }),
+  version: settingsVersion.meta({ description: 'Nhóm nền tảng: `version` của cài đặt công ty (0 khi chưa đặt)' }),
+}).meta({ id: 'UpdateProductGroupRequest' });
+
+export const GroupListQuery = z.object({
+  includeHidden: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((v) => v === 'true')
+    .meta({ description: '`true`: trả cả nhóm nền tảng công ty đã ẩn (trang Nhóm hàng)' }),
+});
+
+export const GroupHiddenBody = z.object({ hidden: z.boolean('Thiếu hidden') }).meta({ id: 'ProductGroupHiddenRequest' });
+
+export const SpecOptionParams = z.object({ id: z.string(), optionId: z.string() });
+export const AttributeValueParams = z.object({ id: z.string(), valueId: z.string() });
 
 /** Không gửi `productIds` là chuyển cả nhóm (21 mục 5.2). */
 export const MoveProductsBody = z
@@ -125,6 +146,20 @@ const values = z
     });
   });
 
+/** Giá trị riêng thêm vào thuộc tính nền tảng (Documents/21 mục 5.6); mã bỏ trống thì BE sinh, trùng thì thêm hậu tố số. */
+export const AttributeValueBody = z
+  .object({
+    value: z.string('Nhập giá trị').trim().min(1, 'Nhập giá trị').max(MAX_VALUE, `Mỗi giá trị tối đa ${MAX_VALUE} ký tự`),
+    code: z
+      .string()
+      .trim()
+      .toUpperCase()
+      .regex(CODE, 'Mã chỉ gồm A-Z, 0-9, tối đa 6 ký tự')
+      .optional()
+      .or(z.literal('').transform(() => undefined)),
+  })
+  .meta({ id: 'AttributeValueRequest' });
+
 export const AttributeBody = z.object({ name: name('thuộc tính', MAX_ATTRIBUTE_NAME), values }).meta({ id: 'AttributeRequest' });
 export const UpdateAttributeBody = AttributeBody.extend({ version }).meta({ id: 'UpdateAttributeRequest' });
 
@@ -169,7 +204,9 @@ export const GroupTemplateBody = z
     axisAttributeIds: z
       .array(z.string())
       .max(2, 'Tối đa 2 trục phân loại')
-      .refine((ids) => new Set(ids).size === ids.length, 'Hai trục phải khác nhau'),
+      .refine((ids) => new Set(ids).size === ids.length, 'Hai trục phải khác nhau')
+      .optional()
+      .meta({ description: 'Nhóm của công ty: bỏ trống là giữ trục. Nhóm nền tảng: gửi thì 422' }),
     fields: z
       .array(z.object({ fieldId: z.string(), required: z.boolean() }))
       .max(100, 'Tối đa 100 thông số')
@@ -180,9 +217,13 @@ export const GroupTemplateBody = z
           seen.add(f.fieldId);
         });
       }),
-    version,
+    version: settingsVersion.meta({ description: 'Nhóm nền tảng: chỉ gửi phần của công ty; `version` của cài đặt công ty' }),
   })
   .meta({ id: 'GroupTemplateRequest' });
+
+export const SpecOptionBody = z
+  .object({ value: z.string('Nhập lựa chọn').trim().min(1, 'Nhập lựa chọn').max(60, 'Lựa chọn tối đa 60 ký tự') })
+  .meta({ id: 'SpecOptionRequest' });
 
 /** Giá trị một thông số (Documents/21 mục 5.5 `SpecInput`); luật theo kiểu nhập kiểm ở service (cần định nghĩa thông số). */
 const SpecInputBody = z
@@ -459,9 +500,11 @@ export const ProductGroup = z
   .object({
     id: z.uuid(),
     name: z.string(),
+    scope: Scope,
+    hidden: z.boolean().meta({ description: 'Công ty đã ẩn nhóm nền tảng này; nhóm của công ty luôn `false`' }),
     productCount: z.number().int().meta({ description: 'Số sản phẩm, kể cả đã lưu trữ' }),
     axes: z
-      .array(z.object({ attributeId: z.uuid(), name: z.string(), platformKind: z.enum(PLATFORM_KINDS).nullable() }))
+      .array(z.object({ attributeId: z.uuid(), name: z.string(), platformKind: z.enum(PLATFORM_KINDS).nullable(), scope: Scope }))
       .meta({ description: 'Trục phân loại chuẩn của nhóm (0–2, theo thứ tự; #510)' }),
     specFieldCount: z.number().int().meta({ description: 'Số thông số trong mẫu nhóm' }),
     requiredCount: z.number().int().meta({ description: 'Số thông số bắt buộc trong mẫu nhóm' }),
@@ -471,11 +514,13 @@ export const ProductGroup = z
   })
   .meta({ id: 'ProductGroup' });
 
-const SpecOptionRef = z.object({ id: z.uuid(), value: z.string() });
+const OptionRef = z.object({ id: z.uuid(), value: z.string() });
+const SpecOptionRef = OptionRef.extend({ scope: Scope });
 
 export const SpecField = z
   .object({
     id: z.uuid(),
+    scope: Scope,
     code: z.string().meta({ description: 'Khoá ánh xạ sang sàn, không sửa' }),
     name: z.string(),
     input: z.enum(SPEC_INPUTS),
@@ -497,12 +542,14 @@ export const GroupTemplate = z
         attributeId: z.uuid(),
         name: z.string(),
         platformKind: z.enum(PLATFORM_KINDS).nullable(),
+        scope: Scope,
         values: z.array(SpecOptionRef),
       }),
     ),
     fields: z.array(
       z.object({
         fieldId: z.uuid(),
+        scope: Scope.meta({ description: 'Dòng nền tảng đứng trước, rồi dòng công ty' }),
         code: z.string(),
         name: z.string(),
         input: z.enum(SPEC_INPUTS),
@@ -512,7 +559,7 @@ export const GroupTemplate = z
         options: z.array(SpecOptionRef),
       }),
     ),
-    version: z.number().int().meta({ description: '`version` của nhóm' }),
+    version: z.number().int().meta({ description: '`version` của nhóm; nhóm nền tảng: của cài đặt công ty' }),
   })
   .meta({ id: 'GroupTemplate' });
 
@@ -526,8 +573,8 @@ export const ProductSpecValue = z
     allowCustom: z.boolean(),
     required: z.boolean(),
     inTemplate: z.boolean().meta({ description: 'false: thông số ngoài mẫu nhóm hiện tại đang có giá trị ("Thông số khác")' }),
-    selected: z.array(SpecOptionRef),
-    choices: z.array(SpecOptionRef).meta({ description: 'Mọi lựa chọn của thông số' }),
+    selected: z.array(OptionRef),
+    choices: z.array(OptionRef).meta({ description: 'Mọi lựa chọn của thông số' }),
     value: z.string().nullable().meta({ description: 'text, number (chuẩn hoá), date (YYYY-MM-DD)' }),
   })
   .meta({ id: 'ProductSpecValue' });
@@ -545,15 +592,17 @@ export const Attribute = z
   .object({
     id: z.uuid(),
     name: z.string(),
+    scope: Scope,
     platformKind: z
-      .enum(['color', 'size'])
+      .enum(PLATFORM_KINDS)
       .nullable()
-      .meta({ description: 'Thuộc tính chuẩn sàn (chỉ đọc, hệ thống tạo khi lập công ty); bước Variants của trang đẩy ghép sang Màu sắc, Kích cỡ của sàn' }),
+      .meta({ description: 'Loại thuộc tính chuẩn sàn (chỉ thuộc tính nền tảng); bước Variants của trang đẩy ghép theo loại' }),
     values: z.array(
       z.object({
         id: z.uuid(),
         value: z.string(),
         code: z.string().meta({ description: 'Mã ghép vào {VAL} của SKU (V21)' }),
+        scope: Scope,
         inUse: z.boolean().meta({ description: 'Có biến thể dùng (kể cả đã ngừng bán): không xoá được' }),
       }),
     ),

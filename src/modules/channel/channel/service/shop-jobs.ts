@@ -177,3 +177,29 @@ export async function reconcileShopJobs(): Promise<void> {
     if (shop.orderCutoffAt && !shop.openOrdersPulledAt) await sendOpenOrderPull(shop.companyId, shop.id);
   }
 }
+
+/**
+ * Gom lại dữ liệu cũ (#295, Documents/21 §18.8.4): các SKU của một cha đang nằm ở nhiều sản phẩm sàn trên một gian hàng thì
+ * tạo **một** sản phẩm nhiều phân loại rồi xoá các sản phẩm lẻ (`runProductRegroup`, `product-regroup.ts`). `startedAt` (ISO)
+ * là mốc lượt: ghi lên dòng `shop_products` mới, lượt thử lại dùng lại đúng dòng đó. `stately` theo (gian hàng, sản phẩm):
+ * bấm hai lần không xếp thêm. Hạn 15 phút vì tạo, xoá trên sàn nối nhau.
+ */
+export const ProductRegroupJobSchema = JobDataSchema.extend({
+  shopId: z.uuid(),
+  productId: z.uuid(),
+  startedAt: z.iso.datetime(),
+  imageUrls: z.array(z.string()).max(PUSH_IMAGE_MAX),
+  sizeChartUrl: z.string().nullish(),
+});
+export type ProductRegroupJob = z.infer<typeof ProductRegroupJobSchema>;
+export const productRegroupQueue = defineQueue('channel.product_regroup', ProductRegroupJobSchema, {
+  policy: 'stately',
+  attempts: 5,
+  retryDelaySeconds: 30,
+  expireInSeconds: 900,
+});
+
+/** Xếp việc gom lại, đi chung giao dịch của request. */
+export async function sendProductRegroup(job: ProductRegroupJob): Promise<void> {
+  await sendJob(productRegroupQueue, job, { key: `${job.shopId}:${job.productId}` });
+}

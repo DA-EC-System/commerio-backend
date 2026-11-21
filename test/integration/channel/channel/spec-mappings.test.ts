@@ -21,6 +21,8 @@ const tag = randomUUID().slice(0, 8);
 const MATERIAL = `t509_material_${tag}`;
 const MATERIAL2 = `t509_material2_${tag}`;
 const STYLE = `t509_style_${tag}`;
+// Mã của ánh xạ mặc định mà cache chưa có leaf nào chứa: nhãn do adapter khai (`defaultAttributeLabels`).
+const SEEDED = `t509_seeded_${tag}`;
 
 const attr = (code: string, extra: Partial<PlatformAttribute> = {}): PlatformAttribute => ({
   code,
@@ -41,7 +43,10 @@ const leafAttrs = [
   attr(MATERIAL, { label: 'Chất liệu', input: 'multiselect', options: [{ id: 'm1', label: 'Bông' }, { id: 'm2', label: 'Polyester' }] }),
   attr(STYLE, { label: `Phong cách ${tag}`, required: true, allowCustom: true }),
 ];
-registerAdapter('lazada', fakeAdapter({ categoriesNeedToken: false, leafAttributes: async () => leafAttrs }));
+registerAdapter(
+  'lazada',
+  fakeAdapter({ categoriesNeedToken: false, leafAttributes: async () => leafAttrs, defaultAttributeLabels: { [SEEDED]: 'Tính năng vật liệu' } }),
+);
 
 const leaf = `LEAF509-${tag}`;
 let ceo: { token: string; companyId: string };
@@ -146,6 +151,15 @@ describe('ánh xạ thông số sang sàn', () => {
     expect(badOption.body.errors['codes.0.options.0']).toBeDefined();
   });
 
+  it('mã mặc định chưa có trong cache: GET hiện nhãn adapter khai, PUT lại vẫn nhận (không 422)', async () => {
+    const res = await putMapping(styleField, [{ attributeCode: SEEDED }]);
+    expect(res.status).toBe(200);
+    expect(SpecMappingSchema.parse(res.body).codes).toMatchObject([{ attributeCode: SEEDED, attributeLabel: 'Tính năng vật liệu' }]);
+    const row = SpecMappingList.parse((await listMappings()).body).items.find((i) => i.fieldId === styleField)!;
+    expect(row.codes.map((c) => c.attributeLabel)).toEqual(['Tính năng vật liệu']);
+    expect((await putMapping(styleField, [])).status).toBe(200);
+  });
+
   it('bỏ một mã thì CSDL xoá ánh xạ lựa chọn của mã đó', async () => {
     expect((await putMapping(materialField.id, [{ attributeCode: MATERIAL2, options: [] }])).status).toBe(200);
     const { rows } = await testPool().query(`select 1 from channel.spec_option_mappings where field_id = $1 and attribute_code = $2`, [materialField.id, MATERIAL]);
@@ -164,6 +178,15 @@ describe('ánh xạ thông số sang sàn', () => {
     expect(res.status).toBe(200);
     expect(res.body.items.map((i: { code: string }) => i.code).sort()).toEqual([MATERIAL, MATERIAL2].sort());
     expect((await request(app).get('/api/v1/channel/platforms/lazada/attribute-catalog?search=a').set(auth(ceo.token))).status).toBe(422);
+  });
+
+  it('attribute-catalog: tìm không dấu theo nhãn, theo mã không phân biệt hoa thường', async () => {
+    const find = async (q: string) =>
+      (await request(app).get(`/api/v1/channel/platforms/lazada/attribute-catalog?search=${encodeURIComponent(q)}`).set(auth(ceo.token))).body.items.map(
+        (i: { code: string }) => i.code,
+      );
+    expect(await find(`phong cach ${tag}`)).toEqual([STYLE]);
+    expect(await find(STYLE.toUpperCase())).toEqual([STYLE]);
   });
 });
 

@@ -16,9 +16,9 @@ let container: StartedPostgreSqlContainer | undefined;
 const MIGRATOR = 'commerio_migrator';
 
 // Một container cho cả lượt test, cùng ảnh với deploy/compose.yaml; chạy đúng các file migration thật.
-// Staging là PostgreSQL 17: chạy thử bằng TEST_PG_IMAGE=pgvector/pgvector:pg17 npm test.
+// PostgreSQL 17 như staging (Supabase). Thử bản khác: TEST_PG_IMAGE=pgvector/pgvector:pg18 npm test.
 export async function setup(project: TestProject): Promise<void> {
-  container = await new PostgreSqlContainer(process.env.TEST_PG_IMAGE ?? 'pgvector/pgvector:pg18').start();
+  container = await new PostgreSqlContainer(process.env.TEST_PG_IMAGE ?? 'pgvector/pgvector:pg17').start();
   const admin = new pg.Client({ connectionString: container.getConnectionUri() });
   await admin.connect();
   await admin.query(`create role ${MIGRATOR} login password '${MIGRATOR}' nosuperuser createrole`);

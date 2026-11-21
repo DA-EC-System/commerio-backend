@@ -76,7 +76,7 @@ Mỗi người code trên **database riêng trong Docker** ở máy mình. Cả 
 
 | Database | Ai dùng | Kết nối |
 |---|---|---|
-| Docker trên máy | Người làm backend, để code và thử | `localhost:5432`, user `commerio`, mật khẩu `commerio`, database `commerio` (khai trong `deploy/compose.yaml`, chuỗi kết nối ở `DATABASE_URL` trong `.env`) |
+| Docker trên máy | Người làm backend, để code và thử | PostgreSQL 17 (cùng bản Supabase staging), `localhost:5432`, user `commerio`, mật khẩu `commerio`, database `commerio` (khai trong `deploy/compose.yaml`, chuỗi kết nối ở `DATABASE_URL` trong `.env`) |
 | Staging trên Supabase | FE, demo, xem dữ liệu chung | Chuỗi **Session pooler** do trưởng nhóm gửi riêng, không commit |
 | PostgreSQL tạm khi chạy test | Vitest tự bật và xoá | Không cần làm gì |
 
@@ -128,6 +128,7 @@ Migration chỉ đồng bộ **cấu trúc bảng** và **dữ liệu cố đị
 | Hai người cùng sinh migration trên hai nhánh | Tên file không còn trùng, nhưng `meta/_journal.json` sẽ xung đột khi rebase. Người merge sau vẫn phải xoá migration của mình (file `.sql`, snapshot, dòng journal), rebase lên `main`, chạy lại `db:generate` (lý do ở `db/CLAUDE.md`) |
 | DB trên máy rối, migrate lỗi | `docker compose -f deploy/compose.yaml down -v`, rồi `npm run infra:up` và `npm run db:migrate`. Chỉ mất dữ liệu test trên máy mình |
 | `npm test` hoặc `infra:up` báo không kết nối được Docker | Mở Docker Desktop, chờ chạy xong rồi thử lại |
+| Sau khi kéo bản dùng PostgreSQL 17 (trước là 18): DB máy trống, mất dữ liệu cũ | PG17 không đọc được dữ liệu của PG18 nên compose dùng volume mới `pgdata17`. Chạy `npm run infra:up`, `npm run db:migrate`, `npm run db:seed`. Xoá volume cũ cho đỡ tốn ổ: `docker compose -f deploy/compose.yaml down` rồi `docker volume rm commerio_pgdata` |
 | Cổng 5432 đã bị chiếm | Máy đang có PostgreSQL khác. Tắt nó, hoặc đổi cổng trong `deploy/compose.yaml` và `DATABASE_URL` cho khớp |
 
 ## Chạy song song nhiều worktree

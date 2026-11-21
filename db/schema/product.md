@@ -2,20 +2,20 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V134**, 25 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
+Phiên bản **V135**, 26 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
 **Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
 
 ## `product.attribute_values`
 
-Giá trị thuộc tính; `code` là phần ghép vào {VAL} của SKU (19-D27, D36).
+Giá trị thuộc tính; `code` là phần ghép vào {VAL} của SKU (19-D27, D36). Hai tầng: công ty thêm giá trị riêng vào thuộc tính nền tảng (dòng có `company_id`); giá trị và mã không trùng giá trị nền tảng cùng thuộc tính (service).
 
 Khai ở `src/modules/product/catalog/repository/schema.ts` · module con `catalog` · theo công ty (`company_id`)
 
 Cột:
 
 - `id` uuid · khoá chính · mặc định `gen_random_uuid()`
-- `company_id` uuid · not null → `core.companies` (theo công ty)
+- `company_id` uuid · null → `core.companies` (theo công ty)
 - `attribute_id` uuid · not null → `product.attributes.id` (khoá ngoại)
 - `value` text · not null
 - `code` text · not null
@@ -25,9 +25,11 @@ Cột:
 
 Ràng buộc và index:
 
-- unique (`attribute_id`, `code`) `attribute_values_attribute_id_code_unique`
 - unique (`id`, `attribute_id`) `attribute_values_id_attribute_uq`
-- unique index (`attribute_id`, `lower("value")`) `attribute_values_attribute_lower_value_uq`
+- unique index (`attribute_id`, `lower("value")`) `attribute_values_platform_lower_value_uq` where `company_id is null`
+- unique index (`attribute_id`, `code`) `attribute_values_platform_code_uq` where `company_id is null`
+- unique index (`company_id`, `attribute_id`, `lower("value")`) `attribute_values_company_lower_value_uq` where `company_id is not null`
+- unique index (`company_id`, `attribute_id`, `code`) `attribute_values_company_code_uq` where `company_id is not null`
 - check `attribute_values_code_format`: `code ~ '^[A-Z0-9]{1,6}$'`
 - check `attribute_values_value_length`: `char_length(value) <= 20`
 
@@ -38,23 +40,26 @@ Trỏ vào bảng này:
 
 ## `product.attributes`
 
+Thuộc tính (trục phân loại), hai tầng: Màu sắc, Kích cỡ, Dung tích, Hương vị là dòng nền tảng.
+
 Khai ở `src/modules/product/catalog/repository/schema.ts` · module con `catalog` · theo công ty (`company_id`)
 
 Cột:
 
 - `id` uuid · khoá chính · mặc định `gen_random_uuid()`
-- `company_id` uuid · not null → `core.companies` (theo công ty)
+- `company_id` uuid · null → `core.companies` (theo công ty)
 - `name` text · not null
 - `platform_kind` text · null
-  Thuộc tính chuẩn sàn, do hệ thống gắn khi lập công ty; API chỉ đọc.
+  Thuộc tính chuẩn sàn: chỉ dòng nền tảng mang (CHECK), mỗi loại một dòng; API chỉ đọc.
 - `created_at` timestamptz · not null · mặc định `now()`
 - `updated_at` timestamptz · not null · mặc định `now()`
 - `version` integer · not null · mặc định `1`
 
 Ràng buộc và index:
 
-- unique index (`company_id`, `lower("name")`) `attributes_company_lower_name_uq`
-- unique index (`company_id`, `platform_kind`) `attributes_company_platform_kind_uq` where `platform_kind is not null`
+- unique index (`lower("name")`) `attributes_platform_lower_name_uq` where `company_id is null`
+- unique index (`company_id`, `lower("name")`) `attributes_company_lower_name_uq` where `company_id is not null`
+- unique index (`platform_kind`) `attributes_platform_kind_uq` where `company_id is null and platform_kind is not null`
 - check `attributes_platform_kind`: `platform_kind in ('color', 'size', 'volume', 'flavor')`
 - check `attributes_name_length`: `char_length(name) <= 15`
 
@@ -65,6 +70,34 @@ Trỏ vào bảng này:
 - `product.product_groups.axis2_attribute_id` (khoá ngoại)
 - `product.products.image_attribute_id` (khoá ngoại)
 - `channel.axis_mappings.attribute_id` (tham chiếu, không có khoá ngoại)
+
+## `product.company_group_settings`
+
+Cài đặt của một công ty trên nhóm nền tảng (dữ liệu chung, Documents/19 D12): ẩn nhóm không bán, gợi ý giá và ngưỡng tồn riêng. Chỉ cho nhóm nền tảng (service kiểm); nhóm của công ty giữ gợi ý ở `product_groups`. Chưa có dòng là không ẩn, gợi ý trống, `version` 0 (API). RLS `company_isolation` ở `*_du-lieu-chung-rls`.
+
+Khai ở `src/modules/product/catalog/repository/schema.ts` · module con `catalog` · theo công ty (`company_id`)
+
+Cột:
+
+- `company_id` uuid · khoá chính → `core.companies` (theo công ty)
+- `group_id` uuid · khoá chính → `product.product_groups.id` (khoá ngoại, ON DELETE cascade)
+- `hidden` boolean · not null · mặc định `false`
+- `margin_coefficient` numeric(18,2) · null
+- `price_rounding` integer · null
+- `reorder_lead_days` integer · null
+- `reorder_safety_qty` integer · null
+- `reorder_default_qty` integer · null
+- `created_at` timestamptz · not null · mặc định `now()`
+- `updated_at` timestamptz · not null · mặc định `now()`
+- `version` integer · not null · mặc định `1`
+
+Ràng buộc và index:
+
+- khoá chính (`company_id`, `group_id`)
+- index (`group_id`) `company_group_settings_group_id_index`
+- check `company_group_settings_margin_coefficient`: `margin_coefficient >= 1`
+- check `company_group_settings_price_rounding`: `price_rounding > 0`
+- check `company_group_settings_reorder_config`: `reorder_lead_days >= 0 and reorder_safety_qty >= 0 and reorder_default_qty >= 0`
 
 ## `product.company_product_settings`
 
@@ -197,9 +230,11 @@ Khai ở `src/modules/product/catalog/repository/schema.ts` · module con `catal
 
 Cột:
 
-- `company_id` uuid · not null → `core.companies` (theo công ty)
-- `group_id` uuid · khoá chính → `product.product_groups.id` (khoá ngoại, ON DELETE cascade)
-- `field_id` uuid · khoá chính → `product.spec_fields.id` (khoá ngoại, ON DELETE restrict)
+- `id` uuid · khoá chính · mặc định `gen_random_uuid()`
+- `company_id` uuid · null → `core.companies` (theo công ty)
+  Hai tầng: dòng nền tảng là mẫu chuẩn; dòng công ty trên nhóm nền tảng là phần công ty thêm (chốt 1).
+- `group_id` uuid · not null → `product.product_groups.id` (khoá ngoại, ON DELETE cascade)
+- `field_id` uuid · not null → `product.spec_fields.id` (khoá ngoại, ON DELETE restrict)
 - `required` boolean · not null · mặc định `false`
 - `position` integer · not null
 - `created_at` timestamptz · not null · mặc định `now()`
@@ -207,7 +242,7 @@ Cột:
 
 Ràng buộc và index:
 
-- khoá chính (`group_id`, `field_id`)
+- unique (`group_id`, `field_id`, `company_id`) NULLS NOT DISTINCT `group_spec_fields_group_field_company_uq`
 - index (`field_id`) `group_spec_fields_field_id_index`
 - check `group_spec_fields_position`: `position >= 0`
 
@@ -238,14 +273,14 @@ Ràng buộc và index:
 
 ## `product.product_groups`
 
-Nhóm hàng (Documents/19 D11, 21 mục 5.2): một cấp, không gắn sàn, không gắn SKU. Tên không trùng theo chữ thường trong công ty. Gợi ý `null` thì theo cài đặt công ty.
+Nhóm hàng (Documents/19 D11, 21 mục 5.2): một cấp, không gắn sàn, không gắn SKU. Tên không trùng theo chữ thường trong tầng. Gợi ý `null` thì theo cài đặt công ty; nhóm nền tảng không mang gợi ý (gợi ý theo công ty ở `company_group_settings`).
 
 Khai ở `src/modules/product/catalog/repository/schema.ts` · module con `catalog` · theo công ty (`company_id`)
 
 Cột:
 
 - `id` uuid · khoá chính · mặc định `gen_random_uuid()`
-- `company_id` uuid · not null → `core.companies` (theo công ty)
+- `company_id` uuid · null → `core.companies` (theo công ty)
 - `name` text · not null
 - `margin_coefficient` numeric(18,2) · null
 - `price_rounding` integer · null
@@ -261,7 +296,8 @@ Cột:
 
 Ràng buộc và index:
 
-- unique index (`company_id`, `lower("name")`) `product_groups_company_lower_name_uq`
+- unique index (`lower("name")`) `product_groups_platform_lower_name_uq` where `company_id is null`
+- unique index (`company_id`, `lower("name")`) `product_groups_company_lower_name_uq` where `company_id is not null`
 - check `product_groups_margin_coefficient`: `margin_coefficient >= 1`
 - check `product_groups_price_rounding`: `price_rounding > 0`
 - check `product_groups_reorder_config`: `reorder_lead_days >= 0 and reorder_safety_qty >= 0 and reorder_default_qty >= 0`
@@ -270,6 +306,7 @@ Ràng buộc và index:
 
 Trỏ vào bảng này:
 
+- `product.company_group_settings.group_id` (khoá ngoại)
 - `product.group_spec_fields.group_id` (khoá ngoại)
 - `product.products.group_id` (khoá ngoại)
 - `product.purchase_request_lines.new_group_id` (tham chiếu, không có khoá ngoại)
@@ -357,7 +394,7 @@ Ràng buộc và index:
 - index (`product_id`) `product_variants_product_id_index`
 - check `product_variants_archived`: `(business_status = 'archived') = (archived_at is not null)`
 - check `product_variants_prices`: `standard_price >= 0 and target_net_price >= 0`
-- check `product_variants_dimensions`: `weight_g between 1 and 50000 and length_mm between 1 and 2000 and width_mm between 1 and 2000 and height_mm between 1 and 2000`
+- check `product_variants_dimensions`: `weight_g > 0 and length_mm > 0 and width_mm > 0 and height_mm > 0`
 - check `product_variants_sku_length`: `char_length(sku) <= 50`
 
 Trỏ vào bảng này:
@@ -531,7 +568,8 @@ Khai ở `src/modules/product/catalog/repository/schema.ts` · module con `catal
 Cột:
 
 - `id` uuid · khoá chính · mặc định `gen_random_uuid()`
-- `company_id` uuid · not null → `core.companies` (theo công ty)
+- `company_id` uuid · null → `core.companies` (theo công ty)
+  Hai tầng: công ty thêm lựa chọn riêng vào thông số nền tảng (chốt 4).
 - `field_id` uuid · not null → `product.spec_fields.id` (khoá ngoại, ON DELETE cascade)
 - `value` text · not null
 - `position` integer · not null
@@ -542,7 +580,8 @@ Cột:
 Ràng buộc và index:
 
 - unique (`id`, `field_id`) `spec_field_options_id_field_uq`
-- unique index (`field_id`, `lower("value")`) `spec_field_options_field_lower_value_uq`
+- unique index (`field_id`, `lower("value")`) `spec_field_options_platform_lower_value_uq` where `company_id is null`
+- unique index (`company_id`, `field_id`, `lower("value")`) `spec_field_options_company_lower_value_uq` where `company_id is not null`
 - check `spec_field_options_value_length`: `char_length(value) between 1 and 60`
 - check `spec_field_options_position`: `position >= 0`
 
@@ -560,7 +599,7 @@ Khai ở `src/modules/product/catalog/repository/schema.ts` · module con `catal
 Cột:
 
 - `id` uuid · khoá chính · mặc định `gen_random_uuid()`
-- `company_id` uuid · not null → `core.companies` (theo công ty)
+- `company_id` uuid · null → `core.companies` (theo công ty)
 - `code` text · not null
 - `name` text · not null
 - `input` text · not null
@@ -573,8 +612,10 @@ Cột:
 
 Ràng buộc và index:
 
-- unique (`company_id`, `code`) `spec_fields_company_code_uq`
-- unique index (`company_id`, `lower("name")`) `spec_fields_company_lower_name_uq`
+- unique index (`code`) `spec_fields_platform_code_uq` where `company_id is null`
+- unique index (`lower("name")`) `spec_fields_platform_lower_name_uq` where `company_id is null`
+- unique index (`company_id`, `code`) `spec_fields_company_code_uq` where `company_id is not null`
+- unique index (`company_id`, `lower("name")`) `spec_fields_company_lower_name_uq` where `company_id is not null`
 - check `spec_fields_input`: `input in ('select', 'multiselect', 'text', 'number', 'date')`
 - check `spec_fields_code_format`: `code ~ '^[a-z0-9_]{1,40}$'`
 - check `spec_fields_name_length`: `char_length(name) between 1 and 40`

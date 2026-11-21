@@ -19,6 +19,8 @@ export interface PlatformContext extends ModuleContext {
   readonly platformAccount?: (
     accountId: string,
   ) => Promise<{ isPlatformAdmin: boolean; passwordChangedAt: Date | null } | undefined>;
+  /** Id vai trò CEO có sẵn (`access` import `platform` nên tiêm vào): route xoá công ty thử chỉ cho CEO. */
+  readonly ceoRoleId?: string;
   /** Công ty đang chọn đã có dữ liệu trong phân hệ chưa, gọi trong `withCompany`. Không có hàm là chưa có (vd report). */
   readonly moduleData?: Partial<Record<OptionalModule, () => Promise<boolean>>>;
 }

@@ -80,7 +80,8 @@ beforeAll(async () => {
   const q = testPool();
   const c = await createCompany({ optionalModules: [] });
   ceo = { token: c.ceo.token, companyId: c.companyId };
-  const attrs = await q.query('select id, platform_kind from product.attributes where company_id = $1', [c.companyId]);
+  // Thuộc tính chuẩn là dòng nền tảng dùng chung (#521).
+  const attrs = await q.query('select id, platform_kind from product.attributes where company_id is null');
   colorAttr = attrs.rows.find((r) => r.platform_kind === 'color').id;
   sizeAttr = attrs.rows.find((r) => r.platform_kind === 'size').id;
   const v = await createVariant(c.companyId);

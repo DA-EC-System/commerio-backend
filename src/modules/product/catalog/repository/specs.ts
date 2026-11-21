@@ -11,31 +11,41 @@ import {
   specFields,
 } from './schema.ts';
 
-// Thông số sản phẩm (Documents/21 mục 5.5, 19 §3.2). Mọi hàm chạy trong `withCompany` của service.
+// Thông số sản phẩm (Documents/21 mục 5.5, 5.6; 19 §3.2). Mọi hàm chạy trong `withCompany` của service: RLS cho thấy
+// dòng nền tảng (`company_id` NULL) và dòng của công ty đang chọn. Dòng nền tảng xếp trước dòng công ty. Số đếm chỉ tính
+// dữ liệu của công ty (sản phẩm một tầng; dòng mẫu đếm dòng công ty).
 // Subquery viết SQL có bí danh: Drizzle in cột không kèm tên bảng khi chỉ select một bảng.
 
 const optionUsed = sql`exists (select 1 from product.product_spec_values psv where psv.option_id = spec_field_options.id)`;
 
+const platformFirst = (col: unknown) => sql`${col} is not null`;
+
 /**
- * `companyId`: lọc tường minh, cho luồng chạy bằng role chủ bảng (bỏ qua RLS), vd seed trong giao dịch đăng ký.
+ * `companyId`: lọc tường minh (dòng nền tảng và dòng của công ty đó), cho luồng chạy bằng role chủ bảng (bỏ qua RLS).
  */
 export async function findSpecFields(id?: string, companyId?: string) {
   const rows = await getDb()
     .select({
       id: specFields.id,
+      companyId: specFields.companyId,
       code: specFields.code,
       name: specFields.name,
       input: specFields.input,
       unit: specFields.unit,
       allowCustom: specFields.allowCustom,
-      groupCount: sql<number>`(select count(*)::int from product.group_spec_fields g where g.field_id = spec_fields.id)`,
+      groupCount: sql<number>`(select count(*)::int from product.group_spec_fields g where g.field_id = spec_fields.id and g.company_id is not null)`,
       productCount: sql<number>`(select count(distinct v.product_id)::int from product.product_spec_values v where v.field_id = spec_fields.id)`,
       updatedAt: specFields.updatedAt,
       version: specFields.version,
     })
     .from(specFields)
-    .where(and(id ? eq(specFields.id, id) : undefined, companyId ? eq(specFields.companyId, companyId) : undefined));
-  const options = rows.length ? await findOptions(rows.map((r) => r.id)) : [];
+    .where(
+      and(
+        id ? eq(specFields.id, id) : undefined,
+        companyId ? sql`(${specFields.companyId} is null or ${specFields.companyId} = ${companyId})` : undefined,
+      ),
+    );
+  const options = rows.length ? await findOptions(rows.map((r) => r.id), companyId) : [];
   const byField = Map.groupBy(options, (o) => o.fieldId);
   return rows.map((r) => ({
     ...r,
@@ -43,18 +53,24 @@ export async function findSpecFields(id?: string, companyId?: string) {
   }));
 }
 
-export function findOptions(fieldIds: readonly string[]) {
+export function findOptions(fieldIds: readonly string[], companyId?: string) {
   return getDb()
     .select({
       id: specFieldOptions.id,
+      companyId: specFieldOptions.companyId,
       fieldId: specFieldOptions.fieldId,
       value: specFieldOptions.value,
       position: specFieldOptions.position,
       inUse: sql<boolean>`${optionUsed}`,
     })
     .from(specFieldOptions)
-    .where(inArray(specFieldOptions.fieldId, [...fieldIds]))
-    .orderBy(asc(specFieldOptions.position), asc(specFieldOptions.id));
+    .where(
+      and(
+        inArray(specFieldOptions.fieldId, [...fieldIds]),
+        companyId ? sql`(${specFieldOptions.companyId} is null or ${specFieldOptions.companyId} = ${companyId})` : undefined,
+      ),
+    )
+    .orderBy(platformFirst(specFieldOptions.companyId), asc(specFieldOptions.position), asc(specFieldOptions.id));
 }
 
 export async function specFieldNameExists(name: string, exceptId?: string): Promise<boolean> {
@@ -177,6 +193,7 @@ export async function findGroupAxes(groupIds: readonly string[], withValues = fa
     ? await getDb()
         .select({
           id: attributes.id,
+          companyId: attributes.companyId,
           name: attributes.name,
           platformKind: attributes.platformKind,
         })
@@ -188,12 +205,13 @@ export async function findGroupAxes(groupIds: readonly string[], withValues = fa
       ? await getDb()
           .select({
             id: attributeValues.id,
+            companyId: attributeValues.companyId,
             attributeId: attributeValues.attributeId,
             value: attributeValues.value,
           })
           .from(attributeValues)
           .where(inArray(attributeValues.attributeId, attrIds))
-          .orderBy(asc(attributeValues.createdAt), asc(attributeValues.id))
+          .orderBy(platformFirst(attributeValues.companyId), asc(attributeValues.createdAt), asc(attributeValues.id))
       : [];
   const valuesBy = Map.groupBy(values, (v) => v.attributeId);
   const attrBy = new Map(attrs.map((a) => [a.id, a]));
@@ -207,6 +225,7 @@ export async function findGroupAxes(groupIds: readonly string[], withValues = fa
           const a = attrBy.get(attributeId)!;
           return {
             attributeId,
+            companyId: a.companyId,
             name: a.name,
             platformKind: a.platformKind,
             values: (valuesBy.get(attributeId) ?? []).map(({ attributeId: _, ...v }) => v),
@@ -219,17 +238,19 @@ export async function findGroupAxes(groupIds: readonly string[], withValues = fa
 
 export interface AxisRow {
   attributeId: string;
+  companyId: string | null;
   name: string;
   platformKind: string | null;
-  values: { id: string; value: string }[];
+  values: { id: string; companyId: string | null; value: string }[];
 }
 
-/** Thông số của mẫu các nhóm, theo `position`, kèm định nghĩa thông số. */
+/** Thông số của mẫu các nhóm: dòng nền tảng trước, rồi dòng công ty, mỗi tầng theo `position`; kèm định nghĩa thông số. */
 export function findTemplateFields(groupIds: readonly string[]) {
   if (!groupIds.length) return Promise.resolve([]);
   return getDb()
     .select({
       groupId: groupSpecFields.groupId,
+      companyId: groupSpecFields.companyId,
       fieldId: groupSpecFields.fieldId,
       required: groupSpecFields.required,
       position: groupSpecFields.position,
@@ -242,7 +263,7 @@ export function findTemplateFields(groupIds: readonly string[]) {
     .from(groupSpecFields)
     .innerJoin(specFields, eq(specFields.id, groupSpecFields.fieldId))
     .where(inArray(groupSpecFields.groupId, [...groupIds]))
-    .orderBy(asc(groupSpecFields.position));
+    .orderBy(platformFirst(groupSpecFields.companyId), asc(groupSpecFields.position));
 }
 
 export async function setGroupAxes(groupId: string, axis1: string | null, axis2: string | null): Promise<void> {
@@ -254,7 +275,10 @@ export async function replaceTemplateFields(
   groupId: string,
   fields: readonly { fieldId: string; required: boolean }[],
 ): Promise<void> {
-  await getDb().delete(groupSpecFields).where(eq(groupSpecFields.groupId, groupId));
+  // Chỉ phần của công ty: dòng nền tảng của mẫu chuẩn giữ nguyên (RLS cũng chặn).
+  await getDb()
+    .delete(groupSpecFields)
+    .where(and(eq(groupSpecFields.groupId, groupId), eq(groupSpecFields.companyId, companyId)));
   if (fields.length) {
     await getDb()
       .insert(groupSpecFields)
@@ -270,7 +294,10 @@ export async function replaceTemplateFields(
   }
 }
 
-/** Chép trục chuẩn và mẫu thông số của nhóm nguồn sang nhóm đích (thay mẫu cũ của đích). */
+/**
+ * Chép trục chuẩn và mẫu thông số của nhóm nguồn sang nhóm đích của công ty (thay mẫu cũ của đích). Nguồn là nhóm nền
+ * tảng thì dòng nền tảng và dòng công ty của nguồn đều thành dòng công ty của đích, cùng thứ tự hiển thị.
+ */
 export async function copyTemplate(companyId: string, fromId: string, toId: string): Promise<void> {
   const [from] = await getDb()
     .select({ axis1: productGroups.axis1AttributeId, axis2: productGroups.axis2AttributeId })
@@ -281,7 +308,7 @@ export async function copyTemplate(companyId: string, fromId: string, toId: stri
     .select({ fieldId: groupSpecFields.fieldId, required: groupSpecFields.required })
     .from(groupSpecFields)
     .where(eq(groupSpecFields.groupId, fromId))
-    .orderBy(asc(groupSpecFields.position));
+    .orderBy(platformFirst(groupSpecFields.companyId), asc(groupSpecFields.position));
   await replaceTemplateFields(companyId, toId, fields);
 }
 
@@ -313,12 +340,14 @@ export function findProductSpecValues(productIds: readonly string[]) {
     .select({
       productId: productSpecValues.productId,
       fieldId: productSpecValues.fieldId,
+      fieldCompanyId: specFields.companyId,
       code: specFields.code,
       name: specFields.name,
       input: specFields.input,
       unit: specFields.unit,
       allowCustom: specFields.allowCustom,
       optionId: productSpecValues.optionId,
+      optionCompanyId: specFieldOptions.companyId,
       optionValue: specFieldOptions.value,
       valueText: productSpecValues.valueText,
     })
@@ -326,7 +355,7 @@ export function findProductSpecValues(productIds: readonly string[]) {
     .innerJoin(specFields, eq(specFields.id, productSpecValues.fieldId))
     .leftJoin(specFieldOptions, eq(specFieldOptions.id, productSpecValues.optionId))
     .where(inArray(productSpecValues.productId, [...productIds]))
-    .orderBy(asc(specFieldOptions.position), asc(specFieldOptions.id));
+    .orderBy(platformFirst(specFieldOptions.companyId), asc(specFieldOptions.position), asc(specFieldOptions.id));
 }
 
 /** Thay giá trị của một thông số của sản phẩm (xoá rồi chèn). */
@@ -376,7 +405,7 @@ export async function missingRequiredSpecs(productIds: readonly string[]): Promi
       sql`, `,
     )})
       and not exists (select 1 from product.product_spec_values v where v.product_id = p.id and v.field_id = g.field_id)
-    order by g.position`);
+    order by g.company_id is not null, g.position`);
   const result = new Map<string, string[]>();
   for (const r of rows) result.set(r.product_id, [...(result.get(r.product_id) ?? []), r.field_id]);
   return result;
@@ -388,6 +417,7 @@ export async function findSpecFieldsByIds(ids: readonly string[]) {
   const rows = await getDb()
     .select({
       id: specFields.id,
+      companyId: specFields.companyId,
       code: specFields.code,
       name: specFields.name,
       input: specFields.input,
@@ -401,25 +431,41 @@ export async function findSpecFieldsByIds(ids: readonly string[]) {
   return rows.map((r) => ({ ...r, options: (byField.get(r.id) ?? []).map((o) => ({ id: o.id, value: o.value })) }));
 }
 
+const visibleOptions = (fieldId: string) =>
+  getDb()
+    .select({ id: specFieldOptions.id, companyId: specFieldOptions.companyId, value: specFieldOptions.value })
+    .from(specFieldOptions)
+    .where(eq(specFieldOptions.fieldId, fieldId));
+
+/** Lựa chọn theo `lower(value)`, dòng nền tảng thắng dòng công ty (trùng khác tầng dùng dòng nền tảng, Documents/21 mục 5.6). */
+function optionKeys(rows: readonly { id: string; companyId: string | null; value: string }[]) {
+  const byKey = new Map<string, string>();
+  for (const r of [...rows].sort((a, b) => Number(a.companyId !== null) - Number(b.companyId !== null))) {
+    if (!byKey.has(r.value.toLowerCase())) byKey.set(r.value.toLowerCase(), r.id);
+  }
+  return byKey;
+}
+
 /**
- * Lựa chọn mới gõ ở form sản phẩm (`allowCustom`): thêm cuối danh sách; trùng `lower(value)` với lựa chọn vừa được request
- * khác thêm thì dùng lựa chọn đó. Trả id theo thứ tự `values`.
+ * Lựa chọn mới gõ ở form sản phẩm (`allowCustom`): trùng `lower(value)` lựa chọn có sẵn (cả hai tầng) thì dùng lựa chọn
+ * đó; không thì thêm lựa chọn của công ty cuối danh sách (kể cả trên thông số nền tảng). Request khác vừa thêm cùng giá trị
+ * thì dùng dòng đó. Trả id theo thứ tự `values`.
  */
 export async function ensureOptions(companyId: string, fieldId: string, values: readonly string[]): Promise<string[]> {
   if (!values.length) return [];
-  const [max] = await getDb()
-    .select({ p: sql<number>`coalesce(max(${specFieldOptions.position}), -1)::int` })
-    .from(specFieldOptions)
-    .where(eq(specFieldOptions.fieldId, fieldId));
-  await getDb()
-    .insert(specFieldOptions)
-    .values(values.map((value, i) => ({ companyId, fieldId, value, position: (max?.p ?? -1) + 1 + i })))
-    .onConflictDoNothing();
-  const rows = await getDb()
-    .select({ id: specFieldOptions.id, value: specFieldOptions.value })
-    .from(specFieldOptions)
-    .where(eq(specFieldOptions.fieldId, fieldId));
-  const byKey = new Map(rows.map((r) => [r.value.toLowerCase(), r.id]));
+  const existing = optionKeys(await visibleOptions(fieldId));
+  const fresh = values.filter((v, i) => !existing.has(v.toLowerCase()) && values.findIndex((x) => x.toLowerCase() === v.toLowerCase()) === i);
+  if (fresh.length) {
+    const [max] = await getDb()
+      .select({ p: sql<number>`coalesce(max(${specFieldOptions.position}), -1)::int` })
+      .from(specFieldOptions)
+      .where(eq(specFieldOptions.fieldId, fieldId));
+    await getDb()
+      .insert(specFieldOptions)
+      .values(fresh.map((value, i) => ({ companyId, fieldId, value, position: (max?.p ?? -1) + 1 + i })))
+      .onConflictDoNothing();
+  }
+  const byKey = fresh.length ? optionKeys(await visibleOptions(fieldId)) : existing;
   return values.map((v) => byKey.get(v.toLowerCase())!);
 }
 

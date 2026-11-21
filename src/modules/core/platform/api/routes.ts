@@ -6,6 +6,7 @@ import { validate, validated } from '../../../../shared/http/validate.ts';
 import { listCompanies, listPlatformAuditLogs, platformOverview, setCompanyLock } from '../service/admin.ts';
 import { getCompanyProfile, updateCompanyProfile } from '../service/company-profile.ts';
 import { releaseTaxCode } from '../service/tax-code-release.ts';
+import { deleteTestCompany } from '../service/test-company.ts';
 import type { PlatformContext } from '../service/context.ts';
 import { listDeadJobs, retryDeadJob } from '../service/jobs/dead.ts';
 import { listCompanyModules, setCompanyModule } from '../service/modules.ts';
@@ -58,6 +59,16 @@ export function platformRouter(ctx: PlatformContext): Router {
   router.put('/company', manageCompany, validate({ body: UpdateCompanyProfileBody }), async (_req, res) => {
     const { accountId, companyId } = getAuth(res);
     res.json(await updateCompanyProfile(accountId, companyId!, validated<typeof UpdateCompanyProfileBody>(res, 'body')));
+  });
+
+  // Công ty thử của e2e (Documents/21 mục 2.2): chỉ server bật đăng ký thử mới có route, chỉ CEO, chỉ công ty mà mọi
+  // thành viên và lời mời đang chờ thuộc miền thử. Không dùng `manageCompany`: công ty bị khoá vẫn phải dọn được.
+  router.delete('/company', async (req, res) => {
+    const claims = await readAccessClaims(req);
+    const account = await ctx.platformAccount!(claims.accountId);
+    if (account) assertTokenCurrent(claims, account.passwordChangedAt);
+    await deleteTestCompany({ accountId: claims.accountId, companyId: claims.companyId ?? null }, ctx.ceoRoleId!);
+    res.status(204).end();
   });
 
   router.get('/overview', platformAdmin, async (_req, res) => {

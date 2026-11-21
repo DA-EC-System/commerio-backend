@@ -8,15 +8,30 @@ import {
   groupNameExists,
   insertGroup,
   lockGroupProducts,
+  setGroupHidden,
   setProductsGroup,
   updateGroupIfVersion,
+  upsertGroupSettingsIfVersion,
 } from '../repository/groups.ts';
 import { copyTemplate, findGroupAxes } from '../repository/specs.ts';
-import { auditOf, type Caller, inUse, invalid, isUuid, nameTaken, notFound, pgError, versionConflict } from './errors.ts';
+import {
+  auditOf,
+  type Caller,
+  inUse,
+  invalid,
+  isUuid,
+  nameTaken,
+  notFound,
+  pgError,
+  platformManaged,
+  scopeOf,
+  versionConflict,
+} from './errors.ts';
 import { columnsOf, NO_SUGGEST, type SuggestConfig, suggestOf, withSuggest } from './suggest-config.ts';
 
 export interface GroupInput {
-  name: string;
+  /** Bắt buộc với nhóm của công ty; nhóm nền tảng không đổi tên được (gửi thì 422). */
+  name?: string | undefined;
   /** Bỏ trống là giữ cấu hình đang lưu (tạo mới là chưa đặt, tức theo công ty); gửi là thay cả năm giá trị. */
   suggest?: SuggestConfig | undefined;
   /** Chép trục chuẩn và mẫu thông số của nhóm này (#510, Documents/21 mục 5.5); `PUT` thay mẫu cũ. */
@@ -24,6 +39,7 @@ export interface GroupInput {
 }
 
 const ENTITY = 'product.product_groups';
+const SETTINGS_ENTITY = 'product.company_group_settings';
 const PRODUCT_ENTITY = 'product.products';
 const collator = new Intl.Collator('vi');
 const taken = () => nameTaken('Đã có nhóm hàng cùng tên');
@@ -36,8 +52,11 @@ function toView(g: GroupRow, axes: Axes) {
   return {
     id: g.id,
     name: g.name,
+    scope: scopeOf(g.companyId),
+    // Nhóm của công ty luôn `false` (chỉ ẩn được nhóm nền tảng).
+    hidden: g.hidden,
     productCount: g.productCount,
-    axes: (axes.get(g.id) ?? []).map((a) => ({ attributeId: a.attributeId, name: a.name, platformKind: a.platformKind })),
+    axes: (axes.get(g.id) ?? []).map((a) => ({ attributeId: a.attributeId, name: a.name, platformKind: a.platformKind, scope: scopeOf(a.companyId) })),
     specFieldCount: g.specFieldCount,
     requiredCount: g.requiredCount,
     suggest: suggestOf(g),
@@ -77,17 +96,24 @@ function nameRace(err: unknown): never {
   throw pgError(err).code === '23505' ? taken() : err;
 }
 
-/** Sắp theo tên tiếng Việt, không theo collation của DB (khác giữa máy và staging). */
-export async function listGroups(companyId: string): Promise<{ items: GroupView[] }> {
+/**
+ * Nhóm nền tảng và nhóm của công ty, sắp theo tên tiếng Việt (không theo collation của DB, khác giữa máy và staging).
+ * Mặc định bỏ nhóm nền tảng công ty đã ẩn; `includeHidden` thì trả cả (trang cài đặt bật lại).
+ */
+export async function listGroups(companyId: string, opts: { includeHidden?: boolean } = {}): Promise<{ items: GroupView[] }> {
   return withCompany(companyId, async () => {
-    const rows = await findGroups();
+    const rows = await findGroups(undefined, { includeHidden: opts.includeHidden ?? false });
     const axes = await findGroupAxes(rows.map((r) => r.id));
     return { items: rows.sort((a, b) => collator.compare(a.name, b.name)).map((g) => toView(g, axes)) };
   });
 }
 
+const NAME_REQUIRED = () => invalid({ name: 'Nhập tên nhóm hàng' });
+
 export async function createGroup(caller: Caller, input: GroupInput): Promise<GroupView> {
   return withCompany(caller.companyId, async () => {
+    if (input.name === undefined) throw NAME_REQUIRED();
+    // Đọc qua RLS gồm cả nhóm nền tảng: tên trùng nhóm chuẩn cũng là trùng (khác tầng, service chặn).
     if (await groupNameExists(input.name)) throw taken();
     const source = await templateSource(input.copyTemplateFromGroupId);
     const suggest = input.suggest ?? NO_SUGGEST;
@@ -102,28 +128,68 @@ export async function createGroup(caller: Caller, input: GroupInput): Promise<Gr
   }).catch(nameRace);
 }
 
+/** Nhóm nền tảng: công ty chỉ đặt gợi ý của mình (`company_group_settings`); không đổi tên, không chép mẫu. */
+async function updatePlatformGroup(caller: Caller, group: GroupRow, input: GroupInput & { version: number }): Promise<GroupView> {
+  const errors: Record<string, string> = {};
+  if (input.name !== undefined) errors.name = 'Nhóm chuẩn không đổi tên được';
+  if (input.copyTemplateFromGroupId !== undefined) errors.copyTemplateFromGroupId = 'Mẫu của nhóm chuẩn do nền tảng đặt';
+  if (Object.keys(errors).length) throw invalid(errors);
+  if (group.version !== input.version) throw await conflict(group);
+  const suggest = input.suggest ?? suggestOf(group);
+  if (!(await upsertGroupSettingsIfVersion(caller.companyId, group.id, input.version, columnsOf(suggest)))) await lostRace(group.id);
+  await recordAudit({
+    ...auditOf(caller, 'update', SETTINGS_ENTITY, group.id),
+    label: group.name,
+    before: snapshot(group.name, suggestOf(group)),
+    after: snapshot(group.name, suggest),
+  });
+  return viewOf(await findGroup(group.id));
+}
+
 export async function updateGroup(caller: Caller, id: string, input: GroupInput & { version: number }): Promise<GroupView> {
   return withCompany(caller.companyId, async () => {
     const group = await findGroup(id);
+    if (group.companyId === null) return updatePlatformGroup(caller, group, input);
+    if (input.name === undefined) throw NAME_REQUIRED();
     if (group.version !== input.version) throw await conflict(group);
     if (await groupNameExists(input.name, id)) throw taken();
     const source = await templateSource(input.copyTemplateFromGroupId, id);
     const suggest = input.suggest ?? suggestOf(group);
-    if (!(await updateGroupIfVersion(id, input.version, input.name, columnsOf(suggest)))) await lostRace(id);
+    const name = input.name;
+    if (!(await updateGroupIfVersion(id, input.version, name, columnsOf(suggest)))) await lostRace(id);
     if (source) await copyTemplate(caller.companyId, source.id, id);
     await recordAudit({
       ...auditOf(caller, 'update', ENTITY, id),
-      label: input.name,
+      label: name,
       before: snapshot(group.name, suggestOf(group)),
-      after: { ...snapshot(input.name, suggest), ...(source && { templateFrom: source.name }) },
+      after: { ...snapshot(name, suggest), ...(source && { templateFrom: source.name }) },
     });
     return viewOf(await findGroup(id));
   }).catch(nameRace);
 }
 
+/** Ẩn, hiện nhóm nền tảng cho công ty (chốt 2); không đụng sản phẩm đang ở nhóm. Nhóm của công ty: 422. */
+export async function setHidden(caller: Caller, id: string, hidden: boolean): Promise<GroupView> {
+  return withCompany(caller.companyId, async () => {
+    const group = await findGroup(id);
+    if (group.companyId !== null) throw invalid({ hidden: 'Chỉ ẩn được nhóm chuẩn của nền tảng' });
+    if (group.hidden !== hidden) {
+      await setGroupHidden(caller.companyId, id, hidden);
+      await recordAudit({
+        ...auditOf(caller, 'update', SETTINGS_ENTITY, id),
+        label: group.name,
+        before: { hidden: group.hidden },
+        after: { hidden },
+      });
+    }
+    return viewOf(await findGroup(id));
+  });
+}
+
 export async function deleteGroup(caller: Caller, id: string, version: number): Promise<void> {
   await withCompany(caller.companyId, async () => {
     const group = await findGroup(id);
+    if (group.companyId === null) throw platformManaged();
     if (group.version !== version) throw await conflict(group);
     // Kể cả sản phẩm đã lưu trữ (V25): chuyển sang nhóm khác bằng `move-products` rồi xoá.
     if (group.productCount > 0) {
