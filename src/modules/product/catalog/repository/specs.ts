@@ -3,6 +3,7 @@ import { getDb } from '../../../../shared/db/client.ts';
 import {
   attributes,
   attributeValues,
+  groupAllowedAttributes,
   groupSpecFields,
   productGroups,
   productSpecValues,
@@ -295,8 +296,9 @@ export async function replaceTemplateFields(
 }
 
 /**
- * Chép trục chuẩn và mẫu thông số của nhóm nguồn sang nhóm đích của công ty (thay mẫu cũ của đích). Nguồn là nhóm nền
- * tảng thì dòng nền tảng và dòng công ty của nguồn đều thành dòng công ty của đích, cùng thứ tự hiển thị.
+ * Chép trục chuẩn, mẫu thông số và danh sách thuộc tính biến thể được phép của nhóm nguồn sang nhóm đích của công ty
+ * (thay của đích). Nguồn là nhóm nền tảng thì dòng nền tảng và dòng công ty của nguồn đều thành dòng công ty của đích,
+ * cùng thứ tự hiển thị ("Dựa trên danh mục chuẩn", Documents/21 mục 5.7).
  */
 export async function copyTemplate(companyId: string, fromId: string, toId: string): Promise<void> {
   const [from] = await getDb()
@@ -310,6 +312,41 @@ export async function copyTemplate(companyId: string, fromId: string, toId: stri
     .where(eq(groupSpecFields.groupId, fromId))
     .orderBy(platformFirst(groupSpecFields.companyId), asc(groupSpecFields.position));
   await replaceTemplateFields(companyId, toId, fields);
+  // Danh sách được phép (dòng nền tảng và dòng công ty của nguồn), trục của nguồn đứng đầu.
+  const axes = [from?.axis1, from?.axis2].filter((x): x is string => !!x);
+  const allowed = (await findAllowedAttributes([fromId])).map((a) => a.attributeId);
+  await replaceAllowedAttributes(companyId, toId, [...new Set([...axes, ...allowed])]);
+}
+
+// ---- Thuộc tính biến thể được phép (#531, Documents/21 mục 5.7) ----
+
+/** Dòng danh sách được phép của các nhóm: dòng nền tảng trước, rồi dòng công ty, mỗi tầng theo `position`. */
+export function findAllowedAttributes(groupIds: readonly string[]) {
+  if (!groupIds.length) return Promise.resolve([]);
+  return getDb()
+    .select({
+      groupId: groupAllowedAttributes.groupId,
+      companyId: groupAllowedAttributes.companyId,
+      attributeId: groupAllowedAttributes.attributeId,
+      name: attributes.name,
+      platformKind: attributes.platformKind,
+    })
+    .from(groupAllowedAttributes)
+    .innerJoin(attributes, eq(attributes.id, groupAllowedAttributes.attributeId))
+    .where(inArray(groupAllowedAttributes.groupId, [...groupIds]))
+    .orderBy(platformFirst(groupAllowedAttributes.companyId), asc(groupAllowedAttributes.position));
+}
+
+/** Thay phần của công ty trong danh sách được phép; dòng nền tảng giữ nguyên (RLS cũng chặn). */
+export async function replaceAllowedAttributes(companyId: string, groupId: string, attributeIds: readonly string[]): Promise<void> {
+  await getDb()
+    .delete(groupAllowedAttributes)
+    .where(and(eq(groupAllowedAttributes.groupId, groupId), eq(groupAllowedAttributes.companyId, companyId)));
+  if (attributeIds.length) {
+    await getDb()
+      .insert(groupAllowedAttributes)
+      .values(attributeIds.map((attributeId, position) => ({ companyId, groupId, attributeId, position })));
+  }
 }
 
 /** Tăng `version` của nhóm có điều kiện; `null` khi người khác vừa sửa. */

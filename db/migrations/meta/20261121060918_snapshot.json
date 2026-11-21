@@ -1,6 +1,6 @@
 {
-  "id": "b700caa8-ec75-437d-aab2-b5efa7cdd7c6",
-  "prevId": "04f13e84-0591-4d9f-9603-52075259e352",
+  "id": "3d7dfa5f-8ed8-4e48-a63b-d1ccf4017d67",
+  "prevId": "64a86718-859d-4bb6-9e9a-c2ae10f10e3b",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -10,7 +10,8 @@
       "columns": {
         "platform": {
           "name": "platform",
-          "type": "text",
+          "type": "marketplace",
+          "typeSchema": "channel",
           "primaryKey": false,
           "notNull": true
         },
@@ -76,7 +77,8 @@
         },
         "platform": {
           "name": "platform",
-          "type": "text",
+          "type": "marketplace",
+          "typeSchema": "channel",
           "primaryKey": false,
           "notNull": true
         },
@@ -793,46 +795,14 @@
       },
       "isRLSEnabled": false
     },
-    "channel.marketplaces": {
-      "name": "marketplaces",
-      "schema": "channel",
-      "columns": {
-        "code": {
-          "name": "code",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "enabled": {
-          "name": "enabled",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "channel.platform_categories": {
       "name": "platform_categories",
       "schema": "channel",
       "columns": {
         "platform": {
           "name": "platform",
-          "type": "text",
+          "type": "marketplace",
+          "typeSchema": "channel",
           "primaryKey": false,
           "notNull": true
         },
@@ -967,7 +937,8 @@
       "columns": {
         "platform": {
           "name": "platform",
-          "type": "text",
+          "type": "marketplace",
+          "typeSchema": "channel",
           "primaryKey": false,
           "notNull": true
         },
@@ -1056,7 +1027,24 @@
         }
       },
       "indexes": {},
-      "foreignKeys": {},
+      "foreignKeys": {
+        "platform_category_attributes_category_fk": {
+          "name": "platform_category_attributes_category_fk",
+          "tableFrom": "platform_category_attributes",
+          "columnsFrom": [
+            "platform",
+            "external_category_id"
+          ],
+          "tableTo": "platform_categories",
+          "schemaTo": "channel",
+          "columnsTo": [
+            "platform",
+            "external_id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
       "compositePrimaryKeys": {
         "platform_category_attributes_platform_external_category_id_code_pk": {
           "name": "platform_category_attributes_platform_external_category_id_code_pk",
@@ -1362,7 +1350,8 @@
         },
         "platform": {
           "name": "platform",
-          "type": "text",
+          "type": "marketplace",
+          "typeSchema": "channel",
           "primaryKey": false,
           "notNull": true
         },
@@ -2202,7 +2191,8 @@
         },
         "platform": {
           "name": "platform",
-          "type": "text",
+          "type": "marketplace",
+          "typeSchema": "channel",
           "primaryKey": false,
           "notNull": true
         },
@@ -2553,7 +2543,8 @@
         },
         "platform": {
           "name": "platform",
-          "type": "text",
+          "type": "marketplace",
+          "typeSchema": "channel",
           "primaryKey": false,
           "notNull": true
         },
@@ -2718,7 +2709,8 @@
         },
         "platform": {
           "name": "platform",
-          "type": "text",
+          "type": "marketplace",
+          "typeSchema": "channel",
           "primaryKey": false,
           "notNull": true
         },
@@ -2796,7 +2788,8 @@
         },
         "platform": {
           "name": "platform",
-          "type": "text",
+          "type": "marketplace",
+          "typeSchema": "channel",
           "primaryKey": false,
           "notNull": true
         },
@@ -9552,18 +9545,12 @@
           "primaryKey": false,
           "notNull": true
         },
-        "source": {
-          "name": "source",
-          "type": "contact_channel",
+        "channel_kind": {
+          "name": "channel_kind",
+          "type": "channel_kind",
           "typeSchema": "order",
           "primaryKey": false,
           "notNull": true
-        },
-        "platform": {
-          "name": "platform",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
         },
         "external_user_id": {
           "name": "external_user_id",
@@ -9634,24 +9621,18 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
-        "customer_identities_uq": {
-          "name": "customer_identities_uq",
+        "customer_identities_company_id_channel_kind_external_user_id_unique": {
+          "name": "customer_identities_company_id_channel_kind_external_user_id_unique",
           "columns": [
             "company_id",
-            "source",
-            "platform",
+            "channel_kind",
             "external_user_id"
           ],
-          "nullsNotDistinct": true
+          "nullsNotDistinct": false
         }
       },
       "policies": {},
-      "checkConstraints": {
-        "customer_identities_platform": {
-          "name": "customer_identities_platform",
-          "value": "(\"order\".\"customer_identities\".\"source\" = 'marketplace') = (\"order\".\"customer_identities\".\"platform\" IS NOT NULL)"
-        }
-      },
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "order.customers": {
@@ -11315,7 +11296,7 @@
       "checkConstraints": {
         "attributes_platform_kind": {
           "name": "attributes_platform_kind",
-          "value": "\"product\".\"attributes\".\"platform_kind\" in ('color', 'size', 'volume', 'flavor')"
+          "value": "\"product\".\"attributes\".\"platform_kind\" in ('color', 'size', 'shoe_size', 'bra_size', 'age', 'ring_size', 'storage', 'version', 'screen_size', 'connector', 'length', 'battery_capacity', 'voltage', 'power', 'volume', 'weight', 'flavor', 'scent', 'pack', 'diaper_size', 'bed_size', 'style', 'compatible_model')"
         },
         "attributes_name_length": {
           "name": "attributes_name_length",
@@ -11556,6 +11537,124 @@
         "company_product_settings_reorder_config": {
           "name": "company_product_settings_reorder_config",
           "value": "\"product\".\"company_product_settings\".\"reorder_lead_days\" >= 0 and \"product\".\"company_product_settings\".\"reorder_safety_qty\" >= 0 and \"product\".\"company_product_settings\".\"reorder_default_qty\" >= 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "product.group_allowed_attributes": {
+      "name": "group_allowed_attributes",
+      "schema": "product",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "company_id": {
+          "name": "company_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "group_id": {
+          "name": "group_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "attribute_id": {
+          "name": "attribute_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "position": {
+          "name": "position",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "group_allowed_attributes_attribute_id_index": {
+          "name": "group_allowed_attributes_attribute_id_index",
+          "columns": [
+            {
+              "expression": "attribute_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
+        }
+      },
+      "foreignKeys": {
+        "group_allowed_attributes_group_id_product_groups_id_fk": {
+          "name": "group_allowed_attributes_group_id_product_groups_id_fk",
+          "tableFrom": "group_allowed_attributes",
+          "columnsFrom": [
+            "group_id"
+          ],
+          "tableTo": "product_groups",
+          "schemaTo": "product",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "cascade"
+        },
+        "group_allowed_attributes_attribute_id_attributes_id_fk": {
+          "name": "group_allowed_attributes_attribute_id_attributes_id_fk",
+          "tableFrom": "group_allowed_attributes",
+          "columnsFrom": [
+            "attribute_id"
+          ],
+          "tableTo": "attributes",
+          "schemaTo": "product",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "cascade"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "group_allowed_attributes_group_attr_company_uq": {
+          "name": "group_allowed_attributes_group_attr_company_uq",
+          "columns": [
+            "group_id",
+            "attribute_id",
+            "company_id"
+          ],
+          "nullsNotDistinct": true
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "group_allowed_attributes_position": {
+          "name": "group_allowed_attributes_position",
+          "value": "\"product\".\"group_allowed_attributes\".\"position\" >= 0"
         }
       },
       "isRLSEnabled": false
@@ -11846,6 +11945,18 @@
           "primaryKey": false,
           "notNull": false
         },
+        "renamed_from": {
+          "name": "renamed_from",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "split_into": {
+          "name": "split_into",
+          "type": "uuid[]",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -11961,6 +12072,10 @@
         "product_groups_axis_distinct": {
           "name": "product_groups_axis_distinct",
           "value": "\"product\".\"product_groups\".\"axis1_attribute_id\" <> \"product\".\"product_groups\".\"axis2_attribute_id\""
+        },
+        "product_groups_merge_platform": {
+          "name": "product_groups_merge_platform",
+          "value": "\"product\".\"product_groups\".\"company_id\" is null or (\"product\".\"product_groups\".\"renamed_from\" is null and \"product\".\"product_groups\".\"split_into\" is null)"
         }
       },
       "isRLSEnabled": false
@@ -15221,6 +15336,16 @@
         "delisted"
       ]
     },
+    "channel.marketplace": {
+      "name": "marketplace",
+      "schema": "channel",
+      "values": [
+        "lazada",
+        "shopee",
+        "tiktok",
+        "mock"
+      ]
+    },
     "channel.outside_change_kind": {
       "name": "outside_change_kind",
       "schema": "channel",
@@ -15670,11 +15795,14 @@
         "dismissed"
       ]
     },
-    "order.contact_channel": {
-      "name": "contact_channel",
+    "order.channel_kind": {
+      "name": "channel_kind",
       "schema": "order",
       "values": [
-        "marketplace",
+        "tiktok",
+        "shopee",
+        "lazada",
+        "mock",
         "messenger",
         "email",
         "zalo_oa"

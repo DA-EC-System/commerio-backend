@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V142**, 23 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
+Phiên bản **V144**, 23 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
 **Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
 
@@ -22,7 +22,7 @@ Cột:
 Ràng buộc và index:
 
 - unique (`platform`, `day`, `company_id`) NULLS NOT DISTINCT `api_usage_platform_day_company_uq`
-- khoá ngoại viết tay (`platform`) → `channel.marketplaces` (`code`), ở `db/migrations/20261121060603_bang-san-fk.sql`
+- khoá ngoại viết tay (`platform`) → `channel.marketplaces` (`code`), ở `db/migrations/20261121061645_bang-san-fk.sql`
 
 ## `channel.axis_mappings`
 
@@ -50,7 +50,7 @@ Ràng buộc và index:
 - unique index (`attribute_id`, `platform`, `attribute_code`) `axis_mappings_platform_code_uq` where `company_id IS NULL`
 - unique index (`attribute_id`, `platform`, `priority`) `axis_mappings_platform_priority_uq` where `company_id IS NULL`
 - check `axis_mappings_priority`: `priority >= 1`
-- khoá ngoại viết tay (`platform`) → `channel.marketplaces` (`code`), ở `db/migrations/20261121060603_bang-san-fk.sql`
+- khoá ngoại viết tay (`platform`) → `channel.marketplaces` (`code`), ở `db/migrations/20261121061645_bang-san-fk.sql`
 
 ## `channel.conversation_notes`
 
@@ -344,7 +344,7 @@ Ràng buộc và index:
 - index gin (`path_search`) `platform_categories_path_search_trgm`
 - check `platform_categories_status`: `status in ('active', 'removed')`
 - check `platform_categories_size_chart_rule`: `size_chart_rule in ('required', 'optional', 'unsupported')`
-- khoá ngoại viết tay (`platform`) → `channel.marketplaces` (`code`), ở `db/migrations/20261121060603_bang-san-fk.sql`
+- khoá ngoại viết tay (`platform`) → `channel.marketplaces` (`code`), ở `db/migrations/20261121061645_bang-san-fk.sql`
 
 Trỏ vào bảng này:
 
@@ -379,8 +379,8 @@ Ràng buộc và index:
 - check `platform_category_attributes_kind`: `kind in ('sales', 'property')`
 - check `platform_category_attributes_input`: `input in ('select', 'multiselect', 'text', 'number', 'date', 'image', 'cascade')`
 - check `platform_category_attributes_tier`: `tier in ('category', 'product', 'company')`
-- khoá ngoại viết tay (`platform`) → `channel.marketplaces` (`code`), ở `db/migrations/20261121060603_bang-san-fk.sql`
-- khoá ngoại viết tay (`platform`, `external_category_id`) → `channel.platform_categories` (`platform`, `external_id`), ở `db/migrations/20261121060603_bang-san-fk.sql`
+- khoá ngoại viết tay (`platform`) → `channel.marketplaces` (`code`), ở `db/migrations/20261121061645_bang-san-fk.sql`
+- khoá ngoại viết tay (`platform`, `external_category_id`) → `channel.platform_categories` (`platform`, `external_id`), ở `db/migrations/20261121061645_bang-san-fk.sql`
 
 ## `channel.price_calculations`
 
@@ -470,7 +470,7 @@ Ràng buộc và index:
 - check `product_specs_category_status`: `category_status in ('ok', 'changed', 'removed')`
 - check `product_specs_version`: `version >= 0`
 - check `product_specs_remote`: `(remote_facts is null) = (remote_read_at is null)`
-- khoá ngoại viết tay (`platform`) → `channel.marketplaces` (`code`), ở `db/migrations/20261121060603_bang-san-fk.sql`
+- khoá ngoại viết tay (`platform`) → `channel.marketplaces` (`code`), ở `db/migrations/20261121061645_bang-san-fk.sql`
 
 ## `channel.raw_orders`
 
@@ -700,7 +700,7 @@ Ràng buộc và index:
 - check `shops_allocation_pending`: `allocation_stocktake_id is null or (opening_stocktake_id is null and order_cutoff_at is not null)`
 - check `shops_orders_pulled_ok_at`: `orders_pulled_ok_at is null or order_cutoff_at is not null`
 - check `shops_reauth_orders_pulled`: `status <> 'needs_reauth' or orders_pulled_ok_at is null`
-- khoá ngoại viết tay (`platform`) → `channel.marketplaces` (`code`), ở `db/migrations/20261121060603_bang-san-fk.sql`
+- khoá ngoại viết tay (`platform`) → `channel.marketplaces` (`code`), ở `db/migrations/20261121061645_bang-san-fk.sql`
 
 Trỏ vào bảng này:
 
@@ -752,7 +752,7 @@ Ràng buộc và index:
 - unique index (`field_id`, `platform`, `priority`) `spec_field_mappings_platform_priority_uq` where `company_id IS NULL`
 - unique index (`platform`, `attribute_code`) `spec_field_mappings_platform_attribute_uq` where `company_id IS NULL`
 - check `spec_field_mappings_priority`: `priority >= 1`
-- khoá ngoại viết tay (`platform`) → `channel.marketplaces` (`code`), ở `db/migrations/20261121060603_bang-san-fk.sql`
+- khoá ngoại viết tay (`platform`) → `channel.marketplaces` (`code`), ở `db/migrations/20261121061645_bang-san-fk.sql`
 
 Trỏ vào bảng này:
 
@@ -779,8 +779,8 @@ Cột:
 Ràng buộc và index:
 
 - unique (`option_id`, `platform`, `attribute_code`) `spec_option_mappings_option_uq`
-- khoá ngoại viết tay (`platform`) → `channel.marketplaces` (`code`), ở `db/migrations/20261121060603_bang-san-fk.sql`
-- khoá ngoại viết tay (`field_id`, `platform`, `attribute_code`) → `channel.spec_field_mappings` (`field_id`, `platform`, `attribute_code`), ON DELETE cascade, ở `db/migrations/20261121060603_bang-san-fk.sql`
+- khoá ngoại viết tay (`platform`) → `channel.marketplaces` (`code`), ở `db/migrations/20261121061645_bang-san-fk.sql`
+- khoá ngoại viết tay (`field_id`, `platform`, `attribute_code`) → `channel.spec_field_mappings` (`field_id`, `platform`, `attribute_code`), ON DELETE cascade, ở `db/migrations/20261121061645_bang-san-fk.sql`
 
 ## `channel.tags`
 
@@ -827,4 +827,4 @@ Cột:
 Ràng buộc và index:
 
 - unique (`company_id`, `platform`, `notification_id`) `webhook_events_company_id_platform_notification_id_unique`
-- khoá ngoại viết tay (`platform`) → `channel.marketplaces` (`code`), ở `db/migrations/20261121060603_bang-san-fk.sql`
+- khoá ngoại viết tay (`platform`) → `channel.marketplaces` (`code`), ở `db/migrations/20261121061645_bang-san-fk.sql`

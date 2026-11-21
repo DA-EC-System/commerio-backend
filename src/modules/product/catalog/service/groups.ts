@@ -59,6 +59,8 @@ function toView(g: GroupRow, axes: Axes) {
     axes: (axes.get(g.id) ?? []).map((a) => ({ attributeId: a.attributeId, name: a.name, platformKind: a.platformKind, scope: scopeOf(a.companyId) })),
     specFieldCount: g.specFieldCount,
     requiredCount: g.requiredCount,
+    renamedFrom: g.renamedFrom,
+    splitInto: g.splitInto,
     suggest: suggestOf(g),
     updatedAt: g.updatedAt.toISOString(),
     version: g.version,

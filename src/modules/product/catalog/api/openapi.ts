@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { problemResponse } from '../../../../shared/http/openapi.ts';
 import {
   AddVariantBody,
+  AttributesQuery,
   Attribute,
   AttributeBody,
   AttributeValueBody,
@@ -220,7 +221,11 @@ export function registerCatalogOpenApi(registry: OpenAPIRegistry): void {
     method: 'get',
     path: '/attributes',
     summary: 'Thuộc tính và giá trị: nền tảng và của công ty (`scope`)',
-    responses: { 200: json('Thuộc tính nền tảng trước, rồi theo thứ tự tạo', z.array(Attribute)) },
+    request: { query: AttributesQuery },
+    responses: {
+      200: json('Thuộc tính nền tảng trước, rồi theo thứ tự tạo; có `groupId` thì theo thứ tự `allowedAttributes` của danh mục', z.array(Attribute)),
+      404: problemResponse('`groupId` không có hoặc của công ty khác'),
+    },
   });
   path({
     method: 'post',

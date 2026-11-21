@@ -3,18 +3,18 @@
 <!-- Sinh tự động bởi `npm run db:docs` từ db/migrations. Không sửa tay. -->
 
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
-Mới nhất: **V142**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+Mới nhất: **V144**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
 
-## V142 · 21/11/2026 · bang-san-fk
+## V144 · 21/11/2026 · bang-san-fk
 
-`db/migrations/20261121060603_bang-san-fk.sql` · viết tay
+`db/migrations/20261121061645_bang-san-fk.sql` · viết tay
 
 - viết tay: quyền, khoá ngoại, dữ liệu
 - Danh mục sàn channel.marketplaces (Documents/19 mục 3.3, 21/11/2026): chèn các sàn, commerio_app chỉ đọc, khoá ngoại từ mọi cột platform của channel; gắn lại hai khoá ngoại ghép đã gỡ khi đổi kiểu.
 
-## V141 · 21/11/2026 · bang-san
+## V143 · 21/11/2026 · bang-san
 
-`db/migrations/20261121060554_bang-san.sql` · sinh từ schema
+`db/migrations/20261121061636_bang-san.sql` · sinh từ schema
 
 - + bảng `channel.marketplaces`
 - `channel.api_usage`: đổi cột `platform` (kiểu channel.marketplace → text)
@@ -31,12 +31,27 @@ Mới nhất: **V142**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
 - − enum `channel.marketplace`
 - − enum `order.channel_kind`
 
-## V140 · 21/11/2026 · bang-san-go-khoa
+## V142 · 21/11/2026 · bang-san-go-khoa
 
-`db/migrations/20261121060537_bang-san-go-khoa.sql` · viết tay
+`db/migrations/20261121061619_bang-san-go-khoa.sql` · viết tay
 
 - viết tay
 - Gỡ khoá ngoại ghép spec_option_mappings_field_fk (viết tay ở *_anh-xa-hai-tang-du-lieu) trước khi đổi cột platform từ enum sang text (Documents/19 mục 3.3, 21/11/2026): Postgres không đổi kiểu từng bảng được khi khoá ngoại ghép còn.
+
+## V141 · 21/11/2026 · danh-muc-chuan-du-lieu
+
+`db/migrations/20261121060918_danh-muc-chuan-du-lieu.sql` · viết tay
+
+- viết tay: RLS, dữ liệu
+- Danh mục chuẩn 27 (#531, Documents/21 mục 5.7, 19 §3.2; `.claude/issues/luong-san-pham/du-lieu-chuan.md`).
+
+## V140 · 21/11/2026 · danh-muc-chuan
+
+`db/migrations/20261121060914_danh-muc-chuan.sql` · sinh từ schema
+
+- + bảng `product.group_allowed_attributes`
+- `product.attributes`: đổi check `attributes_platform_kind`
+- `product.product_groups`: + cột `renamed_from`, `split_into`; + check `product_groups_merge_platform`
 
 ## V139 · 21/11/2026 · dong-phieu-nhan-chua-co-sku
 
