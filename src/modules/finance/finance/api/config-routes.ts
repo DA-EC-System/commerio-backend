@@ -12,9 +12,10 @@ import {
   listConfigs,
   updateDraft,
 } from '../service/config-versions.ts';
+import { listFeeTemplates } from '../service/fee-templates.ts';
 import type { FinanceContext } from '../service/settlement-views.ts';
 import { financeView } from './access.ts';
-import { ConfigActionBody, ConfigActionParams, ConfigListQuery, CreateConfigBody, UpdateConfigBody } from './config-schemas.ts';
+import { ConfigActionBody, ConfigActionParams, ConfigListQuery, CreateConfigBody, FeeTemplateQuery, UpdateConfigBody } from './config-schemas.ts';
 import { IdParams, VersionBody } from './schemas.ts';
 
 const caller = (res: Response): Caller => {
@@ -39,8 +40,12 @@ export function mountConfigRoutes(router: Router, ctx: FinanceContext): void {
   router.get('/configs/:id', view, validate({ params: IdParams }), async (_req, res) => {
     res.json(await getConfig(caller(res).companyId, id(res)));
   });
+  // Biểu phí mẫu của nền tảng (Documents/21 §21.6): người soạn hay người duyệt cấu hình phí đọc để chép số vào form.
+  router.get('/fee-templates', act, validate({ query: FeeTemplateQuery }), async (_req, res) => {
+    res.json(await listFeeTemplates(caller(res).companyId, input<typeof FeeTemplateQuery>(res, 'query').platform));
+  });
   router.post('/configs', manage, validate({ body: CreateConfigBody }), async (_req, res) => {
-    res.status(201).json(await createConfig(caller(res), input<typeof CreateConfigBody>(res, 'body')));
+    res.status(201).json(await createConfig(ctx, caller(res), input<typeof CreateConfigBody>(res, 'body')));
   });
   router.put('/configs/:id', manage, validate({ params: IdParams, body: UpdateConfigBody }), async (_req, res) => {
     res.json(await updateDraft(caller(res), id(res), input<typeof UpdateConfigBody>(res, 'body')));

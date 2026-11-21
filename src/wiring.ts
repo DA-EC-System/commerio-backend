@@ -22,13 +22,14 @@ import {
   marketplaceSplitAttributes,
   marketplaceSplitLevel,
   marketplaceSplitOrder,
+  listMarketplaces,
   returnPoliciesOf,
   settlementPayouts,
   settlementTransactions,
   shopsToSettle,
 } from './modules/channel/index.ts';
 import { type IdentityContext, loadCompanyAccess, type PlatformContext } from './modules/core/index.ts';
-import { type FinanceContext, paymentStatusesOf } from './modules/finance/index.ts';
+import { createFeeTemplate, type FinanceContext, listPlatformFeeTemplates, paymentStatusesOf, updateFeeTemplate } from './modules/finance/index.ts';
 import { hasAssistantData } from './modules/insight/index.ts';
 import { type FulfillmentContext, orderArchiveBlockers, orderInUse, type SalesContext, soldQtyOf } from './modules/order/index.ts';
 import { type CatalogContext, hasPurchasingData, seedCompanyDefaults } from './modules/product/index.ts';
@@ -40,7 +41,7 @@ export type AppContext = ModuleContext &
   Required<Pick<FinanceContext, 'shopsOf' | 'settlementSource'>> &
   Required<Pick<SalesContext, 'shopsOf' | 'marketplaceOrders' | 'marketplaceReturns' | 'paymentStatusOf' | 'returnPoliciesOf'>> &
   Required<Pick<FulfillmentContext, 'shopsOf' | 'stockHoldOf' | 'marketplacePackages'>> &
-  Required<Pick<PlatformContext, 'moduleData'>> &
+  Required<Pick<PlatformContext, 'moduleData' | 'feeTemplates'>> &
   Required<Pick<IdentityContext, 'seedCompanyDefaults'>> & { soldQtyOf: typeof soldQtyOf } &
   Required<Pick<CatalogContext, 'orderArchiveBlockers' | 'listingArchiveBlockers' | 'listingPresenceOf' | 'orderInUse' | 'listingInUse'>>;
 
@@ -68,6 +69,13 @@ export function createModuleContext(): AppContext {
     paymentStatusOf: paymentStatusesOf,
     // #236: sales (lớp dưới) tính hạn trả theo cấu hình gian hàng của channel.
     returnPoliciesOf,
+    // Biểu phí mẫu (Documents/21 §21.6): route quản trị nền tảng (core) gọi finance; finance kiểm mã sàn qua channel.
+    feeTemplates: {
+      list: listPlatformFeeTemplates,
+      create: (actorId, body) =>
+        createFeeTemplate(actorId, body, { marketplaceExists: async (code) => (await listMarketplaces()).some((m) => m.code === code) }),
+      update: updateFeeTemplate,
+    },
     // #199 phần b: fulfillment (lớp dưới) cần biết gian hàng còn chờ kiểm kê đầu kỳ để hoãn trừ, bỏ qua khi phân hàng.
     stockHoldOf: awaitingStocktakeShops,
     // #221: fulfillment tách kiện (#205), báo sẵn sàng giao (#239) trên sàn qua token gian hàng của channel.

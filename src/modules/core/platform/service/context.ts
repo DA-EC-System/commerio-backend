@@ -23,6 +23,15 @@ export interface PlatformContext extends ModuleContext {
   readonly ceoRoleId?: string;
   /** Công ty đang chọn đã có dữ liệu trong phân hệ chưa, gọi trong `withCompany`. Không có hàm là chưa có (vd report). */
   readonly moduleData?: Partial<Record<OptionalModule, () => Promise<boolean>>>;
+  /**
+   * Biểu phí mẫu của nền tảng (finance, Documents/21 §21.6): route quản trị nền tảng gọi qua đây vì bảng ở finance (lớp
+   * trên). `src/wiring.ts` tiêm; thiếu thì route trả 404. Thân request do finance kiểm (lỗi theo ô 422).
+   */
+  readonly feeTemplates?: {
+    list(): Promise<{ items: unknown[] }>;
+    create(actorId: string, body: unknown): Promise<unknown>;
+    update(actorId: string, id: string, body: unknown): Promise<unknown>;
+  };
 }
 
 /** `ActorRef` theo id; id trống hay tài khoản không còn thì `null`. */

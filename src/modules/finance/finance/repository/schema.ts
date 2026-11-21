@@ -550,6 +550,10 @@ export const configVersions = financeSchema.table(
     supersedesId: uuid('supersedes_id').references((): AnyPgColumn => configVersions.id),
     isCorrection: boolean('is_correction').notNull().default(false),
     retroactiveFrom: date('retroactive_from'),
+    /** Biểu phí mẫu đã chọn khi soạn (chỉ `fee`, Documents/21 §21.6); chỉ để biết nguồn và nhắc khi mẫu đổi. */
+    sourceTemplateId: uuid('source_template_id').references((): AnyPgColumn => feeTemplates.id),
+    /** `version` của mẫu lúc chọn; mẫu có `version` lớn hơn thì cấu hình đang áp dụng được nhắc xem lại. */
+    sourceTemplateVersion: integer('source_template_version'),
     dryRunResult: jsonb('dry_run_result'),
     statusReason: text('status_reason'),
     ...approval,
@@ -567,6 +571,44 @@ export const configVersions = financeSchema.table(
     check('config_versions_range', sql`${t.effectiveTo} is null or ${t.effectiveTo} >= ${t.effectiveFrom}`),
     check('config_versions_retroactive', sql`${t.retroactiveFrom} is null or ${t.isCorrection}`),
     check('config_versions_approved', sql`${t.status} not in ('scheduled', 'active', 'superseded') or ${t.approvedBy} is not null`),
+    check(
+      'config_versions_source_template',
+      sql`(${t.sourceTemplateId} is null or ${t.kind} = 'fee') and (${t.sourceTemplateId} is null) = (${t.sourceTemplateVersion} is null)`,
+    ),
+  ],
+);
+
+/**
+ * Biểu phí mẫu của nền tảng (Documents/21 §21.6, 19; Thành chốt 22/11/2026): dữ liệu chuẩn dùng chung, không có
+ * `company_id`, mọi công ty đọc; chỉ quản trị nền tảng (route `/platform/fee-templates`) và migration ghi. Chỉ là gợi ý để
+ * soạn `config_versions` `fee`, không phải cấu hình của khách thuê. `platform` tham chiếu `channel.marketplaces.code`
+ * (không khoá ngoại vì khác module; service kiểm qua cổng channel). `payload` cùng hình dạng `fee` của `config_versions`.
+ */
+export const feeTemplates = financeSchema.table(
+  'fee_templates',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    /** Mã sàn (`channel.marketplaces.code`). */
+    platform: text('platform').notNull(),
+    /** Mã loại shop do nền tảng đặt (`standard`, `mall`); thêm sàn mới chỉ thêm dữ liệu. */
+    shopType: text('shop_type').notNull(),
+    /** Chữ hiển thị của loại shop theo sàn ("Shop thường", "Mall", "LazMall"). */
+    shopTypeLabel: text('shop_type_label').notNull(),
+    payload: jsonb('payload').notNull(),
+    /** Trang chính sách đã dùng: `{ title, url, updatedAt }[]`. */
+    sources: jsonb('sources').notNull().default(sql`'[]'::jsonb`),
+    /** Ngày hiệu lực của biểu phí trên sàn. */
+    effectiveFrom: date('effective_from').notNull(),
+    /** Điều mẫu không biểu diễn được (ưu đãi shop mới, giảm phí theo bậc quảng cáo, trần phí), FE hiện cạnh form. */
+    note: text('note').notNull().default(''),
+    updatedBy: uuid('updated_by'),
+    ...timestamps,
+    ...version,
+  },
+  (t) => [
+    unique('fee_templates_platform_shop_type_uq').on(t.platform, t.shopType),
+    check('fee_templates_shop_type', sql`${t.shopType} ~ '^[a-z][a-z0-9_]{0,29}$'`),
+    check('fee_templates_label', sql`length(${t.shopTypeLabel}) between 1 and 40`),
   ],
 );
 

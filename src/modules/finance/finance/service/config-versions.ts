@@ -50,6 +50,7 @@ import {
   updateConfig,
 } from '../repository/config-versions.ts';
 import { insertEntries } from '../repository/ledger.ts';
+import { type FeeTemplateRow, findFeeTemplate } from '../repository/fee-templates.ts';
 import type { FinanceContext } from './settlement-views.ts';
 import { isUuid, notFound, type Page, paginate, userRef } from './views.ts';
 
@@ -71,6 +72,7 @@ export interface ConfigInput {
   supersedesId?: string;
   isCorrection?: boolean;
   retroactiveFrom?: string;
+  templateId?: string;
 }
 
 const invalid = (errors: Record<string, string>) => new AppError(422, 'validation_failed', 'Dữ liệu gửi lên không hợp lệ', { errors });
@@ -85,8 +87,34 @@ function checkPayload(kind: ConfigKind, payload: unknown): ConfigPayload {
   throw invalid(errors);
 }
 
+/** Biểu phí mẫu nguồn của bản (§21.6) và cờ mẫu đã đổi sau đó (chỉ bản `active`). */
+async function templateRef(row: ConfigRow, templates: Map<string, Promise<FeeTemplateRow | undefined>>) {
+  if (!row.sourceTemplateId) return { sourceTemplate: null, templateOutdated: false };
+  const id = row.sourceTemplateId;
+  if (!templates.has(id)) templates.set(id, findFeeTemplate(id));
+  const t = await templates.get(id)!;
+  if (!t) return { sourceTemplate: null, templateOutdated: false };
+  return {
+    sourceTemplate: { id: t.id, platform: t.platform, shopType: t.shopType, version: row.sourceTemplateVersion! },
+    templateOutdated: row.status === 'active' && t.version > row.sourceTemplateVersion!,
+  };
+}
+
+/** Biểu phí mẫu chọn khi soạn phải có và cùng sàn với gian hàng (§21.6); sai thì 422 `errors.templateId`. */
+async function checkTemplate(ctx: FinanceContext, templateId: string, shopId: string): Promise<FeeTemplateRow> {
+  const template = isUuid(templateId) ? await findFeeTemplate(templateId) : undefined;
+  if (!template) throw invalid({ templateId: 'Không tìm thấy biểu phí mẫu' });
+  const shop = ctx.shopsOf ? (await ctx.shopsOf([shopId])).get(shopId) : undefined;
+  if (shop && shop.platform !== template.platform) throw invalid({ templateId: 'Biểu phí mẫu của sàn khác gian hàng' });
+  return template;
+}
+
 /** `FinanceConfig` của §21.4. `statusHistory` chỉ có ở bản chi tiết (R7). */
-async function view(row: ConfigRow, names = new Map<string, Promise<{ id: string; name: string } | null>>()) {
+async function view(
+  row: ConfigRow,
+  names = new Map<string, Promise<{ id: string; name: string } | null>>(),
+  templates = new Map<string, Promise<FeeTemplateRow | undefined>>(),
+) {
   return {
     id: row.id,
     kind: row.kind,
@@ -103,6 +131,7 @@ async function view(row: ConfigRow, names = new Map<string, Promise<{ id: string
     approvedBy: await userRef(row.approvedBy, names),
     selfApproved: row.selfApproved,
     dryRun: (row.dryRunResult as DryRun | null) ?? null,
+    ...(await templateRef(row, templates)),
     createdAt: row.createdAt.toISOString(),
     version: row.version,
   };
@@ -122,7 +151,8 @@ export function listConfigs(companyId: string, q: ConfigFilter & Page) {
   return withCompany(companyId, async () => {
     const { slice, ...pageInfo } = paginate(await findConfigs(q), q, () => []);
     const names = new Map();
-    return { items: await Promise.all(slice.map((r) => view(r, names))), ...pageInfo };
+    const templates = new Map();
+    return { items: await Promise.all(slice.map((r) => view(r, names, templates))), ...pageInfo };
   });
 }
 
@@ -130,15 +160,17 @@ export function getConfig(companyId: string, id: string) {
   return withCompany(companyId, async () => detail(await load(id)));
 }
 
-export function createConfig(caller: Caller, input: ConfigInput) {
+export function createConfig(ctx: FinanceContext, caller: Caller, input: ConfigInput) {
   return withCompany(caller.companyId, async () => {
     const errors: Record<string, string> = {};
     if ((input.kind === 'fee') !== !!input.shopId) errors.shopId = input.kind === 'fee' ? 'Phí sàn cần gian hàng' : 'Chỉ phí sàn mới gắn gian hàng';
     if (input.retroactiveFrom && !input.isCorrection) errors.retroactiveFrom = 'Chỉ bản sửa lỗi mới ghi hồi tố';
     if (input.isCorrection && !input.supersedesId) errors.supersedesId = 'Bản sửa lỗi cần bản bị sửa';
     if (input.supersedesId && !input.isCorrection) errors.supersedesId = 'Chỉ bản sửa lỗi mới ghi bản bị sửa';
+    if (input.templateId && input.kind !== 'fee') errors.templateId = 'Chỉ phí sàn mới dựng từ biểu phí mẫu';
     if (Object.keys(errors).length) throw invalid(errors);
     const payload = checkPayload(input.kind, input.payload);
+    const template = input.templateId ? await checkTemplate(ctx, input.templateId, input.shopId!) : undefined;
     if (input.supersedesId) {
       const target = isUuid(input.supersedesId) ? await findConfig(input.supersedesId) : undefined;
       if (!target || target.kind !== input.kind || target.shopId !== (input.shopId ?? null))
@@ -154,6 +186,8 @@ export function createConfig(caller: Caller, input: ConfigInput) {
       supersedesId: input.supersedesId ?? null,
       isCorrection: input.isCorrection ?? false,
       retroactiveFrom: input.retroactiveFrom ?? null,
+      sourceTemplateId: template?.id ?? null,
+      sourceTemplateVersion: template?.version ?? null,
       createdBy: caller.accountId,
     });
     await recordTransition({ entityType: ENTITY, entityId: row.id, from: null, to: 'draft', action: 'create', actorId: caller.accountId });

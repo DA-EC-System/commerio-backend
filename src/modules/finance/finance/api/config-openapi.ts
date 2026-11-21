@@ -5,6 +5,8 @@ import {
   ConfigActionParams,
   ConfigListQuery,
   CreateConfigBody,
+  FeeTemplateList,
+  FeeTemplateQuery,
   FinanceConfig,
   FinanceConfigPage,
   UpdateConfigBody,
@@ -24,6 +26,15 @@ const invalid = problemResponse('`validation_failed` kèm `errors` theo ô (`pay
 
 /** Swagger của phiên bản cấu hình tiền (Documents/21 §21.4; #118), tương đối với /api/v1/finance. */
 export function registerConfigOpenApi(registry: OpenAPIRegistry): void {
+  registry.registerPath({
+    method: 'get',
+    path: '/fee-templates',
+    summary: 'Biểu phí mẫu của nền tảng theo sàn và loại shop (Documents/21 §21.6): gợi ý để soạn cấu hình phí',
+    description: 'Cần `finance.config.manage` hoặc `finance.config.approve`. Dữ liệu dùng chung mọi công ty, chỉ đọc; chọn mẫu thì FE chép số vào form, CEO duyệt mới áp.',
+    security: bearer,
+    request: { query: FeeTemplateQuery },
+    responses: { 200: { description: 'Biểu phí mẫu', ...json(FeeTemplateList) }, ...auth },
+  });
   registry.registerPath({
     method: 'get',
     path: '/configs',
