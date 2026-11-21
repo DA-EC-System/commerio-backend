@@ -3,7 +3,8 @@
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { logger } from '../../../../shared/logger.ts';
-import { findRemoteSkuRow } from '../repository/remote-skus.ts';
+import { findRemoteSkuRow, linkedVariantsOfRemoteProduct, remoteSkusOfProduct } from '../repository/remote-skus.ts';
+import type { ListingVariant } from './product-port.ts';
 import type { ChannelListing } from './listings.ts';
 import { matchListing } from './mapping.ts';
 import type { ProductPort } from './product-port.ts';
@@ -58,6 +59,33 @@ export async function matchBulk(
 }
 
 /**
+ * Nhãn biến thể của SKU sàn tách từ tên: bản sao chỉ giữ `title` (adapter ghép "<tên sản phẩm> - <nhãn>" cho sản phẩm nhiều
+ * SKU). Phần đầu là tên chung của mọi SKU anh em, thử từ dấu " - " cuối về đầu. Không tách được thì null. Hàm thuần.
+ */
+export function labelFromTitle(title: string, siblingTitles: readonly string[]): string | null {
+  const others = siblingTitles.filter((t) => t !== title);
+  if (!others.length) return null;
+  for (let i = title.lastIndexOf(' - '); i > 0; i = title.lastIndexOf(' - ', i - 1)) {
+    const head = `${title.slice(0, i)} - `;
+    if (others.every((t) => t.startsWith(head))) return title.slice(i + 3).trim() || null;
+  }
+  return null;
+}
+
+/**
+ * Sản phẩm app đã nhận các SKU anh em (cùng sản phẩm sàn) đã liên kết (KB3): chỉ khi mọi SKU anh em đã liên kết nằm ở đúng
+ * một sản phẩm app và sản phẩm đó có đúng một thuộc tính biến thể (thêm biến thể giữ bộ trục). Không thì null: tạo sản phẩm
+ * riêng như trước.
+ */
+function parentOfSiblings(variants: readonly ListingVariant[], linked: readonly string[]): string | null {
+  const products = new Set(variants.filter((v) => linked.includes(v.id)).map((v) => v.productId));
+  if (products.size !== 1) return null;
+  const [productId] = [...products];
+  const siblings = variants.filter((v) => v.productId === productId && !v.archived);
+  return siblings.length && siblings.every((v) => v.attributes.length === 1) ? productId! : null;
+}
+
+/**
  * Tạo SKU kho từ SKU sàn rồi liên kết (cùng luật dòng `create: true` của `POST /setup`, #500), một giao dịch: SKU người bán
  * làm mã; trùng SKU kho chưa lưu trữ thì liên kết vào SKU đó (`created: false`, 25 §6.1). Liên kết lỗi thì không tạo gì.
  */
@@ -85,10 +113,20 @@ export async function createVariantFromRemote(
       if (reason) throw invalid({ externalSkuId: reason === 'sku_taken' ? 'SKU người bán trùng SKU kho đã lưu trữ' : CANNOT_CREATE[reason] });
       if (!port.createFromPlatform) throw invalid({ externalSkuId: 'Chưa tạo được SKU kho từ SKU sàn' });
       const prices = (await remotePrices(shop.id))(remote.price);
+      // SKU anh em của sản phẩm sàn này đã liên kết vào một sản phẩm app: thêm làm biến thể của sản phẩm đó (KB3), không
+      // tạo sản phẩm app thứ hai cho cùng một sản phẩm sàn.
+      const parentId = parentOfSiblings(variants, await linkedVariantsOfRemoteProduct(shop.id, remote.externalProductId));
+      const label = parentId ? labelFromTitle(remote.title, (await remoteSkusOfProduct(shop.id, remote.externalProductId)).map((r) => r.title)) : null;
       const result = await port.createFromPlatform(
         { companyId: actor.companyId, accountId: actor.accountId },
         groupId,
-        [{ name: productNameOf(remote), variants: [{ key: remote.externalSkuId, sku: remote.sellerSku, label: null, ...prices }] }],
+        [
+          {
+            name: productNameOf(remote),
+            variants: [{ key: remote.externalSkuId, sku: remote.sellerSku, label, ...prices }],
+            ...(parentId && { parentId }),
+          },
+        ],
         { shopId: shop.id, shopName: shop.shopName },
       );
       if (!result.ok) {

@@ -1,5 +1,5 @@
 // Bản sao danh sách SKU của gian hàng trên sàn (#220 đợt 2, bảng `remote_skus`). Chạy trong `withCompany` của bên gọi.
-import { and, asc, count, eq, gte, inArray, lt, sql } from 'drizzle-orm';
+import { and, asc, count, eq, gte, inArray, isNotNull, lt, ne, sql } from 'drizzle-orm';
 import { getDb, requireCompanyId } from '../../../../shared/db/client.ts';
 import type { RemoteSkusFullError } from '../domain/remote-skus-refresh.ts';
 import { listings, remoteSkus, shops } from './schema.ts';
@@ -180,6 +180,24 @@ export async function countRemoteSkusOfProduct(shopId: string, externalProductId
     .from(remoteSkus)
     .where(and(eq(remoteSkus.shopId, shopId), eq(remoteSkus.externalProductId, externalProductId)));
   return row?.n ?? 0;
+}
+
+/** Các SKU của một sản phẩm sàn trong bản sao (KB3: tách nhãn biến thể từ tên chung). */
+export function remoteSkusOfProduct(shopId: string, externalProductId: string): Promise<RemoteSkuRow[]> {
+  return getDb()
+    .select()
+    .from(remoteSkus)
+    .where(and(eq(remoteSkus.shopId, shopId), eq(remoteSkus.externalProductId, externalProductId)))
+    .orderBy(asc(remoteSkus.externalSkuId));
+}
+
+/** Biến thể app đang liên kết (listing chưa gỡ) với SKU của một sản phẩm sàn trên gian hàng (KB3). */
+export async function linkedVariantsOfRemoteProduct(shopId: string, externalProductId: string): Promise<string[]> {
+  const rows = await getDb()
+    .selectDistinct({ variantId: listings.variantId })
+    .from(listings)
+    .where(and(eq(listings.shopId, shopId), eq(listings.externalProductId, externalProductId), isNotNull(listings.variantId), ne(listings.status, 'delisted')));
+  return rows.flatMap((r) => (r.variantId ? [r.variantId] : []));
 }
 
 export async function findRemoteSkuRow(shopId: string, externalSkuId: string): Promise<RemoteSkuRow | undefined> {
