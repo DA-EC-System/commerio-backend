@@ -1,7 +1,7 @@
 // Dựng phiếu nhận trả FE (Documents/21 mục 16.2, FE `src/types/purchasing.ts` `GoodsReceipt`). Phiếu nhận không có giá,
 // nên kho không thấy giá vốn qua đây.
 import { attachmentsOf, getStatusHistory } from '../../../core/index.ts';
-import { getVariants } from '../../catalog/index.ts';
+import { getVariants, parentProducts } from '../../catalog/index.ts';
 import { fromDbMode } from '../domain/receipt.ts';
 import { outstanding } from '../domain/request.ts';
 import { findReceipt, type ListedReceipt, type ReceiptLineRow, receiptLines, type ReceiptRow } from '../repository/receipts.ts';
@@ -54,7 +54,14 @@ export async function toReceiptDetail(row: ReceiptRow) {
   const supplier = request.supplierId ? await findSupplier(request.supplierId) : undefined;
   const lines = await receiptLines([row.id]);
   const requestLines = new Map((await findLines([row.requestId])).map((l) => [l.id, l]));
-  const variants = new Map((await getVariants(lines.map((l) => l.variantId))).map((v) => [v.id, v]));
+  const variants = new Map((await getVariants(lines.flatMap((l) => (l.variantId ? [l.variantId] : [])))).map((v) => [v.id, v]));
+  // Dòng sản phẩm mới chưa có SKU: tên cha (mới, hoặc có sẵn đọc qua RLS), giá trị phân loại dự kiến (21 mục 16.3).
+  const parents = await parentProducts(
+    lines.flatMap((l) => {
+      const id = l.variantId ? null : requestLines.get(l.requestLineId)?.newParentProductId;
+      return id ? [id] : [];
+    }),
+  );
   const followUp = row.followUpReceiptId ? await findReceipt(row.followUpReceiptId) : undefined;
   const followsUp = row.followsUpReceiptId ? await findReceipt(row.followsUpReceiptId) : undefined;
   const names = await namesOf([row.createdBy, row.postedBy, row.resolvedBy]);
@@ -64,14 +71,17 @@ export async function toReceiptDetail(row: ReceiptRow) {
   return {
     ...summaryOf(row, refs, lines, names),
     lines: lines.map((l) => {
-      const v = variants.get(l.variantId);
+      const rl = requestLines.get(l.requestLineId)!;
+      const v = l.variantId ? variants.get(l.variantId) : undefined;
+      const parentName = rl.newParentProductId ? (parents.get(rl.newParentProductId)?.name ?? '') : (rl.newParentName ?? '');
       return {
         lineId: l.requestLineId,
         variantId: l.variantId,
-        sku: v?.sku ?? '',
-        productName: v?.productName ?? '',
-        attributesLabel: v ? attributesLabel(v) : '',
-        outstanding: outstanding(requestLines.get(l.requestLineId)!),
+        sku: v?.sku ?? null,
+        isNew: rl.newParentProductId !== null || rl.newParentName !== null,
+        productName: v?.productName ?? parentName,
+        attributesLabel: v ? attributesLabel(v) : (rl.newOptionValues ?? []).map((o) => o.value).join(' / '),
+        outstanding: outstanding(rl),
         announced: l.declaredQty,
         accepted: l.acceptedQty,
         defectKept: l.defectiveQty,

@@ -1,5 +1,5 @@
-// Sản phẩm mới từ đề nghị nhập (#108, #243; Documents/21 mục 16.3, 25 §3.2, §5.4): purchasing kiểm khi lập, tạo khi CEO
-// duyệt. Mỗi dòng là một SKU thuộc sản phẩm cha có sẵn (`parentId`) hoặc cha mới (`parentName`); các dòng cùng tên cha
+// Sản phẩm mới từ đề nghị nhập (#108, #243; Documents/21 mục 16.3, 25 §3.2, §4.2, §5.4): purchasing kiểm khi lập, gửi
+// duyệt, duyệt; tạo khi ghi sổ phiếu nhập kho có hàng về (đổi 22/11/2026). Mỗi dòng là một SKU thuộc sản phẩm cha có sẵn (`parentId`) hoặc cha mới (`parentName`); các dòng cùng tên cha
 // mới gộp một cha. Chạy trong `withCompany` của bên gọi, không tự mở giao dịch (withCompany không lồng được).
 import { recordAudit } from '../../../core/index.ts';
 import { findGroups } from '../repository/groups.ts';
@@ -36,7 +36,7 @@ type Field = 'parentId' | 'parentName' | 'groupId' | 'optionValues';
  */
 export interface NewProductErrors {
   errors: Map<number, { field: Field | null; message: string }>;
-  code: 'validation_failed' | 'too_many_axes';
+  code: 'validation_failed' | 'too_many_axes' | 'new_product_name_taken';
 }
 
 /** Tên cha, tên trục, giá trị: bỏ khoảng trắng hai đầu, gộp khoảng trắng giữa. */
@@ -55,10 +55,19 @@ type ParentPlan =
   | { kind: 'new'; name: string; groupId: string; groupName: string; axes: string[]; lines: PlannedLine[] }
   | { kind: 'existing'; productId: string; productName: string; axes: { attributeId: string; name: string }[]; lines: PlannedLine[] };
 
-/** Đọc (qua RLS) và kiểm mọi dòng; chỉ trả kế hoạch tạo khi không lỗi. */
-async function plan(items: readonly NewProductItem[]): Promise<NewProductErrors & { parents: ParentPlan[] }> {
+/**
+ * Đọc (qua RLS) và kiểm mọi dòng; chỉ trả kế hoạch tạo khi không lỗi. `onReceipt` (ghi sổ phiếu nhập kho, đề nghị đã
+ * đặt nên không trả về được, Documents/21 mục 16.3): tổ hợp đã là SKU của cha có sẵn thì dùng SKU đó (`reused`), tên cha
+ * mới vừa bị dùng thì mã `new_product_name_taken`.
+ */
+async function plan(
+  items: readonly NewProductItem[],
+  onReceipt = false,
+): Promise<NewProductErrors & { parents: ParentPlan[]; reused: Map<number, string> }> {
   const errors: NewProductErrors['errors'] = new Map();
+  const reused = new Map<number, string>();
   let tooManyAxes = false;
+  let nameTaken = false;
   const fail = (i: number, field: Field | null, message: string) => {
     if (!errors.has(i)) errors.set(i, { field, message });
   };
@@ -72,14 +81,16 @@ async function plan(items: readonly NewProductItem[]): Promise<NewProductErrors 
   const parents: ParentPlan[] = [];
 
   // Trùng tổ hợp giữa các dòng, trần 50 giá trị mỗi trục; `taken` là tổ hợp đã là SKU của cha có sẵn.
-  const checkCombos = (rows: typeof members, values: (string[] | null)[], taken = new Map<string, string>()) => {
+  const checkCombos = (rows: typeof members, values: (string[] | null)[], taken = new Map<string, { message: string; variantId: string }>()) => {
     const seen = new Map<string, number>();
     const lines: PlannedLine[] = [];
     rows.forEach(({ i }, k) => {
       const v = values[k];
       if (!v) return;
       const combo = v.map(key).join('|');
-      if (taken.has(combo)) return fail(i, 'optionValues', taken.get(combo)!);
+      const existing = taken.get(combo);
+      if (existing && onReceipt) return void reused.set(i, existing.variantId);
+      if (existing) return fail(i, 'optionValues', existing.message);
       if (seen.has(combo)) return fail(i, 'optionValues', `Trùng phân loại với dòng ${items[seen.get(combo)!]!.line + 1}`);
       seen.set(combo, i);
       lines.push({ index: i, values: v });
@@ -97,7 +108,11 @@ async function plan(items: readonly NewProductItem[]): Promise<NewProductErrors 
         if (!item.groupId || !groups.has(item.groupId)) fail(i, 'groupId', 'Chọn nhóm hàng');
         else if (item.groupId !== groupId) fail(i, 'groupId', 'Các dòng cùng sản phẩm cha phải cùng nhóm hàng');
       }
-      if (await productNameExists(name)) rows.forEach(({ i }) => fail(i, 'parentName', 'Đã có sản phẩm cùng tên'));
+      if (await productNameExists(name)) {
+        nameTaken ||= onReceipt;
+        const message = onReceipt ? `Tên «${name}» vừa được dùng cho sản phẩm khác; đổi tên sản phẩm kia rồi ghi sổ lại` : 'Đã có sản phẩm cùng tên';
+        rows.forEach(({ i }) => fail(i, 'parentName', message));
+      }
       // Trục của cha mới: theo thứ tự xuất hiện, dòng đầu tiên trước (M1).
       const axes = firstOf(rows.flatMap(({ item }) => item.options.map((o) => normalizeName(o.axis))));
       if (axes.length > MAX_AXES) {
@@ -134,7 +149,8 @@ async function plan(items: readonly NewProductItem[]): Promise<NewProductErrors 
       rows.forEach(({ i }) => fail(i, 'parentId', 'Không tìm thấy sản phẩm cha'));
       continue;
     }
-    if (variants.every((v) => v.businessStatus === 'archived')) {
+    // Lúc ghi sổ, hàng đã về: SKU mới vẫn vào cha dù mọi SKU cũ đã lưu trữ (cha suy trạng thái từ SKU, sẽ hết "lưu trữ").
+    if (!onReceipt && variants.every((v) => v.businessStatus === 'archived')) {
       rows.forEach(({ i }) => fail(i, 'parentId', 'Sản phẩm cha đã lưu trữ'));
       continue;
     }
@@ -155,16 +171,20 @@ async function plan(items: readonly NewProductItem[]): Promise<NewProductErrors 
     const taken = new Map(
       variants.map((v) => [
         v.attributes.map((a) => key(a.value)).join('|'),
-        v.businessStatus === 'archived' ? `Đã có SKU ${v.sku} (đã lưu trữ), khôi phục ở trang sản phẩm` : `Đã có SKU ${v.sku}, chọn SKU có sẵn`,
+        {
+          variantId: v.id,
+          message: v.businessStatus === 'archived' ? `Đã có SKU ${v.sku} (đã lưu trữ), khôi phục ở trang sản phẩm` : `Đã có SKU ${v.sku}, chọn SKU có sẵn`,
+        },
       ]),
     );
     const lines = checkCombos(rows, values, taken);
     overflow(axes.map((a) => a.name), lines, variants.map((v) => v.attributes.map((a) => a.value)), rows, fail);
-    if (rows.every(({ i }) => !errors.has(i))) {
+    if (rows.every(({ i }) => !errors.has(i)) && lines.length) {
       parents.push({ kind: 'existing', productId: parentId, productName: product.name, axes, lines });
     }
   }
-  return { errors, code: tooManyAxes ? 'too_many_axes' : 'validation_failed', parents };
+  const code = nameTaken ? 'new_product_name_taken' : tooManyAxes ? 'too_many_axes' : 'validation_failed';
+  return { errors, code, parents, reused };
 }
 
 /** Trục nào của cha có quá 50 giá trị (giá trị của SKU có sẵn cộng dòng mới) thì lỗi ở mọi dòng của cha. */
@@ -181,27 +201,34 @@ function overflow(
   });
 }
 
-/** Kiểm lúc lập, sửa đề nghị. */
+/** Kiểm lúc lập, sửa, gửi duyệt và duyệt đề nghị (không tạo gì). */
 export async function validateNewProducts(items: readonly NewProductItem[]): Promise<NewProductErrors> {
   const { errors, code } = await plan(items);
   return { errors, code };
 }
 
 /**
- * Tạo khi duyệt. Khoá công ty của catalog rồi kiểm lại (cha có sẵn có thể đã thêm SKU, đổi trục; tên cha mới có thể
- * vừa bị dùng). Mỗi cha: thuộc tính, giá trị chưa có thì tạo; cấp SKU một lần cho mọi dòng của cha; cha mới sinh mã cha
- * riêng. Mỗi SKU ghi `source_request_line_id` là dòng sinh ra nó. Trả `variantId` theo chỉ số mục; lỗi thì không trả
- * gì, bên gọi ném lỗi để rollback cả phần đã ghi.
+ * Tạo khi ghi sổ phiếu nhập kho (Documents/21 mục 16.3 "Dòng sản phẩm mới khi ghi sổ phiếu nhận"). Khoá công ty của
+ * catalog rồi kiểm lại (cha có sẵn có thể đã thêm SKU, đổi trục; tên cha mới có thể vừa bị dùng). Tổ hợp đã là SKU của
+ * cha có sẵn thì dùng SKU đó (`reused`: chỉ số mục, bên gọi ghi nhật ký). Mỗi cha: thuộc tính, giá trị chưa có thì tạo;
+ * cấp SKU một lần cho mọi dòng của cha; cha mới sinh mã cha riêng. Mỗi SKU ghi `source_request_line_id` là dòng sinh ra
+ * nó. Trả `variantIds`, `productIds` (cha của SKU) theo chỉ số mục; lỗi thì không trả gì, bên gọi ném lỗi để rollback
+ * cả phần đã ghi.
  */
 export async function createPurchaseProducts(
   caller: { companyId: string; accountId: string },
   items: readonly (NewProductItem & { lineId: string })[],
   description: string,
-): Promise<{ ok: true; variantIds: string[] } | ({ ok: false } & NewProductErrors)> {
+): Promise<{ ok: true; variantIds: string[]; productIds: string[]; reused: number[] } | ({ ok: false } & NewProductErrors)> {
   await lockVariants(caller.companyId);
-  const planned = await plan(items);
+  const planned = await plan(items, true);
   if (planned.errors.size) return { ok: false, errors: planned.errors, code: planned.code };
   const variantIds: string[] = [];
+  const productIds: string[] = [];
+  for (const [i, variantId] of planned.reused) {
+    variantIds[i] = variantId;
+    productIds[i] = items[i]!.parentId!;
+  }
   for (const parent of planned.parents) {
     const axisInputs: AxisInput[] = parent.axes.map((axis, j) => {
       const values = firstOf(parent.lines.map((l) => l.values[j]!)).map((value) => ({ value }));
@@ -240,6 +267,7 @@ export async function createPurchaseProducts(
     for (const [k, line] of parent.lines.entries()) {
       const id = await insertVariant(caller.companyId, productId, skus[k]!, combos[k]!.map((v) => v.id), k, items[line.index]!.lineId);
       variantIds[line.index] = id;
+      productIds[line.index] = productId;
       if (parent.kind === 'existing') {
         await recordAudit({
           companyId: caller.companyId,
@@ -254,7 +282,7 @@ export async function createPurchaseProducts(
       }
     }
   }
-  return { ok: true, variantIds };
+  return { ok: true, variantIds, productIds, reused: [...planned.reused.keys()] };
 }
 
 /** Tên nhóm hàng theo id (chỉ của công ty mình). */

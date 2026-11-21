@@ -3,7 +3,13 @@
 <!-- Sinh tự động bởi `npm run db:docs` từ db/migrations. Không sửa tay. -->
 
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
-Mới nhất: **V137**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+Mới nhất: **V138**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+
+## V138 · 21/11/2026 · dong-phieu-nhan-chua-co-sku
+
+`db/migrations/20261121054008_dong-phieu-nhan-chua-co-sku.sql` · sinh từ schema
+
+- `product.goods_receipt_lines`: đổi cột `variant_id` (thành null)
 
 ## V137 · 21/11/2026 · anh-xa-hai-tang-du-lieu
 
