@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { ProblemDetailsSchema } from '../../../../shared/http/openapi.ts';
 import { StatusChangeSchema } from '../../../../shared/http/status-change.ts';
-import { MISSING_REASONS } from '../domain/product-spec.ts';
+import { MISSING_REASONS, PLATFORM_KINDS } from '../domain/product-spec.ts';
 
 // Sàn kiểm theo danh sách adapter đã đăng ký ở service (422 `marketplace_unsupported`, Documents/21 §18.4), không viết cứng ở đây.
 export const PlatformParams = z.object({ platform: z.string().max(40) });
@@ -1219,7 +1219,7 @@ export const AxisMappingBody = z
   })
   .strict()
   .meta({ id: 'AxisMappingInput' });
-const AXIS_KIND = z.enum(['color', 'size', 'volume', 'flavor']).nullable();
+const AXIS_KIND = z.enum(PLATFORM_KINDS).nullable();
 const DATA_SCOPE = z.enum(['platform', 'company']).meta({ description: '`platform`: dữ liệu chuẩn dùng chung, ánh xạ do nền tảng giữ' });
 export const AxisMappingItemSchema = z
   .object({

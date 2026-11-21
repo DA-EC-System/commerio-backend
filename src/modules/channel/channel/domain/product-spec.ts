@@ -79,8 +79,18 @@ export interface PlatformAttribute {
 /** Trục phân loại tự đặt, không ánh xạ sang sales attribute nào của sàn. */
 export const CUSTOM_AXIS = '__custom';
 
-/** Loại thuộc tính phân loại của catalog (`attributes.platform_kind`) dùng để ghép trục với sales attribute của sàn (#448). */
-export type PlatformKind = 'color' | 'size' | 'volume' | 'flavor';
+/**
+ * Loại thuộc tính phân loại của catalog (`attributes.platform_kind`) dùng để ghép trục với sales attribute của sàn (#448).
+ * Trùng `PLATFORM_KINDS` của catalog (#531, 23 kind); `service/product-port.ts` kiểm hai union bằng nhau lúc typecheck.
+ */
+// prettier-ignore
+export const PLATFORM_KINDS = [
+  'color', 'size', 'shoe_size', 'bra_size', 'age', 'ring_size',
+  'storage', 'version', 'screen_size', 'connector', 'length', 'battery_capacity',
+  'voltage', 'power', 'volume', 'weight', 'flavor', 'scent',
+  'pack', 'diaper_size', 'bed_size', 'style', 'compatible_model',
+] as const;
+export type PlatformKind = (typeof PLATFORM_KINDS)[number];
 
 /**
  * Khả năng khai biến thể của một category (#448, Documents/21 §18.8.3): số trục tối đa, sàn có nhận tên trục tự đặt không,
