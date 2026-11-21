@@ -211,8 +211,8 @@ export function registerPurchasingOpenApi(registry: OpenAPIRegistry): void {
     responses: {
       200: json('Phiếu sau khi chuyển', GoodsReceipt),
       ...missing('phiếu nhận hoặc thao tác'),
-      ...conflict(`${versionConflict}; \`invalid_transition\`, \`second_person_required\`, \`has_shortage\`, \`no_shortage\`, \`empty_document\``),
-      422: problemResponse('`reason_required`; `over_outstanding` theo ô'),
+      ...conflict(`${versionConflict}; \`invalid_transition\`, \`second_person_required\`, \`has_shortage\`, \`no_shortage\`, \`empty_document\`, \`new_product_name_taken\` (tên cha mới vừa bị sản phẩm khác dùng, \`errors["lines.i"]\`)`),
+      422: problemResponse('`reason_required`; `over_outstanding` theo ô; dòng sản phẩm mới không tạo được SKU lúc ghi sổ: `errors["lines.i"]`'),
     },
   });
 
