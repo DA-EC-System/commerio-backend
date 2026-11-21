@@ -124,6 +124,14 @@ export interface ListingRowView extends ListingPrice {
   /** Số tồn lần đẩy tới sẽ gửi (21 §18.9 R3, `domain/stock-to-push.ts`); null khi chưa đẩy được tồn. */
   stockToPush: number | null;
   stockHeldReason: StockHeldReason | null;
+  /** Giờ lần đẩy lỗi hoặc bị giữ gần nhất (21 §18 "Kết quả lượt đồng bộ"); null khi không có lỗi. */
+  lastSyncFailedAt: Date | null;
+}
+
+/** Lần thử lỗi gần nhất: `at` mới hơn của hai lỗi đồng bộ còn hiệu lực. */
+export function lastSyncFailedAt(row: { stockSyncError: SyncError | null; priceSyncError: SyncError | null } | undefined): Date | null {
+  const ats = [row?.stockSyncError?.at, row?.priceSyncError?.at].flatMap((a) => (a ? [Date.parse(a)] : [])).filter((t) => !Number.isNaN(t));
+  return ats.length ? new Date(Math.max(...ats)) : null;
 }
 
 /**
@@ -279,6 +287,7 @@ async function shopListingRows(port: ProductPort, shop: ShopRow, catalog: readon
       externalCategoryPath: listing?.externalCategoryId ? (categoryPaths.get(listing.externalCategoryId) ?? null) : null,
       categoryChange: listing ? toCategoryChange(listing.categoryChange) : null,
       ...stockToPushView(listing, { holdStock, counted: counted.has(v.id), available: available.get(v.id) }),
+      lastSyncFailedAt: lastSyncFailedAt(listing),
     };
   });
 }

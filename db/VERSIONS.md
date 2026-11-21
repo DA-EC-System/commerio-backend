@@ -3,7 +3,20 @@
 <!-- Sinh tự động bởi `npm run db:docs` từ db/migrations. Không sửa tay. -->
 
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
-Mới nhất: **V146**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+Mới nhất: **V148**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+
+## V148 · 21/11/2026 · luot-dong-bo-rls
+
+`db/migrations/20261121132759_luot-dong-bo-rls.sql` · viết tay
+
+- viết tay: RLS
+- RLS cho bảng mới `channel.listing_sync_runs` (kết quả lượt đồng bộ do người bấm, Documents/21 §18; vòng lặp của 0002 chỉ chạy một lần).
+
+## V147 · 21/11/2026 · luot-dong-bo
+
+`db/migrations/20261121132737_luot-dong-bo.sql` · sinh từ schema
+
+- + bảng `channel.listing_sync_runs`
 
 ## V146 · 21/11/2026 · bang-san-fk
 

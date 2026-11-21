@@ -879,3 +879,58 @@ export const shopReauthMails = channelSchema.table(
     index('shop_reauth_mails_pending_idx').on(t.queuedAt).where(sql`${t.outcome} is null`),
   ],
 );
+
+/** Một dòng lỗi của lượt đồng bộ (Documents/21 §18 "Kết quả lượt đồng bộ", `SyncRunError`). */
+export interface SyncRunErrorRow {
+  listingId: string;
+  variantId: string | null;
+  productId: string | null;
+  productName: string | null;
+  attributesLabel: string | null;
+  sku: string | null;
+  code: string;
+  message: string;
+  platformMessage: string | null;
+  at: string;
+  fix: 'variant_price' | 'stocktake' | 'platform' | 'shop_reconnect' | null;
+}
+
+/**
+ * Lượt đồng bộ do người bấm (Documents/21 §18 "Kết quả lượt đồng bộ", thiết kế `trang-san-pham-tab/design/v2.html` Màn 2).
+ * Lượt định kỳ 15 phút không ghi. `queued` lúc bấm; việc `channel.listing_sync` bắt đầu thì nhận mọi lượt `queued` của gian
+ * hàng (`running`, `started_at`), mỗi lô đẩy xong tăng `processed`, `succeeded`, `failed` và nối `errors` (tối đa 200 dòng),
+ * xong thì `done` hoặc `failed` kèm `error`. `total` null khi chưa biết (đang đọc sàn). Một lượt `queued` mỗi gian hàng
+ * (`listing_sync_runs_one_queued_uq`): bấm khi đang có lượt chờ thì dùng lại lượt đó.
+ */
+export const listingSyncRuns = channelSchema.table(
+  'listing_sync_runs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    companyId: uuid('company_id').notNull(),
+    shopId: uuid('shop_id')
+      .notNull()
+      .references(() => shops.id, { onDelete: 'cascade' }),
+    status: text('status').$type<'queued' | 'running' | 'done' | 'failed'>().notNull().default('queued'),
+    requestedBy: uuid('requested_by'),
+    requestedAt: timestamp('requested_at', { withTimezone: true }).notNull().defaultNow(),
+    startedAt: timestamp('started_at', { withTimezone: true }),
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
+    total: integer('total'),
+    processed: integer('processed').notNull().default(0),
+    succeeded: integer('succeeded').notNull().default(0),
+    failed: integer('failed').notNull().default(0),
+    errors: jsonb('errors').$type<SyncRunErrorRow[]>().notNull().default([]),
+    /** Lỗi cả lượt `{ code, message }` (sàn lỗi cả lô, mất uỷ quyền, gian hàng ngắt). */
+    error: jsonb('error').$type<{ code: string; message: string }>(),
+  },
+  (t) => [
+    check('listing_sync_runs_status', sql`${t.status} in ('queued', 'running', 'done', 'failed')`),
+    check('listing_sync_runs_counts', sql`${t.processed} >= 0 and ${t.succeeded} >= 0 and ${t.failed} >= 0 and ${t.succeeded} + ${t.failed} = ${t.processed}`),
+    check('listing_sync_runs_total', sql`${t.total} is null or ${t.processed} <= ${t.total}`),
+    check('listing_sync_runs_started', sql`(${t.status} = 'queued') = (${t.startedAt} is null)`),
+    check('listing_sync_runs_finished', sql`(${t.status} in ('done', 'failed')) = (${t.finishedAt} is not null)`),
+    check('listing_sync_runs_error', sql`${t.error} is null or ${t.status} = 'failed'`),
+    uniqueIndex('listing_sync_runs_one_queued_uq').on(t.shopId).where(sql`${t.status} = 'queued'`),
+    index('listing_sync_runs_shop_idx').on(t.shopId, t.requestedAt),
+  ],
+);
