@@ -650,30 +650,32 @@ function toRemoteOrder(o: Row, items: Row[]): RemoteOrder {
 
 /**
  * Sale prop mặc định theo loại thuộc tính phân loại (việc #3 luồng sản phẩm, 21/11/2026): mã đổi theo leaf, lấy mã đầu tiên
- * leaf có. Đo bằng `GetCategoryAttributes` khoảng 50 leaf (api.lazada.vn, shop thử) và số của acn-1f; bảng ở
+ * leaf có. Đo bằng `GetCategoryAttributes` (`attribute_type = sku`, `is_sale_prop = 1`) khoảng 100 leaf (api.lazada.vn,
+ * shop thử, 21/11/2026; cache `channel.platform_category_attributes` trên staging); bảng ở Documents/21 §18.8.3 và
  * `.claude/issues/luong-san-pham/anh-xa-bien-the-san.md`. Lazada không nhận tên trục tự đặt: kind không có mã (age,
- * weight, style) hay leaf thiếu mã thì `axis_unmapped`.
+ * style) hay leaf thiếu mã thì `axis_unmapped`.
  */
 const LAZADA_SALES_ATTRIBUTES = {
   color: ['color_family'],
-  size: ['size', 'clothing_size'],
+  size: ['size', 'clothing_size', 'Toy_Size', 'basic_size'],
   shoe_size: ['size'],
   bra_size: ['size'],
   ring_size: ['ring_size'],
-  storage: ['storage_capacity_new'],
+  storage: ['storage_capacity_new', 'Storage_Size'],
   version: ['Variation'],
-  screen_size: ['smartwear_size'],
-  connector: ['wear_acc_connectivity'],
-  length: ['cable_length'],
+  screen_size: ['display_size_tv', 'smartwear_size'],
+  connector: ['cable_connection', 'wear_acc_connectivity'],
+  length: ['cable_length', 'Length_(m)', 'curtain_length'],
   battery_capacity: ['powerbank_capacity'],
   voltage: ['input_voltage'],
   power: ['power_consumption'],
-  volume: ['volume'],
+  volume: ['volume', 'capacity'],
+  weight: ['pet_food_size', 'weight'],
   flavor: ['flavor', 'pets_flavor'],
   scent: ['scent', 'fragrance_family', 'Baby_scent'],
-  pack: ['Units_(per_Bundle)', 'units_hb', 'diaper_pack_size'],
+  pack: ['Units_(per_Bundle)', 'units_hb', 'units', 'diaper_pack_size', 'number_of_pieces'],
   diaper_size: ['size_diaper', 'size'],
-  bed_size: ['bedding_size_2', 'size'],
+  bed_size: ['bedding_size_2', 'mattress_size', 'size'],
   compatible_model: ['compatibility_by_model'],
 } as const satisfies Partial<Record<PlatformKind, readonly string[]>>;
 
