@@ -15,7 +15,7 @@ import { evaluatePrices } from './price-inputs.ts';
 import type { ListingVariant, ProductPort } from './product-port.ts';
 import { ensureLeaf } from './platform-categories.ts';
 import { pushAttributes, specChecks } from './product-specs.ts';
-import { pushBlock } from './push-block.ts';
+import { pushBlock, variantImageGaps } from './push-block.ts';
 import { untrustedVariants } from './stock-trust.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { MarketplaceError } from './marketplaces/index.ts';
@@ -78,7 +78,9 @@ export async function prepareNewProduct(args: {
     const counted = await countedOf(port, variantIds);
     const shopPrices = new Map(variantIds.flatMap((id) => (prices.get(id)?.priceSource === 'shop' ? [[id, String(prices.get(id)!.price)] as const] : [])));
     const floors = shopPrices.size ? (await evaluatePrices(shop.id, shopPrices)).results : new Map();
-    return { map, variants, prices, available, untrusted, counted, floors, responsible: await responsibleOrgOf(shop.companyId) };
+    // Kiểm lại ảnh theo giá trị trước khi gọi sàn (21 §18.5 `variant_images_missing`): ảnh có thể bị gỡ sau lúc request.
+    const gap = variantImageGaps(adapter, await port.variants(undefined, { productIds: [productId] })).get(productId) ?? null;
+    return { map, variants, prices, available, untrusted, counted, floors, gap, responsible: await responsibleOrgOf(shop.companyId) };
   });
   const { map } = data;
   const sizeChartRule = map ? await sizeChartRuleOf(adapter, accessToken, map) : null;
@@ -97,7 +99,7 @@ export async function prepareNewProduct(args: {
       blocked.push({ row, code: 'below_floor', message: 'Giá theo bộ lọc giá của gian hàng có thực nhận dưới giá thấp nhất' });
       continue;
     }
-    const block = pushBlock(v, price, map && { ...map, sizeChartRule }, Boolean(args.imageUrls.length), Boolean(args.sizeChartUrl));
+    const block = pushBlock(v, price, map && { ...map, sizeChartRule }, Boolean(args.imageUrls.length), Boolean(args.sizeChartUrl), data.gap);
     if (block) {
       blocked.push({ row, code: block.code, message: block.message });
       continue;
