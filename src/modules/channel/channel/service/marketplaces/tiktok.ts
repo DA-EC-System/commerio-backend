@@ -6,6 +6,7 @@
 // `tiktok<Việc>Methods(client: TiktokClient): Pick<MarketplaceAdapter, ...>`, gọi sàn bằng `client.call(method, path,
 // { query, body, token })` với `token` là `TokenSet.accessToken` (client tự đặt header và `shop_cipher`), rồi spread vào
 // đối tượng trả về ở `createTiktokAdapter` dưới đây và bỏ hàm `unsupported` tương ứng.
+import type { PlatformKind } from '../../domain/product-spec.ts';
 import {
   epochDate,
   existingSku,
@@ -204,6 +205,29 @@ function skusOf(p: Row, details?: ProductDetails, markUnread = false): RemoteSku
     };
   });
 }
+
+/**
+ * Sale prop mặc định theo loại thuộc tính phân loại (việc #3 luồng sản phẩm, 21/11/2026): id toàn cục, giống nhau ở mọi
+ * leaf; lấy id đầu tiên leaf có. Đo bằng Get Attributes 202309 khoảng 50 leaf (shop thử) và số của acn-1f; bảng ở
+ * `.claude/issues/luong-san-pham/anh-xa-bien-the-san.md`. Kind không có id (version, screen_size, connector, length,
+ * battery_capacity, voltage, power, style, compatible_model) hay leaf thiếu id thì trục tên tự đặt (`__custom`).
+ */
+const TIKTOK_SALES_ATTRIBUTES = {
+  color: ['100000'],
+  size: ['100007', '100001'],
+  shoe_size: ['100007'],
+  bra_size: ['100007'],
+  age: ['100103'],
+  ring_size: ['100070', '100007'],
+  storage: ['100027', '100090'],
+  volume: ['100089', '100042'],
+  weight: ['100089'],
+  flavor: ['100092', '100081'],
+  scent: ['100009'],
+  pack: ['100089'],
+  diaper_size: ['100007'],
+  bed_size: ['100001', '100007'],
+} as const satisfies Partial<Record<PlatformKind, readonly string[]>>;
 
 export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch = fetch, deps: TiktokOrderDeps = {}): MarketplaceAdapter {
   const client = createTiktokClient(config, fetchFn);
@@ -533,7 +557,7 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
     suggestionRules: { minNameLength: 25 },
     // Sales attribute chuẩn của TikTok: 100000 Màu sắc, 100007 / 100001 Kích cỡ, 100089 Dung tích, 100092 Hương vị; sản phẩm tối
     // đa 3 trục, tên trục tự đặt được (Documents#214 mục 3).
-    standardSalesAttributes: { color: ['100000'], size: ['100007', '100001'], volume: ['100089'], flavor: ['100092'] },
+    standardSalesAttributes: TIKTOK_SALES_ATTRIBUTES,
     variantCapabilities: () => ({ maxAxes: 3, customAxisName: true, salesRequired: [], addVariant: true }),
     // Get Categories trả `permission_statuses` theo gian hàng mang token: việc đẩy ghi `shop_category_permissions` (#400 A17).
     categoryPermissionsPerShop: true,

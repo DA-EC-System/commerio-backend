@@ -13,6 +13,7 @@ import {
   getProductSpecs,
   getSpecFields,
   getVariants,
+  type PlatformKind as CatalogPlatformKind,
   type PlatformProductInput,
   type ProductFacts,
   productImageUrls,
@@ -23,6 +24,7 @@ import {
 } from '../../../product/index.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
 import type { CatalogSpecValue } from '../domain/spec-resolve.ts';
+import type { PlatformKind } from '../domain/product-spec.ts';
 
 /** Thông số của công ty (cổng `getSpecFields` của catalog, Documents/21 §11.3). */
 export interface SpecFieldInfo {
@@ -55,7 +57,7 @@ export interface ListingVariant {
   attributes: {
     attributeId: string;
     attributeName: string;
-    platformKind: 'color' | 'size' | 'volume' | 'flavor' | null;
+    platformKind: PlatformKind | null;
     valueId: string;
     value: string;
   }[];
@@ -77,7 +79,7 @@ export interface ListingVariant {
 
 export interface ProductPort {
   /** Thuộc tính phân loại của công ty (#448); thiếu (bản giả của test) thì coi là không có thuộc tính nào. */
-  attributes?(): Promise<{ id: string; name: string; platformKind: 'color' | 'size' | 'volume' | 'flavor' | null; scope?: DataScope }[]>;
+  attributes?(): Promise<{ id: string; name: string; platformKind: PlatformKind | null; scope?: DataScope }[]>;
   /** Bỏ trống `ids` = mọi biến thể của công ty; `opts.productIds` lọc theo sản phẩm, `[]` là rỗng (#400 A13). */
   variants(ids?: readonly string[], opts?: { productIds?: readonly string[] }): Promise<ListingVariant[]>;
   standardPrices(ids: readonly string[]): Promise<Map<string, Decimal | null>>;
@@ -123,13 +125,10 @@ export interface ProductPort {
 type Extended = VariantSummary &
   Partial<Record<'description', string | null> & Record<'weightG' | 'lengthMm' | 'widthMm' | 'heightMm', number | null>>;
 
-/**
- * Kind channel đã ánh xạ (`standardSalesAttributes`). Catalog có 23 kind từ #531; kind channel chưa biết coi như không
- * kind (trục tự đặt hoặc `axis_unmapped`, như thuộc tính riêng) tới khi union của channel thêm kind đó.
- */
-type ChannelKind = 'color' | 'size' | 'volume' | 'flavor';
-const CHANNEL_KINDS: readonly string[] = ['color', 'size', 'volume', 'flavor'] satisfies ChannelKind[];
-const channelKind = (k: string | null): ChannelKind | null => (k !== null && CHANNEL_KINDS.includes(k) ? (k as ChannelKind) : null);
+// Union kind của channel phải trùng catalog: catalog thêm kind mà channel chưa có (hay ngược lại) thì typecheck đỏ ở đây.
+type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+const sameKinds: Same<CatalogPlatformKind, PlatformKind> = true;
+void sameKinds;
 
 function toListingVariant(v: Extended): ListingVariant {
   return {
@@ -143,7 +142,7 @@ function toListingVariant(v: Extended): ListingVariant {
     attributes: v.attributes.map(({ attributeId, attributeName, platformKind, valueId, value }) => ({
       attributeId,
       attributeName,
-      platformKind: channelKind(platformKind),
+      platformKind,
       valueId,
       value,
     })),
@@ -173,7 +172,7 @@ export function catalogSpecPort(): Pick<ProductPort, 'productSpecs' | 'specField
 export function productPort(ctx: ModuleContext): ProductPort {
   return (
     override ?? {
-      attributes: async () => (await attributeKindsOf()).map((a) => ({ ...a, platformKind: channelKind(a.platformKind) })),
+      attributes: attributeKindsOf,
       variants: async (ids, opts) => (await getVariants(ids, opts)).map(toListingVariant),
       standardPrices: (ids) => standardPricesOf(ctx, ids),
       availableOf,
