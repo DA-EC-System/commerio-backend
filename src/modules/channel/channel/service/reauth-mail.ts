@@ -19,6 +19,7 @@ import {
   type ReauthMailRow,
 } from '../repository/reauth-mails.ts';
 import { findShopRow, type ShopRow } from '../repository/shops.ts';
+import { getAdapter } from './marketplaces/index.ts';
 import { renderReauthMail } from './reauth-mail-text.ts';
 
 export const REAUTH_MAIL_CONSUMER = 'channel-shop-reauth-mail';
@@ -165,7 +166,7 @@ export async function handleReauthMail(event: ReauthMailEvent): Promise<void> {
     stage: mail.stage,
     shopId,
     shopName: row.shopName,
-    platform: row.platform,
+    platformName: getAdapter(row.platform)?.name ?? row.platform,
     authDeadline: deadline,
     lostAt,
     webUrl: env.PUBLIC_WEB_URL,

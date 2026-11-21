@@ -2,7 +2,6 @@
 // quyền hay số tiền: hàm chỉ nhận tên, sàn, mốc thời gian và id gian hàng.
 import type { ReauthMailStage } from '../domain/reauth-mail.ts';
 
-const PLATFORM_NAMES: Record<string, string> = { lazada: 'Lazada', shopee: 'Shopee', tiktok: 'TikTok Shop', mock: 'Sàn thử' };
 const VN_OFFSET_MS = 7 * 3600_000;
 
 /** Tên gian hàng lấy từ sàn: gộp xuống dòng thành khoảng trắng để không chen dòng lạ vào thư. */
@@ -19,7 +18,8 @@ export interface ReauthMailInput {
   stage: ReauthMailStage;
   shopId: string;
   shopName: string;
-  platform: string;
+  /** Tên sàn hiển thị, lấy từ adapter (`name`) ở bên gọi; hàm này không giữ bảng tên sàn. */
+  platformName: string;
   /** Hạn uỷ quyền (`authDeadline`), null khi token dán tay không có hạn. */
   authDeadline: Date | null;
   /** Lúc chuyển sang `needs_reauth`, chỉ có ở thư `lost`. */
@@ -30,7 +30,7 @@ export interface ReauthMailInput {
 
 export function renderReauthMail(input: ReauthMailInput): { subject: string; text: string } {
   const shop = oneLine(input.shopName);
-  const platform = PLATFORM_NAMES[input.platform] ?? input.platform;
+  const platform = input.platformName;
   const path = `/channel/shops/${input.shopId}`;
   const link = input.webUrl ? `${input.webUrl.replace(/\/+$/, '')}${path}` : null;
   const lost = input.stage === 'lost';
