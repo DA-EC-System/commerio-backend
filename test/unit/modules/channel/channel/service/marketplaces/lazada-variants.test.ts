@@ -237,10 +237,25 @@ describe('Lazada addVariants', () => {
 });
 
 describe('Lazada removeVariants', () => {
-  it('sku_id_list là JSON mảng SkuId_<item>_<sku>', async () => {
-    const fn = fakeFetch({ code: '0' });
+  const item = (skus: { SkuId: number; Status: string }[]) => ({ code: '0', data: { status: 'Active', skus } });
+
+  it('đọc item trước, còn SKU khác thì gọi remove với sku_id_list là JSON mảng SkuId_<item>_<sku>', async () => {
+    const fn = fakeFetch(
+      item([{ SkuId: 117597811499, Status: 'active' }, { SkuId: 117617144674, Status: 'inactive' }, { SkuId: 1, Status: 'active' }]),
+      { code: '0' },
+    );
     await createLazadaAdapter(config, fn).removeVariants!('t', '13517941999', ['117597811499', '117617144674']);
-    expect(sent(fn, 0)).toMatchObject({ path: '/rest/product/remove', method: 'POST' });
-    expect(sent(fn, 0).body.sku_id_list).toBe('["SkuId_13517941999_117597811499","SkuId_13517941999_117617144674"]');
+    expect(sent(fn, 0)).toMatchObject({ path: '/rest/product/item/get' });
+    expect(sent(fn, 1)).toMatchObject({ path: '/rest/product/remove', method: 'POST' });
+    expect(sent(fn, 1).body.sku_id_list).toBe('["SkuId_13517941999_117597811499","SkuId_13517941999_117617144674"]');
+  });
+
+  it('SKU gỡ là SKU cuối chưa xoá trên sàn (bản sao của app cũ): last_variant, không gọi remove vì sàn sẽ xoá cả item', async () => {
+    const fn = fakeFetch(item([{ SkuId: 117617380384, Status: 'active' }, { SkuId: 117617380385, Status: 'deleted' }]));
+    await expect(createLazadaAdapter(config, fn).removeVariants!('t', '13518099452', ['117617380384'])).rejects.toMatchObject({
+      kind: 'rejected',
+      platformCode: 'last_variant',
+    });
+    expect(fn).toHaveBeenCalledTimes(1);
   });
 });

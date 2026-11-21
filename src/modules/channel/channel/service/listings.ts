@@ -592,7 +592,8 @@ async function enqueue(
 /**
  * Gỡ khỏi sàn (§18.3, §18.8.4): sản phẩm sàn còn SKU khác (listing chưa gỡ cùng mã sản phẩm, hoặc bản sao SKU sàn) và adapter
  * có `removeVariants` thì gỡ riêng phân loại đó (TikTok bỏ khỏi `skus`, có duyệt lại; Lazada xoá SKU) và bỏ mã sàn khỏi listing,
- * nên đẩy lại là thêm phân loại; SKU cuối cùng thì tắt trên sàn như cũ, giữ mã sàn để đẩy lại là bật lại. Rồi chuyển `delisted`.
+ * nên đẩy lại là thêm phân loại; SKU cuối cùng thì tắt trên sàn như cũ, giữ mã sàn để đẩy lại là bật lại (adapter báo
+ * `last_variant` khi bản sao đếm thừa thì cũng tắt). Rồi chuyển `delisted`.
  */
 export async function delistListing(actor: Actor, shopId: string, variantId: string, version: number): Promise<ChannelListing> {
   const { adapter, accessToken } = await withCompany(actor.companyId, () => shopSession(shopId));
@@ -610,9 +611,18 @@ export async function delistListing(actor: Actor, shopId: string, variantId: str
       const siblings = (await remoteProductListings([{ shopId: row.shopId, externalProductId }])).filter((l) => l.id !== row.id && l.externalSkuId);
       return siblings.length > 0 || (await countRemoteSkusOfProduct(row.shopId, externalProductId)) > 1;
     });
+    // Bản sao SKU sàn có thể cũ (gỡ phân loại trước đó chưa phản ánh): sàn báo đây là SKU cuối thì tắt như SKU cuối.
     if (remove && hasSiblings) {
-      await onMarketplace(() => remove(accessToken, externalProductId, [externalSkuId]));
-      removed = true;
+      removed = await onMarketplace(async () => {
+        try {
+          await remove(accessToken, externalProductId, [externalSkuId]);
+          return true;
+        } catch (err) {
+          if (!(err instanceof MarketplaceError && err.platformCode === 'last_variant')) throw err;
+          await adapter.deactivate(accessToken, externalProductId, externalSkuId);
+          return false;
+        }
+      });
     } else {
       await onMarketplace(() => adapter.deactivate(accessToken, externalProductId, externalSkuId));
     }
