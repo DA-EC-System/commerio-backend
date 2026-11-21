@@ -1,24 +1,37 @@
 // Registry adapter theo sàn (#103 B7, mẫu `GatewayFactory` của payment). Thêm sàn = thêm một file và một dòng ở đây.
-import { env } from '../../../../../shared/config/env.ts';
-import { reservePlatformCall } from '../../repository/api-usage.ts';
-import { callScope } from './call-scope.ts';
-import type { ConnectMethod, MarketplaceAdapter, ShopCapabilities } from './common.ts';
-import { createLazadaAdapter } from './lazada.ts';
-import { TIKTOK_RATE_LIMIT } from './tiktok-client.ts';
-import { createTiktokAdapter } from './tiktok.ts';
+import { env } from "../../../../../shared/config/env.ts";
+import { reservePlatformCall } from "../../repository/api-usage.ts";
+import { callScope } from "./call-scope.ts";
+import type {
+  ConnectMethod,
+  MarketplaceAdapter,
+  ShopCapabilities,
+} from "./common.ts";
+import { createLazadaAdapter } from "./lazada.ts";
+import { TIKTOK_RATE_LIMIT } from "./tiktok-client.ts";
+import { createTiktokAdapter } from "./tiktok.ts";
 
-export type * from './common.ts';
-export { INVALID_AMOUNT, MarketplaceError, PRECHECK_CODES, PROMOTION_LOCKED } from './common.ts';
-export { appOnly, asManual, forCompany, inBackground } from './call-scope.ts';
+export type * from "./common.ts";
+export {
+  INVALID_AMOUNT,
+  MarketplaceError,
+  PRECHECK_CODES,
+  PROMOTION_LOCKED,
+} from "./common.ts";
+export { appOnly, asManual, forCompany, inBackground } from "./call-scope.ts";
 
 /**
  * Xin một lượt gọi sàn: trần chung `limit` của app, rồi phần của công ty theo ngữ cảnh lời gọi (`call-scope.ts`,
  * Documents/21 §18.6.8: bấm tay tới 90%, việc nền tới 100%, tối thiểu `CHANNEL_COMPANY_MIN_CALLS`).
  */
-function reserveFor(platform: 'lazada' | 'tiktok', limit: number) {
+function reserveFor(platform: "lazada" | "tiktok", limit: number) {
   return () => {
     const { companyId, background } = callScope();
-    return reservePlatformCall(platform, limit, { companyId, background, companyMin: env.CHANNEL_COMPANY_MIN_CALLS });
+    return reservePlatformCall(platform, limit, {
+      companyId,
+      background,
+      companyMin: env.CHANNEL_COMPANY_MIN_CALLS,
+    });
   };
 }
 
@@ -28,7 +41,7 @@ const lazada = createLazadaAdapter({
   redirectUrl: env.LAZADA_REDIRECT_URL,
   apiUrl: env.LAZADA_API_URL,
   authUrl: env.LAZADA_AUTH_URL,
-  reserveCall: reserveFor('lazada', env.LAZADA_DAILY_CALL_LIMIT),
+  reserveCall: reserveFor("lazada", env.LAZADA_DAILY_CALL_LIMIT),
 });
 
 const tiktok = createTiktokAdapter({
@@ -37,11 +50,14 @@ const tiktok = createTiktokAdapter({
   serviceId: env.TIKTOK_SERVICE_ID,
   apiUrl: env.TIKTOK_API_URL,
   authUrl: env.TIKTOK_AUTH_URL,
-  reserveCall: reserveFor('tiktok', env.TIKTOK_DAILY_CALL_LIMIT),
+  reserveCall: reserveFor("tiktok", env.TIKTOK_DAILY_CALL_LIMIT),
   rateLimit: TIKTOK_RATE_LIMIT,
 });
 
-const defaults: Readonly<Record<string, MarketplaceAdapter>> = { lazada, tiktok };
+const defaults: Readonly<Record<string, MarketplaceAdapter>> = {
+  lazada,
+  tiktok,
+};
 let adapters: Record<string, MarketplaceAdapter> = { ...defaults };
 
 /** Adapter của sàn, `undefined` khi chưa có (bên gọi trả 422 `marketplace_unsupported`). Khoá của Object (`toString`) không tính. */
@@ -59,11 +75,15 @@ export function registeredPlatforms(): string[] {
  * adapter, mục ở đây bỏ qua. TikTok có adapter từ commerio-backend#217 nên không còn mục khai sẵn.
  */
 const PLANNED: readonly { platform: string; name: string; reason: string }[] = [
-  { platform: 'shopee', name: 'Shopee', reason: 'Shopee chưa cấp quyền API cho ứng dụng sinh viên' },
+  {
+    platform: "shopee",
+    name: "Shopee",
+    reason: "Shopee chưa cấp quyền API cho ứng dụng sinh viên",
+  },
 ];
 
 /** Không bao giờ hiện cho người dùng, kể cả khi có adapter đăng ký dưới mã này (§18.7.3). */
-const HIDDEN = new Set(['mock']);
+const HIDDEN = new Set(["mock"]);
 
 export interface PlatformEntry {
   platform: string;
@@ -89,30 +109,39 @@ export function platformEntries(): PlatformEntry[] {
         platform,
         name: adapter.name,
         connectable,
-        reason: connectable ? null : `Môi trường này chưa cấu hình kết nối ${adapter.name}`,
+        reason: connectable
+          ? null
+          : `Môi trường này chưa cấu hình kết nối ${adapter.name}`,
         methods,
         capabilities: capabilitiesFrom(adapter),
       };
     });
-  const planned = PLANNED.filter((p) => !Object.hasOwn(adapters, p.platform)).map(
-    (p): PlatformEntry => ({ ...p, connectable: false, methods: [], capabilities: CAUTIOUS }),
-  );
+  const planned = PLANNED.filter(
+    (p) => !Object.hasOwn(adapters, p.platform),
+  ).map((p): PlatformEntry => ({
+    ...p,
+    connectable: false,
+    methods: [],
+    capabilities: CAUTIOUS,
+  }));
   return [...fromAdapters, ...planned];
 }
 
 /** Không có adapter (sàn bị gỡ): giả định thận trọng thay vì 500 (#200 A9). */
 const CAUTIOUS: ShopCapabilities = {
   listingReview: true,
-  hideBy: 'zero_stock',
-  splitLevel: 'none',
-  returnWindow: 'platform_status',
+  hideBy: "zero_stock",
+  splitLevel: "none",
+  returnWindow: "platform_status",
   productSpec: false,
   contentUpdate: false,
   repackOnReopen: false,
 };
 
 /** Phần adapter khai cộng ba cờ suy từ hàm adapter có cài (Documents/21 §18.6.2): không khai tay nên không lệch với code. */
-function capabilitiesFrom(adapter: MarketplaceAdapter): ShopCapabilities {
+export function capabilitiesFrom(
+  adapter: MarketplaceAdapter,
+): ShopCapabilities {
   return {
     ...adapter.capabilities,
     productSpec: Boolean(adapter.categoryTree),
@@ -128,7 +157,10 @@ export function capabilitiesOf(platform: string): ShopCapabilities {
 }
 
 /** Test thay adapter thật bằng adapter giả; `resetAdapters()` trả lại như cũ. */
-export function registerAdapter(platform: string, adapter: MarketplaceAdapter): void {
+export function registerAdapter(
+  platform: string,
+  adapter: MarketplaceAdapter,
+): void {
   adapters[platform] = adapter;
 }
 
