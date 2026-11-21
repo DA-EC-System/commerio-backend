@@ -5,7 +5,7 @@
 // - Mã lỗi chung: https://partner.tiktokshop.com/docv2/page/common-errors
 // - Token: https://partner.tiktokshop.com/docv2/page/authorization-overview-202407
 import { createHmac } from 'node:crypto';
-import { MarketplaceError, type ReserveCall, reserveOrThrow } from './common.ts';
+import { logPlatformWrite, MarketplaceError, platformRequestId, type ReserveCall, reserveOrThrow } from './common.ts';
 import { createRateLimiter } from './rate-limit.ts';
 
 export interface TiktokConfig {
@@ -70,14 +70,17 @@ const AUTH_CODES = new Set(['105002', '36009005', '101000']);
 const AUTH_MESSAGE_36009004 = /(x-tts-access-token|access_token)'? header is invalid/i;
 
 /** Mã lỗi trong body (`code` khác 0) đổi sang loại của app; mã và câu gốc giữ ở `platformCode`, `platformMessage`. */
-export function tiktokError(code: unknown, message: unknown): MarketplaceError {
+export function tiktokError(code: unknown, message: unknown, requestId: string | null = null): MarketplaceError {
   const c = String(code ?? 'unknown');
   const m = typeof message === 'string' ? message : null;
-  if (TRANSIENT_CODES.has(c)) return new MarketplaceError('unavailable', c, m);
-  if (AUTH_CODES.has(c) || (c === '36009004' && m !== null && AUTH_MESSAGE_36009004.test(m))) {
-    return new MarketplaceError('unauthorized', c, m);
-  }
-  return new MarketplaceError('rejected', c, m);
+  const kind = TRANSIENT_CODES.has(c)
+    ? 'unavailable'
+    : AUTH_CODES.has(c) || (c === '36009004' && m !== null && AUTH_MESSAGE_36009004.test(m))
+      ? 'unauthorized'
+      : 'rejected';
+  const err = new MarketplaceError(kind, c, m);
+  err.requestId = requestId;
+  return err;
 }
 
 /**
@@ -160,7 +163,8 @@ export function createTiktokClient(config: TiktokConfig, fetchFn: typeof fetch =
     await reserveOrThrow(config.reserveCall, 'TikTok');
   }
 
-  async function send(url: string, init: RequestInit): Promise<TiktokResponse> {
+  /** `write`: đường dẫn của lời gọi ghi, để log `request_id` (#504); lời gọi đọc bỏ trống. */
+  async function send(url: string, init: RequestInit, write?: string): Promise<TiktokResponse> {
     let res: Response;
     try {
       res = await fetchFn(url, { ...init, signal: AbortSignal.timeout(TIMEOUT_MS) });
@@ -175,7 +179,9 @@ export function createTiktokClient(config: TiktokConfig, fetchFn: typeof fetch =
     } catch {
       throw new MarketplaceError('unavailable', `http_${res.status}`);
     }
-    if (body.code !== 0 && body.code !== '0') throw tiktokError(body.code, body.message);
+    const requestId = platformRequestId(body);
+    if (write) logPlatformWrite('tiktok', write, requestId, body.code);
+    if (body.code !== 0 && body.code !== '0') throw tiktokError(body.code, body.message, requestId);
     return body;
   }
 
@@ -221,7 +227,7 @@ export function createTiktokClient(config: TiktokConfig, fetchFn: typeof fetch =
     const headers: Record<string, string> = opts.form ? {} : { 'content-type': 'application/json' };
     if (rawToken) headers['x-tts-access-token'] = rawToken;
     const url = `${config.apiUrl}${path}?${new URLSearchParams({ ...query, sign })}`;
-    const res = await send(url, { method, headers, ...(opts.form ? { body: opts.form } : body && { body }) });
+    const res = await send(url, { method, headers, ...(opts.form ? { body: opts.form } : body && { body }) }, isRead(method, path) ? undefined : path);
     return res.data as T;
   }
 
