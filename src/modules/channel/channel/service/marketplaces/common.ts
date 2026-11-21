@@ -1,7 +1,7 @@
 // Kiểu chung của adapter sàn (Strategy, #103 B7). Chỉ adapter gọi HTTP sàn, ký request và biết mã lỗi của sàn;
 // nghiệp vụ nhận kiểu đã chuẩn hoá và `MarketplaceError`. #104–#106 thêm năng lực của mình vào `MarketplaceAdapter`.
 import { logger } from '../../../../../shared/logger.ts';
-import type { LedgerKind } from '../../../../finance/index.ts';
+import type { FeeSample, LedgerKind } from '../../../../finance/index.ts';
 import type { RemoteState } from '../../domain/listing.ts';
 import type { PlatformAttribute, PlatformKind, VariantCapabilities } from '../../domain/product-spec.ts';
 import type { DeclaredCapabilities, ShopCapabilities } from '../../domain/shop.ts';
@@ -948,6 +948,12 @@ export interface MarketplaceAdapter {
   activate?(accessToken: string, externalProductId: string, externalSkuId: string): Promise<void>;
   /** Khoản tiền theo đơn trong khoảng ngày `[from, to]` (#117). Sàn chưa hỗ trợ thì không có. */
   getTransactions?(accessToken: string, from: string, to: string): Promise<SettlementTxn[]>;
+  /**
+   * Mẫu phí theo đơn cho gợi ý cấu hình phí (tra-phi-san.md mục 5b): tối đa `limit` đơn đã giao, không hoàn, mới nhất trước,
+   * từ ngày `since` (`YYYY-MM-DD` giờ VN). Sàn có số ước tính của đơn chưa quyết toán thì bù khi thiếu, cờ `estimated`; không
+   * bao giờ ghi sổ. Không khai thì cổng dựng mẫu từ `getTransactions` (`feeSamplesFromLines` của finance).
+   */
+  feeSamples?(accessToken: string, opts: { limit: number; since: string }): Promise<FeeSample[]>;
   /** Các kỳ quyết toán từ ngày `from` (#117). */
   getPayouts?(accessToken: string, from: string): Promise<Payout[]>;
   /**
