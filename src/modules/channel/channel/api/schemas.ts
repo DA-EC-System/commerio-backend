@@ -363,11 +363,11 @@ export const PriceQuote = z
     variantId: z.string(),
     listPrice: z.number().nullable(),
     netReceived: z.number().nullable(),
-    belowFloor: z.boolean().nullable(),
+    belowFloor: z.boolean().nullable().meta({ description: 'null khi người gọi thiếu `inventory.cost.view` (R4: dò giá thấp nhất suy ra giá vốn), chưa có giá vốn, hoặc dòng bị chặn' }),
     feeWarning: z.enum(['over_50']).nullable(),
     feeConfigId: z.string().nullable(),
     blocked: z.object({ code: z.enum(['price_missing', 'fee_config_invalid', 'fee_not_configured']) }).nullable(),
-    marginPct: z.number().nullable().optional().meta({ description: 'Chỉ khi người gọi có `inventory.cost.view`' }),
+    marginPct: z.number().nullable().meta({ description: 'null khi người gọi thiếu `inventory.cost.view` (R4) hoặc chưa có giá vốn' }),
   })
   .strict()
   .meta({ id: 'PriceQuote' });
