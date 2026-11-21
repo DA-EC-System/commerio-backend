@@ -47,6 +47,8 @@ export interface ProductFilter {
   status: 'active' | 'archived';
   /** Có ít nhất một SKU ở trạng thái này (#204). */
   businessStatus?: 'selling' | 'paused' | 'discontinued' | undefined;
+  /** Có SKU chưa lưu trữ `incomplete` / mọi SKU chưa lưu trữ `ready` (Documents/21 §17.2). */
+  readiness?: 'incomplete' | 'ready' | undefined;
   page: number;
   pageSize: number;
 }
@@ -54,6 +56,32 @@ export interface ProductFilter {
 /** Còn SKU chưa lưu trữ (#204: trạng thái cha suy từ SKU, `Documents/21` §17.1). */
 const hasLiveVariant = sql`exists (select 1 from product.product_variants pv
   where pv.product_id = products.id and pv.archived_at is null)`;
+
+/**
+ * Có SKU chưa lưu trữ `incomplete`: cùng luật với `readinessOf` (`domain/labels.ts`; Documents/21 §17.1), viết bằng SQL để
+ * lọc trong câu phân trang. Trường của cha (tên, ảnh, ảnh phân loại một phần, thông số bắt buộc trống) làm mọi SKU thiếu;
+ * ngưỡng tồn đọc `stock_levels` của inventory (cùng schema `product`, không có dòng là chưa đặt). Đổi luật thì sửa cả hai
+ * nơi; test `labels.test.ts` ("lọc readiness") so bộ lọc với `incompleteCount`.
+ */
+const hasIncompleteVariant = sql`exists (select 1 from product.product_variants pv
+  left join product.stock_levels sl on sl.variant_id = pv.id
+  where pv.product_id = products.id and pv.archived_at is null and (
+    pv.target_net_price is null or sl.min_qty is null or pv.weight_g is null
+    or pv.length_mm is null or pv.width_mm is null or pv.height_mm is null
+    or btrim(products.name) = ''
+    or not exists (select 1 from product.product_images pi where pi.product_id = products.id)
+    or exists (select 1 from product.group_spec_fields g
+      where g.group_id = products.group_id and g.required
+        and not exists (select 1 from product.product_spec_values v where v.product_id = products.id and v.field_id = g.field_id))
+    or exists (select 1 from (
+      select bool_or(pavi.id is not null) as some_img, bool_and(pavi.id is not null) as all_img
+      from product.product_variants pv2
+      join product.variant_attribute_values vav on vav.variant_id = pv2.id
+      join product.attribute_values av on av.id = vav.attribute_value_id and av.attribute_id = products.image_attribute_id
+      left join product.product_attribute_value_images pavi
+        on pavi.product_id = pv2.product_id and pavi.attribute_value_id = vav.attribute_value_id
+      where pv2.product_id = products.id and pv2.archived_at is null) x
+      where x.some_img and not x.all_img)))`;
 
 /**
  * Tên hoặc SKU của mọi biến thể (kể cả đã lưu trữ) chứa `search`, không phân biệt hoa thường, không ký tự đại diện.
@@ -67,6 +95,7 @@ export async function listProducts(filter: ProductFilter) {
       ? sql`exists (select 1 from product.product_variants pv
           where pv.product_id = products.id and pv.business_status = ${filter.businessStatus})`
       : undefined,
+    filter.readiness === 'incomplete' ? hasIncompleteVariant : filter.readiness === 'ready' ? sql`not ${hasIncompleteVariant}` : undefined,
     filter.search
       ? sql`(strpos(lower(${products.name}), lower(${filter.search})) > 0 or exists (
           select 1 from product.product_variants pv
