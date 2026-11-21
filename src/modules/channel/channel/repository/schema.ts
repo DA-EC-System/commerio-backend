@@ -37,10 +37,24 @@ import type { RemoteSkusFullError } from '../domain/remote-skus-refresh.ts';
 // Mọi bảng của module con `channel` khai báo trong schema của module lớn `channel` (Documents/19 D1).
 export const channelSchema = pgSchema('channel');
 
-export const marketplace = channelSchema.enum('marketplace', ['lazada', 'shopee', 'tiktok', 'mock']);
-export type Marketplace = (typeof marketplace.enumValues)[number];
-/** Mã sàn có trong enum DB (thêm sàn phải thêm giá trị enum, `Documents/tich-hop-san/README.md` bước 4). */
-export const isMarketplace = (value: string): value is Marketplace => (marketplace.enumValues as readonly string[]).includes(value);
+/**
+ * Danh mục sàn dùng chung cho mọi công ty (Documents/19 mục 3.3, thay enum `channel.marketplace` 21/11/2026). Dòng do
+ * migration chèn; thêm sàn = adapter + một dòng `INSERT` (`Documents/tich-hop-san/README.md` bước 4). Tên hiển thị không lưu
+ * ở đây: nguồn là `adapter.name`. Worker khởi động thì đối chiếu với registry adapter (`verifyMarketplaces`).
+ * `commerio_app` chỉ đọc (migration `*_bang-san-fk`).
+ */
+export const marketplaces = channelSchema.table('marketplaces', {
+  code: text('code').primaryKey(),
+  /** `false`: sàn không mở cho người dùng ở môi trường này (sàn chưa có adapter, sàn giả lập `mock`). */
+  enabled: boolean('enabled').notNull().default(true),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * Mã sàn, khoá của `channel.marketplaces`. Khoá ngoại của mọi cột `platform` viết tay ở migration `*_bang-san-fk`
+ * (chèn dòng sàn trước rồi mới thêm khoá ngoại, `db:regen` chép migration viết tay ra sau migration sinh).
+ */
+export type Marketplace = string;
 /** Gian hàng (25 §6.1, Documents/21 mục 18.1). "Sắp hết hạn" là nhãn phụ khi `active`, không phải trạng thái. */
 export const shopStatus = channelSchema.enum('shop_status', ['connecting', 'active', 'needs_reauth', 'disconnected']);
 
@@ -55,7 +69,7 @@ export const shops = channelSchema.table(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     companyId: uuid('company_id').notNull(),
-    platform: marketplace('platform').notNull(),
+    platform: text('platform').notNull(),
     externalShopId: text('external_shop_id').notNull(),
     shopName: text('shop_name').notNull(),
     region: text('region'),
@@ -451,7 +465,7 @@ export type SizeChartRule = 'required' | 'optional' | 'unsupported';
 export const platformCategories = channelSchema.table(
   'platform_categories',
   {
-    platform: marketplace('platform').notNull(),
+    platform: text('platform').notNull(),
     externalId: text('external_id').notNull(),
     parentExternalId: text('parent_external_id'),
     name: text('name').notNull(),
@@ -482,7 +496,7 @@ export const platformCategories = channelSchema.table(
 export const platformCategoryAttributes = channelSchema.table(
   'platform_category_attributes',
   {
-    platform: marketplace('platform').notNull(),
+    platform: text('platform').notNull(),
     externalCategoryId: text('external_category_id').notNull(),
     code: text('code').notNull(),
     label: text('label').notNull(),
@@ -499,11 +513,8 @@ export const platformCategoryAttributes = channelSchema.table(
   },
   (t) => [
     primaryKey({ columns: [t.platform, t.externalCategoryId, t.code] }),
-    foreignKey({
-      name: 'platform_category_attributes_category_fk',
-      columns: [t.platform, t.externalCategoryId],
-      foreignColumns: [platformCategories.platform, platformCategories.externalId],
-    }),
+    // Khoá ngoại `platform_category_attributes_category_fk` `(platform, external_category_id)` → `platform_categories` viết tay
+    // ở migration `*_bang-san-fk`: đổi cột `platform` từ enum sang text phải gỡ khoá ngoại ghép trước rồi gắn lại (21/11/2026).
     check('platform_category_attributes_kind', sql`${t.kind} in ('sales', 'property')`),
     check(
       'platform_category_attributes_input',
@@ -552,7 +563,7 @@ export const productSpecs = channelSchema.table(
     id: uuid('id').primaryKey().defaultRandom(),
     companyId: uuid('company_id').notNull(),
     productId: uuid('product_id').notNull(),
-    platform: marketplace('platform').notNull(),
+    platform: text('platform').notNull(),
     externalCategoryId: text('external_category_id').notNull(),
     attributes: jsonb('attributes').$type<Record<string, SpecAttributeValue>>().notNull().default({}),
     axisMap: jsonb('axis_map').$type<Record<string, string>>().notNull().default({}),
@@ -593,7 +604,7 @@ export const axisMappings = channelSchema.table(
     /** NULL: ánh xạ nền tảng của thuộc tính chuẩn, dùng chung mọi công ty, chỉ migration ghi; có giá trị: của công ty. */
     companyId: uuid('company_id'),
     attributeId: uuid('attribute_id').notNull(),
-    platform: marketplace('platform').notNull(),
+    platform: text('platform').notNull(),
     /** Mã sales attribute của sàn (`platform_category_attributes.code`, `kind = 'sales'`). */
     attributeCode: text('attribute_code').notNull(),
     priority: smallint('priority').notNull(),
@@ -621,7 +632,7 @@ export const specFieldMappings = channelSchema.table(
     /** NULL: ánh xạ nền tảng của thông số chuẩn, dùng chung mọi công ty, chỉ migration ghi; có giá trị: của công ty. */
     companyId: uuid('company_id'),
     fieldId: uuid('field_id').notNull(),
-    platform: marketplace('platform').notNull(),
+    platform: text('platform').notNull(),
     /** Mã attribute của sàn: TikTok `attribute_id`, Lazada `name`. */
     attributeCode: text('attribute_code').notNull(),
     priority: integer('priority').notNull(),
@@ -657,7 +668,7 @@ export const specOptionMappings = channelSchema.table(
     companyId: uuid('company_id'),
     fieldId: uuid('field_id').notNull(),
     optionId: uuid('option_id').notNull(),
-    platform: marketplace('platform').notNull(),
+    platform: text('platform').notNull(),
     attributeCode: text('attribute_code').notNull(),
     platformOptionId: text('platform_option_id').notNull(),
     ...timestamps,
@@ -794,7 +805,7 @@ export const webhookEvents = channelSchema.table(
   {
     id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
     companyId: uuid('company_id').notNull(),
-    platform: marketplace('platform').notNull(),
+    platform: text('platform').notNull(),
     notificationId: text('notification_id').notNull(),
     eventType: text('event_type').notNull(),
     payload: jsonb('payload').notNull(),
@@ -814,7 +825,7 @@ export const webhookEvents = channelSchema.table(
 export const apiUsage = channelSchema.table(
   'api_usage',
   {
-    platform: marketplace('platform').notNull(),
+    platform: text('platform').notNull(),
     day: date('day').notNull(),
     companyId: uuid('company_id'),
     calls: integer('calls').notNull(),
