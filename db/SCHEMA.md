@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V138** (`20261121054008_dong-phieu-nhan-chua-co-sku`): 100 bảng trong 6 schema, 81 khoá ngoại, 81 cột tham chiếu không có khoá ngoại. Lịch sử từng phiên bản: [VERSIONS.md](VERSIONS.md).
+Phiên bản **V139** (`20261121055718_dong-phieu-nhan-chua-co-sku`): 100 bảng trong 6 schema, 81 khoá ngoại, 81 cột tham chiếu không có khoá ngoại. Lịch sử từng phiên bản: [VERSIONS.md](VERSIONS.md).
 
 Nguồn: snapshot của migration mới nhất, comment trong `src/modules/<lớn>/<con>/repository/schema.ts`, khoá ngoại, trigger, index, EXCLUDE viết tay trong migration. Cột, kiểu, ràng buộc, quan hệ của từng bảng ở `db/schema/<schema>.md`.
 
@@ -136,7 +136,7 @@ Chi tiết: [schema/channel.md](schema/channel.md)
 - `channel.product_specs` (channel): Thông tin sàn của một sản phẩm cha, một bộ mỗi sàn, mọi gian hàng của sàn dùng chung (#400, Documents/19 mục 3.3).
 - `channel.raw_orders` (channel): Dữ liệu gốc của đơn sàn mỗi lần cập nhật; `order_id` có khi đã tạo đơn trong `order`.
 - `channel.remote_skus` (channel): Bản sao danh sách SKU của gian hàng trên sàn (#220 đợt 2, Documents/21 §18.3 "đọc từ lần đồng bộ gần nhất"): trang ghép, kiểm SKU khi ghép và số SKU chưa ghép đọc từ đây, không gọi sàn mỗi lần.
-- `channel.shop_category_permissions` (channel): Quyền đăng category của một gian hàng, chỉ TikTok dùng (`permission_statuses`, #400 A17).
+- `channel.shop_category_permissions` (channel): Quyền đăng category của một gian hàng, cho sàn có quyền category theo gian hàng (adapter khai, #400 A17).
 - `channel.shop_products` (channel): Một sản phẩm cha trên một gian hàng ứng với một sản phẩm trên sàn (commerio-backend#295, Documents/19 câu chốt Q1, 21 §18.8.4).
 - `channel.shop_reauth_mails` (channel): Thư báo gian hàng sắp hết hoặc đã mất uỷ quyền đã xếp (#312, Documents/19).
 - `channel.shops` (channel): Gian hàng sàn đã kết nối, định danh bằng (sàn, mã shop của sàn); kết nối lại cùng shop dùng lại bản ghi.

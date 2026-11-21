@@ -136,9 +136,9 @@ const OrderLine = z
     lineTotal: money,
     externalSku: z.string().nullable(),
     thumbnailUrl: z.string().nullable().meta({ description: 'Ảnh SKU trên sàn' }),
-    externalSkuId: z.string().nullable().meta({ description: 'Lazada `sku_id`' }),
-    externalShopSku: z.string().nullable().meta({ description: 'Lazada `shop_sku`' }),
-    externalProductId: z.string().nullable().meta({ description: 'Lazada `product_id`' }),
+    externalSkuId: z.string().nullable().meta({ description: 'Mã SKU phía sàn' }),
+    externalShopSku: z.string().nullable().meta({ description: 'Mã SKU của gian hàng phía sàn; null khi sàn không có' }),
+    externalProductId: z.string().nullable().meta({ description: 'Mã sản phẩm phía sàn' }),
     paidPrice: money.nullable().meta({ description: 'Khách trả cho dòng sau giảm giá' }),
     taxAmount: money.nullable(),
     cancelReason: z.string().nullable(),
@@ -182,7 +182,7 @@ export const Order = OrderSummary.extend({
   packages: z.array(PackageSummary),
   returnWindowEndsAt: iso.nullable().meta({
     description:
-      'Hết hạn trả hàng: đơn đang xử lý tính từ kiện giao cuối theo hạn trả của gian hàng (chưa nhập: 7 ngày); sàn báo hết quyền trả (TikTok): lúc app thấy sàn báo, null tới lúc đó; đơn đã hoàn tất là hạn đã lưu; đơn chưa trả, đơn đã huỷ: null',
+      'Hết hạn trả hàng: đơn đang xử lý tính từ kiện giao cuối theo hạn trả của gian hàng (chưa nhập: 7 ngày); sàn báo hết quyền trả: lúc app thấy sàn báo, null tới lúc đó; đơn đã hoàn tất là hạn đã lưu; đơn chưa trả, đơn đã huỷ: null',
   }),
   completionBlocker: z
     .enum(['packages_open', 'all_packages_cancelled', 'return_window', 'return_requested', 'cod_unconfirmed'])
@@ -206,7 +206,7 @@ export const CancelRequestBody = z.object({
     .min(1, 'Chọn lý do từ chối')
     .max(200)
     .optional()
-    .meta({ description: 'Lý do từ chối, lấy từ `cancel-reject-reasons`. Đơn TikTok bắt buộc khi `reject`; đơn Lazada bỏ qua' }),
+    .meta({ description: 'Lý do từ chối, lấy từ `cancel-reject-reasons`. Bắt buộc khi `reject` và sàn có danh sách lý do; sàn không có danh sách thì bỏ qua' }),
 });
 export const InvoiceNumberBody = z.object({
   version: z.number().int(),

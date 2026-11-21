@@ -101,7 +101,7 @@ export const ReturnRequest = ReturnRequestSummary.extend({
       respondBy: z.iso
         .datetime()
         .nullable()
-        .meta({ description: 'Hạn người bán phải trả lời trên sàn (TikTok; Lazada lấy `sla` khi còn chờ người bán, #436); null khi sàn không chờ người bán hoặc không trả hạn' }),
+        .meta({ description: 'Hạn người bán phải trả lời trên sàn (#436); null khi sàn không chờ người bán hoặc không trả hạn' }),
     })
     .strict()
     .nullable(),

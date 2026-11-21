@@ -41,7 +41,7 @@ export const PERMISSIONS: readonly PermissionDef[] = [
   { code: 'fulfillment.delivery.update', description: 'Cập nhật giao hàng đơn shop tự giao' },
   { code: 'fulfillment.handover.revert', description: 'Huỷ bàn giao kiện' },
   { code: 'finance.invoice.view', description: 'Xem sổ giao dịch, trạng thái thanh toán, đối soát công nợ sàn, cấu hình phí và thuế' },
-  { code: 'finance.voucher.create', description: 'Nhập sao kê sàn TikTok từ file (môi trường thử)' },
+  { code: 'finance.voucher.create', description: 'Nhập sao kê của sàn từ file (môi trường thử)' },
   { code: 'finance.config.manage', description: 'Soạn, tính thử cấu hình phí sàn, thuế, ngưỡng chênh lệch đối soát' },
   { code: 'finance.config.approve', description: 'Duyệt, từ chối cấu hình phí sàn, thuế, ngưỡng chênh lệch đối soát' },
   { code: 'finance.settlement.resolve', description: 'Xử lý chênh lệch đối soát trong hạn mức tự xử lý' },

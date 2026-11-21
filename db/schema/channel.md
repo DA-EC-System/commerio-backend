@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V138**, 22 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
+Phiên bản **V139**, 22 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
 **Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
 
@@ -501,7 +501,7 @@ Ràng buộc và index:
 
 ## `channel.shop_category_permissions`
 
-Quyền đăng category của một gian hàng, chỉ TikTok dùng (`permission_statuses`, #400 A17). Ghi từ gợi ý và lần kiểm trước khi đẩy, `checked_at` quá 7 ngày thì kiểm lại. RLS `company_isolation` (migration `*_category-san-quyen`).
+Quyền đăng category của một gian hàng, cho sàn có quyền category theo gian hàng (adapter khai, #400 A17). Ghi từ gợi ý và lần kiểm trước khi đẩy, `checked_at` quá 7 ngày thì kiểm lại. RLS `company_isolation` (migration `*_category-san-quyen`).
 
 Khai ở `src/modules/channel/channel/repository/schema.ts` · module con `channel` · theo công ty (`company_id`)
 

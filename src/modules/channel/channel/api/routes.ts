@@ -25,6 +25,7 @@ import { acknowledgeRemoteTitle } from '../service/remote-title.ts';
 import { productPort } from '../service/product-port.ts';
 import { requestRegroup, separateProductsOf } from '../service/product-regroup.ts';
 import * as prices from '../service/pending-prices.ts';
+import { COST_VIEW, quotePrices } from '../service/price-quote.ts';
 import * as setup from '../service/setup.ts';
 import { deleteShop } from '../service/shop-delete.ts';
 import { updateShopSettings } from '../service/shop-settings.ts';
@@ -50,6 +51,8 @@ import {
   TakeOverContentBody,
   TakeOverContentParams,
   PushBody,
+  PriceQuoteBody,
+  PriceQuoteParams,
   RemoteSkusQuery,
   SetupBody,
   DisconnectBody,
@@ -363,8 +366,16 @@ export function channelRouter(ctx: ModuleContext): Router {
   // Gọi sàn ngoài giao dịch: service tự mở `withCompany` từng bước (#104 A3).
   router.post('/shops/:id/listings/push', manage, validate({ params: ShopParams, body: PushBody }), async (_req, res) => {
     const { id } = validated<typeof ShopParams>(res, 'params');
-    const { variantIds } = validated<typeof PushBody>(res, 'body');
-    res.json(await listings.pushListings(productPort(ctx), actor(res), id, { variantIds }));
+    const { variantIds, listPrices } = validated<typeof PushBody>(res, 'body');
+    res.json(await listings.pushListings(productPort(ctx), actor(res), id, { variantIds, listPrices }));
+  });
+
+  // Tính thử giá trước khi đăng (21 §18.9 R1): không ghi gì, không trả giá thấp nhất; biên lãi theo quyền xem giá vốn (R4).
+  router.post('/products/:productId/price-quote', manage, validate({ params: PriceQuoteParams, body: PriceQuoteBody }), async (_req, res) => {
+    const { productId } = validated<typeof PriceQuoteParams>(res, 'params');
+    const { items } = validated<typeof PriceQuoteBody>(res, 'body');
+    const a = actor(res);
+    res.json({ items: await withCompany(a.companyId, () => quotePrices(productPort(ctx), productId, items, a.permissions.includes(COST_VIEW))) });
   });
 
   router.post('/shops/:id/listings/sync', ctx.authorize('channel.shop.sync'), validate({ params: ShopParams }), async (_req, res) => {
