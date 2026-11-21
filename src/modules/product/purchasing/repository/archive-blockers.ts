@@ -75,6 +75,7 @@ export async function usedVariants(variantIds: readonly string[]): Promise<Set<s
     union select v.id from product.product_variants v
       join product.purchase_request_lines l on l.new_parent_product_id = v.product_id and l.variant_id is null
       join product.purchase_requests r on r.id = l.request_id
-      where v.id in ${ids} and r.status in ('draft', 'pending_approval', 'changes_requested')`);
+      where v.id in ${ids} and not l.excluded
+        and r.status in ('draft', 'pending_approval', 'changes_requested', 'approved', 'ordered', 'partially_received')`);
   return new Set(rows.map((r) => r.id));
 }
