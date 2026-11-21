@@ -3,6 +3,7 @@
 // chưa có thì ca của nó bỏ qua, để sàn mới qua bộ ca trước khi làm phần đơn.
 import { describe, expect, it } from 'vitest';
 import { ShopCapabilities } from '#src/modules/channel/channel/api/schemas.ts';
+import { capabilitiesFrom } from '#src/modules/channel/channel/service/marketplaces/index.ts';
 import {
   type MarketplaceAdapter,
   MarketplaceError,
@@ -54,8 +55,8 @@ async function errorOf(p: Promise<unknown>): Promise<unknown> {
 
 export function describeAdapterContract(name: string, h: AdapterHarness): void {
   describe(`hợp đồng adapter: ${name}`, () => {
-    it('capabilities đủ 4 trường, đúng giá trị cho phép', () => {
-      expect(() => ShopCapabilities.parse(h.connected().capabilities)).not.toThrow();
+    it('capabilities đủ 4 trường khai cộng 3 cờ suy từ hàm adapter, đúng giá trị cho phép', () => {
+      expect(() => ShopCapabilities.parse(capabilitiesFrom(h.connected()))).not.toThrow();
     });
 
     it('connectMethods chỉ gồm oauth, token; có oauth thì URL uỷ quyền mang state', () => {
