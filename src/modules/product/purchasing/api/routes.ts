@@ -3,6 +3,7 @@ import { getAuth } from '../../../../shared/auth/authenticate.ts';
 import { anyOf, getAccess } from '../../../../shared/auth/authorize.ts';
 import { validate, validated } from '../../../../shared/http/validate.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
+import * as drafts from '../service/drafts.ts';
 import { resolveShort, runReceiptAction } from '../service/receipt-actions.ts';
 import * as receipts from '../service/receipts.ts';
 import { runRequestAction } from '../service/request-actions.ts';
@@ -18,6 +19,8 @@ import {
   GoodsReceiptUpdateInput,
   IdParams,
   LineParams,
+  ProductDraftListQuery,
+  ProductDraftUpdateInput,
   PurchaseRequestInput,
   PurchaseRequestUpdateInput,
   ReceiptActionInput,
@@ -41,6 +44,23 @@ function actor(res: Response): Actor {
   const { accountId, companyId } = getAuth(res);
   const { permissions, enabledModules } = getAccess(res);
   return { accountId, companyId: companyId!, permissions, enabledModules };
+}
+
+type DraftBody = ReturnType<typeof validated<typeof ProductDraftUpdateInput>>;
+type FactsBody = NonNullable<DraftBody['variantDefaults']>;
+
+/** Tiền ở API là số nguyên đồng, bản soạn lưu chuỗi `numeric` (21 R2). `null` là xoá, vắng là không đổi. */
+function toFacts<T extends FactsBody>(f: T) {
+  const money = (v: number | null | undefined) => (v === undefined ? undefined : v === null ? null : String(v));
+  return { ...f, standardPrice: money(f.standardPrice), targetNetPrice: money(f.targetNetPrice) };
+}
+
+function toDraftInput(body: DraftBody): drafts.DraftUpdateInput {
+  return {
+    ...body,
+    variantDefaults: body.variantDefaults && toFacts(body.variantDefaults),
+    variants: body.variants?.map((v) => toFacts(v)),
+  };
 }
 
 /** Route của module `purchasing`, gắn tại /api/v1/purchasing (Documents/21 mục 16.2). */
@@ -110,6 +130,24 @@ export function purchasingRouter(ctx: ModuleContext): Router {
   router.post('/requests/:id/:action', view, validate({ params: ActionParams, body: RequestActionInput }), async (_req, res) => {
     const { id, action } = validated<typeof ActionParams>(res, 'params');
     res.json(await runRequestAction(actor(res), id, action, validated<typeof RequestActionInput>(res, 'body')));
+  });
+
+  // Bản soạn trước của sản phẩm mới (Documents/21 mục 16.2, 16.3): người có `catalog.product.manage` mà không có quyền
+  // nhập hàng nào (Admin) vẫn mở được. Quyền catalog đứng trước: quyền purchasing trả `module_disabled` ngay khi phân hệ tắt.
+  const draftView = anyOf(...drafts.DRAFT_VIEW_PERMISSIONS.map((p) => ctx.authorize(p)));
+  const draftEdit = anyOf(...drafts.DRAFT_EDIT_PERMISSIONS.map((p) => ctx.authorize(p)));
+
+  router.get('/product-drafts', draftView, validate({ query: ProductDraftListQuery }), async (_req, res) => {
+    res.json(await drafts.listDraftPage(actor(res), validated<typeof ProductDraftListQuery>(res, 'query')));
+  });
+
+  router.get('/product-drafts/:id', draftView, validate({ params: IdParams }), async (_req, res) => {
+    res.json(await drafts.getDraft(actor(res), validated<typeof IdParams>(res, 'params').id));
+  });
+
+  router.put('/product-drafts/:id', draftEdit, validate({ params: IdParams, body: ProductDraftUpdateInput }), async (_req, res) => {
+    const { id } = validated<typeof IdParams>(res, 'params');
+    res.json(await drafts.updateDraftContent(actor(res), id, toDraftInput(validated<typeof ProductDraftUpdateInput>(res, 'body'))));
   });
 
   router.get('/goods-receipts', view, validate({ query: ReceiptListQuery }), async (_req, res) => {

@@ -2,7 +2,7 @@
 import { canSelfApprove, hasAttachments, publishEvent, recordAudit, recordTransition } from '../../../core/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
-import { createPurchaseProducts, normalizeName } from '../../catalog/index.ts';
+import { createPurchaseProducts, getVariants, normalizeName } from '../../catalog/index.ts';
 import { nextDocNumber, receiveGoods, recheckThresholds } from '../../inventory/index.ts';
 import { needsEvidence } from '../domain/receipt.ts';
 import { goodsReceiptMachine, RECEIPT_USER_ACTIONS } from '../domain/receipt-machine.ts';
@@ -18,6 +18,7 @@ import {
 } from '../repository/receipts.ts';
 import { type LineRow, type RequestRow, updateLine } from '../repository/requests.ts';
 import { insertDraftReturn, insertReturnLines } from '../repository/returns.ts';
+import { copyDraftToProduct, copyDraftToVariant } from './drafts.ts';
 import { type GoodsReceiptView, toReceiptDetail } from './receipt-views.ts';
 import { assertReceiptVersion, lockOwnReceipt, RECEIPT_AUDIT_ENTITY, RECEIPT_ENTITY } from './receipts.ts';
 import { applyReceiving, closeShortRequest } from './request-receiving.ts';
@@ -61,6 +62,7 @@ const parentKey = (name: string) => normalizeName(name).toLowerCase();
 async function createReceivedProducts(
   actor: Actor,
   receipt: ReceiptRow,
+  request: RequestRow,
   lines: readonly ReceiptLineRow[],
   requestLines: readonly LineRow[],
 ): Promise<(ReceiptLineRow & { variantId: string | null })[]> {
@@ -104,6 +106,13 @@ async function createReceivedProducts(
       const productId = rl.newParentName && !rl.variantId && !created.has(rl.id) ? madeParents.get(parentKey(rl.newParentName)) : undefined;
       if (productId) await updateLine(rl.id, { newParentProductId: productId, newParentName: null, newGroupId: null });
     }
+    // Bản soạn trước (21 mục 16.3): chép phần sản phẩm sang cha vừa tạo, rồi số của từng SKU vừa sinh (kể cả SKU sinh ở
+    // phiếu sau, khi dòng đã trỏ cha có sẵn). SKU dùng lại (tổ hợp đã có) không nhận số của bản soạn.
+    for (const [key, productId] of madeParents) await copyDraftToProduct(actor.companyId, request.id, request.number, key, productId);
+    const reused = new Set(result.reused);
+    const fresh = toCreate.flatMap(({ rl }, k) => (reused.has(k) ? [] : [{ rl, variantId: result.variantIds[k]!, productId: result.productIds[k]! }]));
+    const skus = new Map((await getVariants(fresh.map((f) => f.variantId))).map((v) => [v.id, `${v.productName} · ${v.sku}`]));
+    for (const f of fresh) await copyDraftToVariant(actor, request.id, request.number, f.rl, f.productId, f.variantId, skus.get(f.variantId) ?? '');
     if (result.reused.length) {
       await recordAudit({
         companyId: actor.companyId,
@@ -152,7 +161,7 @@ async function post(
   });
   if (Object.keys(over).length) throw invalid(over, 'over_outstanding');
 
-  const withSkus = await createReceivedProducts(actor, receipt, lines, requestLines);
+  const withSkus = await createReceivedProducts(actor, receipt, request, lines, requestLines);
   const moved = withSkus.flatMap((line) => {
     const requestLine = byId.get(line.requestLineId)!;
     // Dòng có đạt hoặc lỗi luôn có SKU sau `createReceivedProducts` (Documents/19: không còn dòng trống có hàng).
