@@ -123,7 +123,7 @@ export function assertNoOpenOrders(
  * - `splitLevel`: mức tách kiện sàn cho phép (`unit` từng đơn vị, `sku` theo nhóm dòng, `none` không tách).
  * - `returnWindow`: hết hạn trả hàng tính bằng số ngày của gian hàng (`days`, cần `returnWindowDays`) hay theo trạng thái sàn.
  */
-export interface ShopCapabilities {
+export interface DeclaredCapabilities {
   listingReview: boolean;
   hideBy: 'deactivate' | 'zero_stock';
   splitLevel: 'unit' | 'sku' | 'none';
@@ -131,10 +131,23 @@ export interface ShopCapabilities {
 }
 
 /**
+ * Năng lực trả cho FE: phần adapter khai cộng ba cờ BE suy từ hàm adapter có cài (Documents/21 §18.6.2, thêm 21/11/2026),
+ * nên cờ không lệch với hành vi thật:
+ * - `productSpec`: có `categoryTree` (cây category, attribute; thông tin sàn của sản phẩm).
+ * - `contentUpdate`: có `updateContent` (sửa nội dung listing đang bán, §18.3).
+ * - `repackOnReopen`: có `repackPackage` (mở kiện đã đóng gói thì sàn huỷ mã kiện cũ, đóng gói lại ra mã mới).
+ */
+export interface ShopCapabilities extends DeclaredCapabilities {
+  productSpec: boolean;
+  contentUpdate: boolean;
+  repackOnReopen: boolean;
+}
+
+/**
  * Lỗi của `returnWindowDays` lúc thiết lập (Documents/21 §18.6.2), null khi hợp lệ. Chỉ sàn `returnWindow = 'days'` mới kiểm,
  * và bắt buộc: thiếu hoặc `null` là lỗi (#362).
  */
-export function returnWindowError(returnWindow: ShopCapabilities['returnWindow'], days: number | null | undefined): string | null {
+export function returnWindowError(returnWindow: DeclaredCapabilities['returnWindow'], days: number | null | undefined): string | null {
   if (returnWindow !== 'days') return null;
   if (days === null || days === undefined) return 'Nhập hạn trả hàng (1–60 ngày)';
   return Number.isInteger(days) && days >= 1 && days <= 60 ? null : 'Hạn trả hàng từ 1 đến 60 ngày';

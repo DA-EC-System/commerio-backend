@@ -2,7 +2,7 @@ import {
   type MarketplaceAdapter,
   MarketplaceError,
   type SellerInfo,
-  type ShopCapabilities,
+  type DeclaredCapabilities,
 } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { testPool } from '../../helpers/db.ts';
 
@@ -11,7 +11,7 @@ const unsupported = async (): Promise<never> => {
 };
 
 /** Năng lực mặc định của adapter giả: như Lazada (Documents/21 §18.6.3). */
-export const FAKE_CAPABILITIES: ShopCapabilities = {
+export const FAKE_CAPABILITIES: DeclaredCapabilities = {
   listingReview: true,
   hideBy: 'deactivate',
   splitLevel: 'unit',
