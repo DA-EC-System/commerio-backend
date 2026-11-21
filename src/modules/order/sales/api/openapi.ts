@@ -74,7 +74,7 @@ export function registerSalesOpenApi(registry: OpenAPIRegistry): void {
     path: '/orders/:id/cancel-request',
     summary: 'Trả lời khách xin huỷ (§19.3)',
     description:
-      'Cần `sales.order.cancel`. Chỉ khi đơn có cờ `cancel_requested`. `accept`: khách xin huỷ mọi món chưa huỷ (hay sàn không ghi món nào) thì đơn sang cờ `cancelling` chờ sàn xác nhận, ghi lý do khách ghi trên món chưa huỷ vào `cancelReason` (không có thì "Khách xin huỷ"); khách chỉ xin huỷ một phần món (Lazada) thì là huỷ dòng: chỉ bỏ cờ `cancel_requested`, không `cancelling`, không `cancelReason`; `reject`: bỏ cờ. Đơn TikTok bắt buộc `rejectReasonId` khi `reject` (thiếu: 422 `validation_failed` tại `errors.rejectReasonId`); đơn Lazada bỏ qua trường này.',
+      'Cần `sales.order.cancel`. Chỉ khi đơn có cờ `cancel_requested`. `accept`: khách xin huỷ mọi món chưa huỷ (hay sàn không ghi món nào) thì đơn sang cờ `cancelling` chờ sàn xác nhận, ghi lý do khách ghi trên món chưa huỷ vào `cancelReason` (không có thì "Khách xin huỷ"); khách chỉ xin huỷ một phần món (sàn huỷ theo món) thì là huỷ dòng: chỉ bỏ cờ `cancel_requested`, không `cancelling`, không `cancelReason`; `reject`: bỏ cờ. Sàn có danh sách lý do (`cancel-reject-reasons` không rỗng) thì bắt buộc `rejectReasonId` khi `reject` (thiếu: 422 `validation_failed` tại `errors.rejectReasonId`); sàn không có danh sách thì bỏ qua trường này.',
     security: bearer,
     request: { params: OrderParams, body: json(CancelRequestBody) },
     responses: { 200: { description: 'Đơn', ...json(Order) }, ...onMarketplace },
@@ -84,7 +84,7 @@ export function registerSalesOpenApi(registry: OpenAPIRegistry): void {
     path: '/orders/:id/cancel-reject-reasons',
     summary: 'Lý do từ chối yêu cầu huỷ của sàn (§19.3)',
     description:
-      'Cần `sales.order.cancel`. Chỉ khi đơn có cờ `cancel_requested`. Hỏi sàn lý do được dùng cho `rejectReasonId`; sàn không có danh sách này (Lazada) trả `{ items: [] }`; sàn không cho từ chối thì 409 `marketplace_rejected` kèm câu của sàn.',
+      'Cần `sales.order.cancel`. Chỉ khi đơn có cờ `cancel_requested`. Hỏi sàn lý do được dùng cho `rejectReasonId`; sàn không có danh sách này trả `{ items: [] }`; sàn không cho từ chối thì 409 `marketplace_rejected` kèm câu của sàn.',
     security: bearer,
     request: { params: OrderParams },
     responses: { 200: { description: 'Lý do', ...json(CancelRejectReasons) }, ...onMarketplace },
