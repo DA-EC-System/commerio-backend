@@ -1,6 +1,11 @@
 {
+<<<<<<<< HEAD:db/migrations/meta/20261121060410_snapshot.json
   "id": "14402429-a74a-4fb1-9109-54e8073431eb",
   "prevId": "75641d49-b62e-4805-b7d1-629f44d3c401",
+========
+  "id": "06a9a47e-333c-4636-9636-300eec41ae86",
+  "prevId": "7af0e871-16a9-4fe6-8050-69284e64d493",
+>>>>>>>> origin/feature/danh-muc-chuan:db/migrations/meta/20261121060229_snapshot.json
   "version": "7",
   "dialect": "postgresql",
   "tables": {

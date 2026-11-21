@@ -7,14 +7,14 @@ Mới nhất: **V141**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
 
 ## V141 · 21/11/2026 · danh-muc-chuan-du-lieu
 
-`db/migrations/20261121060410_danh-muc-chuan-du-lieu.sql` · viết tay
+`db/migrations/20261121060229_danh-muc-chuan-du-lieu.sql` · viết tay
 
 - viết tay: RLS, dữ liệu
 - Danh mục chuẩn 27 (#531, Documents/21 mục 5.7, 19 §3.2; `.claude/issues/luong-san-pham/du-lieu-chuan.md`).
 
 ## V140 · 21/11/2026 · danh-muc-chuan
 
-`db/migrations/20261121060405_danh-muc-chuan.sql` · sinh từ schema
+`db/migrations/20261121060227_danh-muc-chuan.sql` · sinh từ schema
 
 - + bảng `product.group_allowed_attributes`
 - `product.attributes`: đổi check `attributes_platform_kind`

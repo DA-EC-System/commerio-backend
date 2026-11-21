@@ -1,5 +1,9 @@
 {
+<<<<<<<< HEAD:db/migrations/meta/20261121060405_snapshot.json
   "id": "75641d49-b62e-4805-b7d1-629f44d3c401",
+========
+  "id": "7af0e871-16a9-4fe6-8050-69284e64d493",
+>>>>>>>> origin/feature/danh-muc-chuan:db/migrations/meta/20261121060227_snapshot.json
   "prevId": "56ce8740-5681-47ea-abf7-6f31ad7180ce",
   "version": "7",
   "dialect": "postgresql",
