@@ -366,13 +366,13 @@ export const CreateProductBody = z
       .array(
         z.object({
           options: z.array(z.string(), 'Chọn giá trị thuộc tính'),
-          // Giá, cân nặng, kích thước gói điền ngay lúc tạo (#510), luật như PATCH …/variants/:variantId.
+          // Giá, cân nặng, kích thước gói điền ngay lúc tạo (#510), luật như PATCH …/variants/:variantId (trần #434).
           standardPrice: z.lazy(() => price),
           targetNetPrice: z.lazy(() => price),
-          weightG: z.lazy(() => measure),
-          lengthMm: z.lazy(() => measure),
-          widthMm: z.lazy(() => measure),
-          heightMm: z.lazy(() => measure),
+          weightG,
+          lengthMm: edgeMm('Chiều dài'),
+          widthMm: edgeMm('Chiều rộng'),
+          heightMm: edgeMm('Chiều cao'),
         }),
         'Cần ít nhất một biến thể',
       )

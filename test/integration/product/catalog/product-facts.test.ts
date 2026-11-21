@@ -81,6 +81,13 @@ describe('fillProductFacts', () => {
     expect(await variant(other.variantId)).toMatchObject({ weight_g: null, version: 1 });
   });
 
+  it('số đo sàn vượt trần (#434) thì bỏ, không lỗi; đúng trần thì ghi', async () => {
+    const v = await createVariant(companyId);
+    const res = await fill(v.productId, { variants: [{ variantId: v.variantId, weightG: 50_001, lengthMm: 2_000, widthMm: 2_001, heightMm: 2_000 }] });
+    expect(res.filled.sort()).toEqual([`variants.${v.variantId}.heightMm`, `variants.${v.variantId}.lengthMm`]);
+    expect(await variant(v.variantId)).toMatchObject({ weight_g: null, length_mm: 2_000, width_mm: null, height_mm: 2_000 });
+  });
+
   it('sản phẩm công ty khác hoặc id sai dạng: không ghi gì', async () => {
     const v = await createVariant((await createCompany({ optionalModules: [] })).companyId);
     expect(await fill(v.productId, { brand: 'A', variants: [{ variantId: v.variantId, weightG: 1, lengthMm: 1, widthMm: 1, heightMm: 1 }] })).toEqual({ filled: [] });

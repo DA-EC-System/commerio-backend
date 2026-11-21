@@ -1,5 +1,6 @@
 // Cân nặng, kích thước gói của SKU (Documents/21 §17.5, #434): đi lên sàn và tính phí vận chuyển nên có trần. Mọi đường
-// ghi (PATCH SKU, sửa hàng loạt) dùng chung; CHECK `product_variants_dimensions` giữ cùng trần ở DB.
+// ghi (POST sản phẩm, PATCH SKU, sửa hàng loạt, điền từ sàn `fillProductFacts`) dùng chung; CHECK
+// `product_variants_dimensions` giữ cùng trần ở DB.
 import { z } from 'zod';
 
 export const WEIGHT_MAX_G = 50_000;
