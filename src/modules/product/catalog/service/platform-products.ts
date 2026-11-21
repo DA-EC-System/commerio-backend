@@ -2,8 +2,8 @@
 // thiết lập (`withCompany` của bên gọi), trước khi ghép listing. Mã SKU là SKU người bán trên sàn, không cấp theo mẫu.
 import { recordAudit } from '../../../core/index.ts';
 import { findGroups } from '../repository/groups.ts';
-import { insertProduct, productCodeTaken, productNameExists } from '../repository/products.ts';
-import { insertVariant, lockVariants, skuTaken } from '../repository/variants.ts';
+import { findProduct, insertProduct, productCodeTaken, productNameExists, touchProduct } from '../repository/products.ts';
+import { findVariants, insertVariant, lockVariants, skuTaken } from '../repository/variants.ts';
 import { checkAxes, createAxes } from './axes.ts';
 
 /** Độ dài tối đa của SKU biến thể (`product_variants_sku_length`). */
@@ -26,6 +26,67 @@ export interface PlatformVariantInput {
 export interface PlatformProductInput {
   name: string;
   variants: PlatformVariantInput[];
+  /**
+   * Sản phẩm app có sẵn để thêm các SKU này làm biến thể (KB3: SKU anh em của một sản phẩm sàn đã liên kết vào sản phẩm
+   * app đó). Sản phẩm phải có đúng một thuộc tính biến thể; nhãn sàn (trống thì SKU) là giá trị của thuộc tính đó.
+   */
+  parentId?: string;
+}
+
+/** Độ dài tối đa của giá trị thuộc tính (`attribute_values` CHECK 20 ký tự, #447). */
+const VALUE_MAX = 20;
+
+/**
+ * Thêm SKU sàn làm biến thể của sản phẩm có sẵn (KB3), sau khi đã kiểm SKU. Trả lỗi theo khoá hoặc id biến thể theo khoá.
+ * Thuộc tính khoá theo bộ trục của SKU đầu (`addVariant`); giá trị chưa có thì tạo (`createAxes`). Tổ hợp đã có thì lỗi.
+ */
+async function addToParent(
+  caller: { companyId: string; accountId: string },
+  p: PlatformProductInput & { parentId: string },
+  source: { shopId: string; shopName: string },
+): Promise<{ errors: Map<string, string> } | { ids: Map<string, string> }> {
+  const fail = (message: string) => ({ errors: new Map(p.variants.map((v) => [v.key, message])) });
+  const product = await findProduct(p.parentId);
+  if (!product) return fail('Không tìm thấy sản phẩm để thêm biến thể');
+  const existing = await findVariants({ productId: p.parentId });
+  const order = existing[0]?.attributes.map((a) => a.attributeId) ?? [];
+  if (order.length !== 1) return fail(`Sản phẩm ${product.name} không có đúng một thuộc tính biến thể, chưa thêm biến thể từ SKU sàn được`);
+  const values = p.variants.map((v) => v.label?.trim() || v.sku);
+  const errors = new Map<string, string>();
+  const used = new Set(existing.map((v) => lower(v.attributes[0]!.value)));
+  const seen = new Set<string>();
+  for (const [i, v] of p.variants.entries()) {
+    const value = values[i]!;
+    if (value.length > VALUE_MAX) errors.set(v.key, `Nhãn biến thể "${value}" dài quá ${VALUE_MAX} ký tự`);
+    else if (used.has(lower(value)) || seen.has(lower(value))) errors.set(v.key, `${product.name} đã có biến thể ${value}, chọn liên kết thay vì tạo`);
+    seen.add(lower(value));
+  }
+  if (errors.size) return { errors };
+  const axes = [{ attributeId: order[0]!, values: values.map((value) => ({ value })) }];
+  const checked = await checkAxes(axes);
+  const axisError = Object.values(checked.errors)[0];
+  if (axisError) return fail(axisError);
+  const [axis] = await createAxes(caller.companyId, axes, checked.found);
+  const ids = new Map<string, string>();
+  for (const [i, v] of p.variants.entries()) {
+    const valueId = axis!.values.get(lower(values[i]!))!.id;
+    ids.set(v.key, await insertVariant(caller.companyId, p.parentId, v.sku, [valueId], i, null, { standardPrice: v.standardPrice, targetNetPrice: v.targetNetPrice }));
+  }
+  await touchProduct(p.parentId);
+  await recordAudit({
+    companyId: caller.companyId,
+    actorId: caller.accountId,
+    action: 'update',
+    entityType: 'product.products',
+    entityId: p.parentId,
+    label: product.name,
+    before: null,
+    after: {
+      addedVariants: p.variants.map((v, i) => ({ sku: v.sku, value: values[i], standardPrice: v.standardPrice, targetNetPrice: v.targetNetPrice })),
+      fromShop: { id: source.shopId, name: source.shopName },
+    },
+  });
+  return { ids };
 }
 
 export type CreateFromPlatformResult =
@@ -89,6 +150,13 @@ export async function createProductsFromPlatform(
   const names = new Set<string>();
   const codes = new Set<string>();
   for (const p of products) {
+    if (p.parentId) {
+      const added = await addToParent(caller, { ...p, parentId: p.parentId }, source);
+      if ('errors' in added) return { ok: false, groupError: null, errors: added.errors };
+      for (const [k, id] of added.ids) variantIds.set(k, id);
+      productIds.push(p.parentId);
+      continue;
+    }
     const first = p.variants[0]!;
     const name = await freeName(p.name, first.sku, names);
     const code = await freeCode(first.sku, codes);
