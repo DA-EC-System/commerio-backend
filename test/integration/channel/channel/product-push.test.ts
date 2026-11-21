@@ -12,7 +12,7 @@ import {
   type NewProduct,
   type NewVariants,
 } from '#src/modules/channel/channel/service/marketplaces/common.ts';
-import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
+import { getAdapter, registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
 import { type ListingVariant, setProductPort } from '#src/modules/channel/channel/service/product-port.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
@@ -242,6 +242,25 @@ describe('việc nền channel.product_push', () => {
     expect(addVariants.mock.calls[0]![2].salesAttributes![0]!.values).toEqual([
       { optionId: null, label: 'Xanh', imageUri: `https://slatic.test/${encodeURIComponent('https://cdn.test/xanh.png')}` },
     ]);
+  });
+
+  it('sàn đòi đủ ảnh theo giá trị (requiresAllVariantImages) mà còn thiếu: push_failed variant_images_missing, không gọi sàn', async () => {
+    const { productId, vs } = await product(['Đen', 'Trắng'], { Đen: 'https://cdn.test/den.png' });
+    const { ids, job } = await lot(productId, vs);
+    const lazada = getAdapter('lazada') as { requiresAllVariantImages?: boolean };
+    lazada.requiresAllVariantImages = true;
+    try {
+      await runProductPush(port, job);
+    } finally {
+      delete lazada.requiresAllVariantImages;
+    }
+    expect(createProduct).not.toHaveBeenCalled();
+    const rows = await listings(ids);
+    expect(rows.map((r) => [r.status, r.push_error?.code])).toEqual([
+      ['push_failed', 'variant_images_missing'],
+      ['push_failed', 'variant_images_missing'],
+    ]);
+    expect(rows[0]!.push_error.message).toBe('Sàn bắt buộc ảnh cho mọi giá trị của Màu: thêm ảnh cho Trắng rồi đăng lại');
   });
 
   it('ảnh theo màu thiếu một giá trị: không gửi ảnh nào (sàn bắt buộc đủ ảnh cho mọi giá trị của trục)', async () => {
