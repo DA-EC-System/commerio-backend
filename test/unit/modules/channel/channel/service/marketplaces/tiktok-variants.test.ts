@@ -239,6 +239,28 @@ describe('TikTok addVariants, removeVariants', () => {
     });
   });
 
+  it('addVariants: SKU mới tồn 0 hoặc chưa có số vẫn gửi quantity 0 (Partial Edit bắt buộc, 36009004)', async () => {
+    const san = fakeSan({
+      'GET /logistics/202309/warehouses': ok(WAREHOUSES),
+      'GET /product/202309/products/P1': ok(current),
+      [edit]: ok({ skus: [{ id: 'S9', seller_sku: 'CM-DO-S' }, { id: 'S10', seller_sku: 'CM-DO-M' }] }),
+    });
+    const zero: NewVariants = {
+      ...input,
+      salesAttributes: [input.salesAttributes![0]!, { code: '100007', name: 'Cỡ', values: [{ optionId: null, label: 'S' }, { optionId: null, label: 'M' }] }],
+      skus: [
+        { ...input.skus[0]!, quantity: 0 },
+        { ...input.skus[0]!, sellerSku: 'CM-DO-M', quantity: undefined, values: ['Đỏ', 'M'] },
+      ],
+    };
+    await san.methods().addVariants!(TOKEN, 'P1', zero);
+    const sent = (san.calls.find((c) => c.path.endsWith('partial_edit'))!.body as { skus: { seller_sku: string; inventory: unknown }[] }).skus;
+    expect(sent.filter((x) => x.seller_sku.startsWith('CM-DO')).map((x) => x.inventory)).toEqual([
+      [{ warehouse_id: 'W1', quantity: 0 }],
+      [{ warehouse_id: 'W1', quantity: 0 }],
+    ]);
+  });
+
   it('addVariants: phản hồi thiếu SKU mới thì đọc lại Get Product; vẫn thiếu thì unexpected_response', async () => {
     const reread = fakeSan({
       'GET /logistics/202309/warehouses': ok(WAREHOUSES),
