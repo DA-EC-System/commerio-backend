@@ -32,7 +32,6 @@ import {
 import { DELISTED_REASON, type ListingStatus, NO_REASON, type RemoteState } from '../domain/listing.ts';
 import { currentListingRows, currentUnmanagedRows } from '../repository/listings.ts';
 import { unmatchedRemoteCounts } from '../repository/remote-skus.ts';
-import { isMarketplace } from '../repository/schema.ts';
 import {
   countCategoryChangeIssues,
   countListingsOnPlatform,
@@ -279,9 +278,11 @@ function adapterOf(platform: string): MarketplaceAdapter {
   return adapter;
 }
 
-/** Mã sàn từ URL: phải có adapter và có trong enum DB, không thì 422 `marketplace_unsupported` (21 §18.4). */
+/**
+ * Mã sàn từ URL: phải có adapter, không thì 422 `marketplace_unsupported` (21 §18.4). Sàn có adapter luôn có dòng ở
+ * `channel.marketplaces` (worker kiểm lúc khởi động, `verifyMarketplaces`), khoá ngoại chặn mã lạ ở DB.
+ */
 export function platformOf(platform: string): { platform: Platform; adapter: MarketplaceAdapter } {
-  if (!isMarketplace(platform)) throw unsupported();
   return { platform, adapter: adapterOf(platform) };
 }
 
