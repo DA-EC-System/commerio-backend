@@ -33,8 +33,14 @@ const empty = { netReceived: null, belowFloor: null, feeWarning: null } as const
 export async function quotePrices(port: ProductPort, productId: string, items: readonly QuoteItem[], canSeeCost: boolean): Promise<Quote[]> {
   const own = new Set((await port.variants(undefined, { productIds: [productId] })).map((v) => v.id));
   const errors: Record<string, string> = {};
+  // Mỗi (gian hàng, SKU) một dòng: nhiều giá cho cùng SKU trong một lần gọi là dò được giá thấp nhất qua `belowFloor`
+  // (suy ra giá vốn) với người không có `inventory.cost.view`.
+  const seen = new Set<string>();
   items.forEach((it, i) => {
+    const key = `${it.shopId}:${it.variantId}`;
     if (!own.has(it.variantId)) errors[`items.${i}.variantId`] = 'SKU không thuộc sản phẩm này';
+    else if (seen.has(key)) errors[`items.${i}.variantId`] = 'SKU đã có dòng cho gian hàng này';
+    seen.add(key);
   });
   if (Object.keys(errors).length) throw new AppError(422, 'validation_failed', 'Dữ liệu không hợp lệ', { errors });
 
@@ -64,8 +70,7 @@ export async function quotePrices(port: ProductPort, productId: string, items: r
         out.set(it, { ...base(it), listPrice: null, ...empty, blocked: { code: 'price_missing' } });
         continue;
       }
-      // Hai dòng cùng SKU, giá gõ khác nhau: tính riêng từng dòng.
-      const r = prices.get(it.variantId) === price ? results.get(it.variantId)! : (await evaluatePrices(shopId, new Map([[it.variantId, price]]))).results.get(it.variantId)!;
+      const r = results.get(it.variantId)!;
       const quote: Quote = r.ok
         ? { ...base(it), listPrice: Number(price), netReceived: Number(r.net), belowFloor: r.belowFloor, feeWarning: r.feeWarning, blocked: null }
         : { ...base(it), listPrice: Number(price), ...empty, blocked: { code: 'fee_config_invalid' } };

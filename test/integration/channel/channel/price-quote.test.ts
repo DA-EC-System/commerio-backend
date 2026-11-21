@@ -134,10 +134,21 @@ describe('POST /channel/products/:productId/price-quote', () => {
     expect(bad.body.errors).toEqual({ 'items.1.variantId': expect.any(String) });
     expect((await quote(a.productId, [{ shopId: randomUUID(), variantId: a.id }])).status).toBe(404);
   });
+
+  it('hai dòng cùng gian hàng, cùng SKU: 422 ở dòng sau (không dò giá thấp nhất trong một lần gọi)', async () => {
+    const v = await variant(200000, 150000);
+    const res = await quote(v.productId, [
+      { shopId, variantId: v.id, listPrice: 239000 },
+      { shopId, variantId: v.id, listPrice: 249000 },
+      { shopId: noFeeShopId, variantId: v.id, listPrice: 239000 },
+    ]);
+    expect(res.status).toBe(422);
+    expect(res.body.errors).toEqual({ 'items.1.variantId': expect.any(String) });
+  });
 });
 
 describe('POST /shops/:id/listings/push với listPrices', () => {
-  const push = (body: unknown) => as(company.ceo.token)(app().post(`/api/v1/channel/shops/${shopId}/listings/push`)).send(body);
+  const push = (body: object) => as(company.ceo.token)(app().post(`/api/v1/channel/shops/${shopId}/listings/push`)).send(body);
 
   it('giá gõ thành giá ghi đè tay, không ghi lần tính giá', async () => {
     const v = await variant(200000, 150000);
