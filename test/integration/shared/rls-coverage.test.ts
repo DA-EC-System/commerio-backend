@@ -57,6 +57,8 @@ const EXPECTED_PRIVILEGES: Record<string, readonly Privilege[]> = {
   // Cây category và attribute của sàn là dữ liệu tham chiếu của nền tảng, không theo công ty (Documents/19 mục 2, #400):
   // request chỉ đọc; ghi bằng role chủ bảng ngoài `withCompany` (`replaceLeaf`, việc nền đồng bộ cây).
   'channel.platform_categories': ['SELECT'],
+  // Danh mục sàn dùng chung (Documents/19 mục 3.3): dòng do migration chèn, app chỉ đọc.
+  'channel.marketplaces': ['SELECT'],
   'channel.platform_category_attributes': ['SELECT'],
   // Hàng việc nền (#102): request chỉ gửi việc trong giao dịch; mọi bảng khác của pgboss chỉ worker (role chủ bảng) chạm.
   'pgboss.queue': ['SELECT'],

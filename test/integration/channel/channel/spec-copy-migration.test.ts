@@ -33,7 +33,7 @@ async function inRollback<T>(fn: (c: PoolClient) => Promise<T>): Promise<T> {
       create table if not exists channel.category_maps (
         id uuid primary key default gen_random_uuid() not null,
         company_id uuid not null,
-        platform channel.marketplace not null,
+        platform text not null,
         category_id uuid not null,
         external_category_id text not null,
         attributes jsonb default '{}'::jsonb not null,
