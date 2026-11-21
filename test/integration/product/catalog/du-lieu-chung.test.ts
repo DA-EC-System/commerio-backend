@@ -324,6 +324,90 @@ describe('ghi vào dữ liệu chuẩn (#521, Documents/21 mục 5.6)', () => {
     const into = await api(token).put(`/groups/${group.id}`, { copyTemplateFromGroupId: copy.body.id, version: put.body.version });
     problem(into, 422, 'validation_failed');
   });
+
+  it('POST template/fields: tạo thông số mới và gắn cuối mẫu một giao dịch; chọn có sẵn; trùng mẫu 422; sai version 409 không để lại thông số', async () => {
+    const group = await platformGroup('Thú cưng');
+    const tpl = await api(token).get(`/groups/${group.id}/template`);
+    ok(tpl);
+    const stdCount = tpl.body.fields.filter((f: { scope: string }) => f.scope === 'platform').length;
+    // Tạo mới: thông số của công ty, đứng sau dòng chuẩn, tăng version.
+    const newName = uniq('Giống chó');
+    const created = await api(token).post(`/groups/${group.id}/template/fields`, {
+      field: { name: newName, input: 'select', allowCustom: true, options: [{ value: 'Poodle' }, { value: 'Corgi' }] },
+      required: true,
+      version: tpl.body.version,
+    });
+    ok(created);
+    const last = created.body.fields.at(-1);
+    expect(last).toMatchObject({ name: newName, scope: 'company', required: true, input: 'select' });
+    expect(last.options.map((o: { value: string }) => o.value)).toEqual(['Poodle', 'Corgi']);
+    expect(created.body.fields.slice(0, stdCount).every((f: { scope: string }) => f.scope === 'platform')).toBe(true);
+    expect(created.body.version).toBe(tpl.body.version + 1);
+    expect((await fields()).some((f) => f.id === last.fieldId && f.scope === 'company')).toBe(true);
+    // Chọn có sẵn: thêm vào sau dòng vừa thêm, dòng cũ giữ nguyên.
+    const other = await api(token).post('/spec-fields', { name: uniq('Màu lông'), input: 'text', allowCustom: false });
+    ok(other, 201);
+    const chosen = await api(token).post(`/groups/${group.id}/template/fields`, { field: { fieldId: other.body.id }, required: false, version: created.body.version });
+    ok(chosen);
+    expect(chosen.body.fields.slice(-2).map((f: { fieldId: string; required: boolean }) => [f.fieldId, f.required])).toEqual([
+      [last.fieldId, true],
+      [other.body.id, false],
+    ]);
+    // Đã có trong mẫu (dòng chuẩn hoặc dòng công ty): 422.
+    const std = tpl.body.fields[0].fieldId;
+    for (const fieldId of [std, other.body.id]) {
+      const dup = await api(token).post(`/groups/${group.id}/template/fields`, { field: { fieldId }, required: false, version: chosen.body.version });
+      problem(dup, 422, 'validation_failed');
+      expect(dup.body.errors['field.fieldId']).toBe('Đã có trong mẫu');
+    }
+    // Thiếu ô của thông số mới, hoặc gửi cả fieldId lẫn ô khác: 422 theo ô.
+    const missingInput = await api(token).post(`/groups/${group.id}/template/fields`, { field: { name: uniq('X') }, required: false, version: chosen.body.version });
+    problem(missingInput, 422, 'validation_failed');
+    expect(Object.keys(missingInput.body.errors).sort()).toEqual(['field.allowCustom', 'field.input']);
+    const both = await api(token).post(`/groups/${group.id}/template/fields`, {
+      field: { fieldId: other.body.id, name: 'X' },
+      required: false,
+      version: chosen.body.version,
+    });
+    problem(both, 422, 'validation_failed');
+    expect(both.body.errors).toHaveProperty(['field.fieldId']);
+    // Luật như POST /spec-fields: lỗi theo ô dưới `field.`; tên trùng 409.
+    const unitOnText = await api(token).post(`/groups/${group.id}/template/fields`, {
+      field: { name: uniq('Y'), input: 'text', unit: 'kg', allowCustom: false },
+      required: false,
+      version: chosen.body.version,
+    });
+    problem(unitOnText, 422, 'validation_failed');
+    expect(unitOnText.body.errors).toHaveProperty(['field.unit']);
+    const taken = await api(token).post(`/groups/${group.id}/template/fields`, {
+      field: { name: newName, input: 'text', allowCustom: false },
+      required: false,
+      version: chosen.body.version,
+    });
+    problem(taken, 409, 'name_taken');
+    // Sai version: 409, thông số mới không được tạo.
+    const staleName = uniq('Cũ');
+    const stale = await api(token).post(`/groups/${group.id}/template/fields`, {
+      field: { name: staleName, input: 'text', allowCustom: false },
+      required: false,
+      version: tpl.body.version,
+    });
+    problem(stale, 409, 'version_conflict');
+    expect((await fields()).some((f) => f.name === staleName)).toBe(false);
+  });
+
+  it('POST template/fields trên nhóm của công ty: thêm cuối mẫu, tăng version của nhóm', async () => {
+    const own = await api(token).post('/groups', { name: uniq('Nhóm riêng') });
+    ok(own, 201);
+    const res = await api(token).post(`/groups/${own.body.id}/template/fields`, {
+      field: { name: uniq('Chất liệu riêng'), input: 'text', allowCustom: false },
+      required: false,
+      version: own.body.version,
+    });
+    ok(res);
+    expect(res.body.fields.at(-1)).toMatchObject({ scope: 'company', required: false });
+    expect(res.body.version).toBe(own.body.version + 1);
+  });
 });
 
 // Phần gộp của migration `*_du-lieu-chung-chuyen` (bỏ phần ghi dòng nền tảng, tạo bảng tạm) chạy trong giao dịch rồi
