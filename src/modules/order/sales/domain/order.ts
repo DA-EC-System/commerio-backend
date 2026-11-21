@@ -1,7 +1,7 @@
 // Máy trạng thái đơn và các luật suy ra (Documents/21 §19.1, sơ đồ D1), cùng bảng với FE `src/lib/machines/order.ts`.
 import { Decimal } from 'decimal.js';
 import { defineMachine } from '../../../core/index.ts';
-import { isHandedOver, isSealed, isStopped, holdsStock, PRE_HANDOVER, type PackageStatus } from '../../fulfillment/index.ts';
+import { isHandedOver, isSealed, isStopped, PRE_HANDOVER, type PackageStatus } from '../../fulfillment/index.ts';
 
 export type OrderStatus = 'unpaid' | 'processing' | 'completed' | 'cancelled';
 export type OrderAction = 'confirm' | 'pay' | 'complete' | 'cancel' | 'platform_cancel' | 'cancel_on_platform' | 'auto_cancel';
@@ -15,6 +15,7 @@ export type OrderFlag =
   | 'cancelling'
   | 'platform_cancelled'
   | 'due_soon'
+  | 'overdue'
   | 'return_requested'
   | 'cod_mismatch'
   | 'shop_disconnected'
@@ -88,7 +89,6 @@ export function cancelPlan(packages: readonly PackageStatus[]): 'now' | 'after_o
 
 /** Hạn trả khi gian hàng chưa nhập số ngày hay không tìm thấy gian hàng (#236 D5). */
 export const DEFAULT_RETURN_WINDOW_DAYS = 7;
-export const DUE_SOON_HOURS = 24;
 const DAY_MS = 86_400_000;
 
 /** Cách sàn tính hạn trả (`capabilities.returnWindow`) và số ngày của gian hàng. */
@@ -233,13 +233,6 @@ export function stageOf(o: StageInput): OrderStage {
   for (const s of ERROR_FIRST) if (live.includes(s)) return s as OrderStage;
   if (!live.length || live.every(isStopped)) return 'awaiting_completion';
   return live.filter((s) => !isStopped(s)).reduce((a, b) => ((PROGRESS[b] ?? 9) < (PROGRESS[a] ?? 9) ? b : a)) as OrderStage;
-}
-
-/** Sắp trễ hạn: còn kiện chưa rời kho và dưới 24 giờ tới hạn bàn giao. */
-export function isDueSoon(shipBy: string | null, packages: readonly PackageStatus[], now: number): boolean {
-  if (!shipBy) return false;
-  const waiting = packages.some((s) => s === 'backordered' || holdsStock(s));
-  return waiting && Date.parse(shipBy) - now < DUE_SOON_HOURS * 3600_000;
 }
 
 export type ShipByFlag = 'due_soon' | 'overdue';

@@ -1,6 +1,8 @@
 // Đọc đơn cho danh sách, chi tiết (Documents/21 §19.1). Chạy trong `withCompany` của bên gọi.
 import { and, count, desc, eq, exists, gte, ilike, inArray, lt, or, type SQL, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
+import { PRE_HANDOVER } from '../../fulfillment/index.ts';
+import { DUE_SOON_PARTS } from '../domain/order.ts';
 import { OPEN_RETURN_STATUSES } from '../domain/return.ts';
 import { cancellingSql, unmappedLine } from './orders.ts';
 import { customers, orderLines, orders, returnRequests } from './schema.ts';
@@ -18,8 +20,10 @@ export interface OrderFilter {
   to?: Date | undefined;
   /** Chỉ đơn chưa dừng (`unpaid`, `processing`). */
   openOnly?: boolean | undefined;
-  /** Cờ lọc được bằng SQL: cờ lưu, `cancelling`, `unmapped_sku`, `return_requested`. */
+  /** Cờ lọc được bằng SQL: cờ lưu, `cancelling`, `unmapped_sku`, `return_requested`, `due_soon`, `overdue`. */
   flag?: SqlFlag | undefined;
+  /** Mốc giờ của cờ hạn bàn giao, cùng mốc service dùng tính `flags`; vắng thì giờ hiện tại. */
+  now?: Date | undefined;
 }
 
 export type SqlFlag =
@@ -30,12 +34,25 @@ export type SqlFlag =
   | 'shop_disconnected'
   | 'unmapped_sku'
   | 'return_requested'
+  | 'due_soon'
+  | 'overdue'
   | 'cod_mismatch';
 
 // Yêu cầu còn mở: `requested`, `awaiting_return`, `received`; `refund_only` không tính (Documents/21 §19.1, §20).
 const openReturn = () => inArray(returnRequests.status, [...OPEN_RETURN_STATUSES]);
 
-function flagCondition(flag: SqlFlag): SQL {
+/**
+ * Phần chung của `due_soon`, `overdue` (#432), cùng điều kiện với `shipByFlag` và `flagsOf`: đơn còn mở, có hạn,
+ * không Đang huỷ, còn kiện chưa bàn giao (`PRE_HANDOVER`).
+ */
+const shipByOpen = sql`${orders.status} in ('unpaid', 'processing') and ${orders.shipBy} is not null and not ${cancellingSql}
+  and exists (select 1 from "order".packages p where p.order_id = ${orders.id}
+    and p.status in (${sql.join(
+      PRE_HANDOVER.map((s) => sql`${s}`),
+      sql`, `,
+    )}))`;
+
+function flagCondition(flag: SqlFlag, now: Date): SQL {
   const db = getDb();
   switch (flag) {
     case 'needs_attention':
@@ -62,6 +79,14 @@ function flagCondition(flag: SqlFlag): SQL {
           .from(returnRequests)
           .where(and(eq(returnRequests.orderId, orders.id), openReturn())),
       );
+    case 'overdue':
+      return sql`(${shipByOpen} and ${orders.shipBy} <= ${now.toISOString()}::timestamptz)`;
+    case 'due_soon': {
+      const at = sql`${now.toISOString()}::timestamptz`;
+      // Còn ≤ 1/DUE_SOON_PARTS khoảng từ lúc đặt (thiếu thì lúc app nhận đơn) tới hạn.
+      return sql`(${shipByOpen} and ${orders.shipBy} > ${at}
+        and ${DUE_SOON_PARTS} * (${orders.shipBy} - ${at}) <= ${orders.shipBy} - coalesce(${orders.placedAt}, ${orders.createdAt}))`;
+    }
     case 'cod_mismatch':
       // Chưa có nguồn (đối soát COD đơn tay): không đơn nào mang cờ này.
       return sql`false`;
@@ -89,7 +114,7 @@ function where(f: OrderFilter): SQL | undefined {
     f.from ? gte(orders.createdAt, f.from) : undefined,
     f.to ? lt(orders.createdAt, f.to) : undefined,
     f.openOnly ? inArray(orders.status, ['unpaid', 'processing']) : undefined,
-    f.flag ? flagCondition(f.flag) : undefined,
+    f.flag ? flagCondition(f.flag, f.now ?? new Date()) : undefined,
   );
 }
 

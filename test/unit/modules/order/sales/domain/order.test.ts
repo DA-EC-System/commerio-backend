@@ -8,7 +8,6 @@ import {
   codUnconfirmed,
   completionBlocker,
   DEFAULT_RETURN_POLICY,
-  isDueSoon,
   lastDeliveredAt,
   orderCancelReasonFromLines,
   orderMachine,
@@ -177,16 +176,6 @@ describe('stageOf', () => {
     [{ packages: ['backordered', 'reserved'] }, 'backordered'],
   ] as const)('%o → %s', (input, expected) => {
     expect(stageOf({ ...o, packages: [], ...input })).toBe(expected);
-  });
-});
-
-describe('isDueSoon', () => {
-  const now = Date.parse('2026-10-29T00:00:00Z');
-  it('còn kiện chưa rời kho và hạn dưới 24 giờ', () => {
-    expect(isDueSoon('2026-10-29T10:00:00Z', ['reserved'], now)).toBe(true);
-    expect(isDueSoon('2026-10-31T10:00:00Z', ['reserved'], now)).toBe(false);
-    expect(isDueSoon('2026-10-29T10:00:00Z', ['in_transit'], now)).toBe(false);
-    expect(isDueSoon(null, ['reserved'], now)).toBe(false);
   });
 });
 
