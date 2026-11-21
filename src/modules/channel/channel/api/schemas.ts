@@ -329,8 +329,49 @@ export const PushBody = z
       deprecated: true,
       description: 'Bỏ qua từ commerio-backend#303: BE lấy ảnh catalog của sản phẩm (tối đa 8 ảnh đầu)',
     }),
+    listPrices: z
+      .record(z.string(), z.number('Giá là số đồng').int('Giá là số nguyên đồng').positive('Giá phải lớn hơn 0'))
+      .optional()
+      .meta({ description: 'Giá niêm yết người bán gõ theo biến thể (21 §18.9 R1): lưu thành giá ghi đè tay, kiểm giá thấp nhất từng dòng' }),
+  })
+  .superRefine((body, ctx) => {
+    const ids = new Set(body.variantIds);
+    for (const id of Object.keys(body.listPrices ?? {})) {
+      if (!ids.has(id)) ctx.addIssue({ code: 'custom', path: ['listPrices', id], message: 'Biến thể không nằm trong lần đăng này' });
+    }
   })
   .meta({ id: 'ListingPushInput' });
+
+export const PriceQuoteParams = z.object({ productId: z.string().max(60) });
+export const PriceQuoteBody = z
+  .object({
+    items: z
+      .array(
+        z.object({
+          shopId: z.string().max(60),
+          variantId: z.string().max(60),
+          listPrice: z.number('Giá là số đồng').int('Giá là số nguyên đồng').positive('Giá phải lớn hơn 0').optional(),
+        }),
+      )
+      .min(1, 'Cần ít nhất một dòng')
+      .max(200, 'Tối đa 200 dòng'),
+  })
+  .meta({ id: 'PriceQuoteInput' });
+export const PriceQuote = z
+  .object({
+    shopId: z.string(),
+    variantId: z.string(),
+    listPrice: z.number().nullable(),
+    netReceived: z.number().nullable(),
+    belowFloor: z.boolean().nullable(),
+    feeWarning: z.enum(['over_50']).nullable(),
+    feeConfigId: z.string().nullable(),
+    blocked: z.object({ code: z.enum(['price_missing', 'fee_config_invalid', 'fee_not_configured']) }).nullable(),
+    marginPct: z.number().nullable().optional().meta({ description: 'Chỉ khi người gọi có `inventory.cost.view`' }),
+  })
+  .strict()
+  .meta({ id: 'PriceQuote' });
+export const PriceQuoteList = z.object({ items: z.array(PriceQuote) }).strict().meta({ id: 'PriceQuoteList' });
 
 export const DelistBody = z.object({ version: z.number('Thiếu version').int().positive() }).meta({ id: 'ListingDelistInput' });
 export const UpdateContentParams = z.object({ id: z.string(), listingId: z.string() });

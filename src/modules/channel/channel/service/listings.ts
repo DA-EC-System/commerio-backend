@@ -40,6 +40,8 @@ import { insertConfirmed, type NewPriceCalculation } from '../repository/price-c
 import { countRemoteSkusOfProduct } from '../repository/remote-skus.ts';
 import { currentPrices, type ListingPrice, listingPrices } from './listing-prices.ts';
 import { firstPushCalculations } from './repricing.ts';
+import { evaluatePrices } from './price-inputs.ts';
+import type { PriceFilterResult } from '../domain/price-filter.ts';
 import { pushAttributes, specChecks, specStatusOf } from './product-specs.ts';
 import { keepsPlatformContent, listingText, pushBlock, pushSpec, specBlock } from './push-block.ts';
 import { PUSH_IMAGE_MAX, sendListingPush, sendProductPush } from './shop-jobs.ts';
@@ -356,7 +358,7 @@ export async function pushListings(
   port: ProductPort,
   actor: Actor,
   shopId: string,
-  input: { variantIds: string[] },
+  input: { variantIds: string[]; listPrices?: Record<string, number> },
 ): Promise<{ results: PushResult[] }> {
   const inCompany = <T>(fn: () => Promise<T>) => withCompany(actor.companyId, fn);
   // Thứ tự kiểm theo §18.6.11: chưa `active`, chờ kiểm kê, chờ phân hàng (hoặc lượt đơn mở chưa xong), rồi mới tới token.
@@ -380,12 +382,17 @@ export async function pushListings(
       sizeCharts: (await port.productSizeChartUrls?.(productIds)) ?? new Map<string, string>(),
     };
   });
+  // Giá người bán gõ lúc đăng (21 §18.9 R1) là giá ghi đè tay (25 §6.2 bước 6): áp ngay, không thành giá chờ, vẫn qua bước 5.
+  const manual = new Map(ids.flatMap((id) => (input.listPrices?.[id] === undefined ? [] : [[id, String(input.listPrices[id])] as const])));
   // Lần đẩy đầu dùng giá bộ lọc của gian hàng (#225 phần 2); listing đã có giá ghi đè hay giá gian hàng giữ giá đó.
   const firstPush = ids.filter((id) => {
     const l = current.get(id);
-    return !l || l.status === 'delisted' || (l.manualPrice === null && l.priceCalcId === null);
+    return !manual.has(id) && (!l || l.status === 'delisted' || (l.manualPrice === null && l.priceCalcId === null));
   });
-  const calcs = await inCompany(() => firstPushCalculations(shop.id, firstPush));
+  const [calcs, manualChecks] = await inCompany(async () => [
+    await firstPushCalculations(shop.id, firstPush),
+    manual.size ? (await evaluatePrices(shop.id, manual)).results : new Map<string, PriceFilterResult>(),
+  ] as const);
   const results: PushResult[] = [];
   // SKU chưa có sản phẩm trên sàn gom theo cha (#295, §18.8.4): một sản phẩm sàn nhiều phân loại mỗi gian hàng.
   const groups = new Map<string, NewSku[]>();
@@ -412,9 +419,10 @@ export async function pushListings(
     const imageUrls = images.get(v.productId) ?? [];
     const sizeChartUrl = sizeCharts.get(v.productId) ?? null;
     const calc = calcs.get(v.id);
+    const manualPrice = manual.get(v.id);
     const block = pushBlock(
       v,
-      calc ? new Decimal(calc.roundedPrice) : (prices.get(v.id) ?? null),
+      manualPrice ? new Decimal(manualPrice) : calc ? new Decimal(calc.roundedPrice) : (prices.get(v.id) ?? null),
       // Đẩy lại SKU người bán chỉ bật lại trên sàn: không xét spec (cùng vị từ với việc nền).
       pushSpec(keepsPlatformContent(existing), specs.get(v.productId)),
       Boolean(existing?.externalImageUrls?.length || imageUrls.length),
@@ -428,11 +436,18 @@ export async function pushListings(
       results.push(blocked(variantId, existing, 'below_floor', 'Giá theo bộ lọc giá của gian hàng có thực nhận dưới giá thấp nhất; sửa giá muốn bán hoặc cấu hình phí'));
       continue;
     }
-    if (!existing?.externalProductId) {
-      groups.set(v.productId, [...(groups.get(v.productId) ?? []), { variantId: v.id, sku: v.sku, existing, calc }]);
+    // Như `assertAboveFloor` của `PUT .../price`: tổng phí từ 100% trở lên cũng là dưới giá thấp nhất.
+    const check = manualChecks.get(v.id);
+    if (check && (!check.ok || check.belowFloor)) {
+      results.push(blocked(variantId, existing, 'below_floor', 'Giá niêm yết có thực nhận dưới giá thấp nhất; nhập giá cao hơn'));
       continue;
     }
-    results.push(await enqueue(actor, shop.id, v.id, v.sku, existing, imageUrls, sizeChartUrl, calc));
+    const price = { calc, manualPrice };
+    if (!existing?.externalProductId) {
+      groups.set(v.productId, [...(groups.get(v.productId) ?? []), { variantId: v.id, sku: v.sku, existing, ...price }]);
+      continue;
+    }
+    results.push(await enqueue(actor, shop.id, v.id, v.sku, existing, imageUrls, sizeChartUrl, price));
   }
   for (const [productId, rows] of groups) {
     results.push(...(await enqueueProduct(actor, shop.id, productId, rows, images.get(productId) ?? [], sizeCharts.get(productId) ?? null)));
@@ -445,6 +460,7 @@ interface NewSku {
   sku: string;
   existing: ListingRow | undefined;
   calc: NewPriceCalculation | undefined;
+  manualPrice: string | undefined;
 }
 
 /**
@@ -469,7 +485,7 @@ async function enqueueProduct(
       const out: ListingRow[] = [];
       for (const r of rows) {
         const priceCalcId = r.calc ? (await insertConfirmed(r.calc, actor.accountId, pushStartedAt)).id : undefined;
-        const lot = { pushStartedAt, shopProductId: sp.id, ...(priceCalcId && { priceCalcId }) };
+        const lot = { pushStartedAt, shopProductId: sp.id, ...(priceCalcId && { priceCalcId }), ...(r.manualPrice && { manualPrice: r.manualPrice }) };
         if (r.existing && r.existing.status !== 'delisted') {
           out.push(await moveListing(r.existing, 'push', actor, { ...lot, pushAttempts: 0, pushError: null, rejectReason: null }));
           continue;
@@ -544,16 +560,17 @@ async function enqueue(
   existing: ListingRow | undefined,
   imageUrls: string[],
   sizeChartUrl: string | null,
-  calc?: NewPriceCalculation,
+  { calc, manualPrice }: { calc?: NewPriceCalculation; manualPrice?: string } = {},
 ): Promise<PushResult> {
   const pushStartedAt = new Date();
   try {
     const row = await withCompany(actor.companyId, async () => {
       let row: ListingRow;
       const priceCalcId = calc ? (await insertConfirmed(calc, actor.accountId, pushStartedAt)).id : undefined;
+      const price = { ...(priceCalcId && { priceCalcId }), ...(manualPrice && { manualPrice }) };
       if (existing && existing.status !== 'delisted') {
         // Lượt mới: đếm lại số lần thử, xoá lỗi và lý do từ chối của lượt trước.
-        row = await moveListing(existing, 'push', actor, { pushStartedAt, pushAttempts: 0, pushError: null, rejectReason: null, ...(priceCalcId && { priceCalcId }) });
+        row = await moveListing(existing, 'push', actor, { pushStartedAt, pushAttempts: 0, pushError: null, rejectReason: null, ...price });
       } else {
         row = await insertListing({
           companyId: actor.companyId,
@@ -567,6 +584,7 @@ async function enqueue(
           externalImageUrls: existing?.externalImageUrls ?? null,
           replacesListingId: existing?.id ?? null,
           priceCalcId: priceCalcId ?? null,
+          manualPrice: manualPrice ?? null,
           // #399: bản gỡ còn mã sàn thì đẩy lại đúng sản phẩm đó, chủ nội dung giữ như cũ; không có thì app tạo mới.
           contentSource: existing?.externalSkuId ? existing.contentSource : 'app',
         });
