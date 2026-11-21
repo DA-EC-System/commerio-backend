@@ -411,6 +411,10 @@ describe('nhập kho sinh sản phẩm (Documents/21 mục 16.3)', () => {
     expect(res.status).toBe(409);
     expect(res.body.type).toBe('/problems/new_product_name_taken');
     expect(Object.keys(res.body.errors)).toEqual(['lines.0']);
+    // Sản phẩm đang giữ tên, để FE mở thẳng trang sản phẩm; câu nói ai đổi được tên, không bảo người nhập kho tự đổi.
+    expect(res.body.productId).toBe(taken.body.id);
+    expect(res.body.productIds).toEqual({ 'lines.0': taken.body.id });
+    expect(res.body.errors['lines.0']).toContain('Người có quyền sửa sản phẩm');
     expect((await pur(c.ceo).get(`/goods-receipts/${draft.id}`)).body.status).toBe('counting');
     expect(await productsNamed(c.companyId, name)).toHaveLength(1);
   });
