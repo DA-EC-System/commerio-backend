@@ -40,8 +40,10 @@ import {
   TakeOverContentBody,
   TakeOverContentParams,
   ListingList,
-  ProductListingList,
   ProductListingsParams,
+  ProductListingListWithSeparate,
+  RegroupParams,
+  RegroupQueued,
   ListingParams,
   ListingSyncResult,
   MappingBody,
@@ -473,7 +475,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     security: bearer,
     request: { params: ProductListingsParams },
     responses: {
-      200: { description: 'Danh sách', ...json(ProductListingList) },
+      200: { description: 'Danh sách kèm `separateProducts` (#295)', ...json(ProductListingListWithSeparate) },
       ...auth,
       404: problemResponse('`not_found`: sản phẩm không có hoặc của công ty khác'),
     },
@@ -761,6 +763,26 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
       ),
       422: problemResponse('`marketplace_unsupported`: sàn chưa hỗ trợ sửa nội dung'),
       503: problemResponse('`marketplace_unavailable`'),
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/shops/:id/products/:productId/regroup',
+    summary: 'Gom các sản phẩm sàn riêng của một sản phẩm thành một (#295, 21 §18.8.4)',
+    description:
+      'Cần `channel.listing.manage` và vai trò CEO (người khác: 403 `forbidden`; gỡ sản phẩm người bán đã đăng). Dùng cho dữ liệu cũ: các SKU chưa gỡ của sản phẩm nằm ở hơn một sản phẩm sàn trên gian hàng (`separateProducts` của `GET /products/:productId/listings`). ' +
+      'Lỗi theo thứ tự: 404 gian hàng, sản phẩm → 409 `shop_not_active`, `shop_awaiting_stocktake`, `shop_awaiting_allocation`, `shop_not_connected` → 409 `nothing_to_regroup` → 409 `invalid_transition` kèm `current` (listing đang `pushing`, có `outsideChange`, ghép chờ duyệt, hoặc sản phẩm đang đẩy hay gom) → 409 `push_blocked` kèm `rows: { variantId, code }[]` (mã chặn đẩy: `price_missing`, `category_unmapped`, `spec_incomplete`, `dimensions_missing`, `images_missing`, …). ' +
+      'Hợp lệ: xếp việc `channel.product_regroup`, trả 202. Việc nền tạo một sản phẩm nhiều phân loại cho mọi SKU đang có listing chưa gỡ, rồi xoá các sản phẩm lẻ trên sàn. Listing cũ `delisted` (lý do "Gom thành một sản phẩm"), listing mới `replacesListingId` trỏ listing cũ. Tạo lỗi: không gỡ gì, listing cũ giữ nguyên. Xoá sản phẩm lẻ lỗi: lượt sau thử xoá tiếp (gọi lại route này). Sàn chưa hỗ trợ xoá sản phẩm: 422 `marketplace_unsupported`.',
+    security: bearer,
+    request: { params: RegroupParams },
+    responses: {
+      202: { description: 'Đã xếp việc gom', ...json(RegroupQueued) },
+      ...auth,
+      404: problemResponse('`not_found`: gian hàng hoặc sản phẩm'),
+      409: problemResponse(
+        '`shop_not_active`, `shop_awaiting_stocktake`, `shop_awaiting_allocation`, `shop_not_connected`, `nothing_to_regroup`, `invalid_transition` kèm `current`, `push_blocked` kèm `rows`',
+      ),
+      422: problemResponse('`marketplace_unsupported`'),
     },
   });
 }
