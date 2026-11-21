@@ -64,6 +64,9 @@ import {
   CreateVariantBody,
   CreateVariantParams,
   CreateVariantResult,
+  PriceQuoteBody,
+  PriceQuoteList,
+  PriceQuoteParams,
   PushResults,
   SetupBody,
   ShopSetupPreview,
@@ -501,13 +504,27 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/shops/:id/listings/push',
     summary: 'Đẩy biến thể lên sàn (#104)',
     description:
-      "Cần `channel.listing.manage`. Chỉ kiểm và xếp việc nền `channel.listing_push`, không gọi sàn, trả ngay (21 §18.6.4). Kết quả theo từng biến thể: dòng hợp lệ chuyển `pushing` (listing mới, hoặc đẩy lại từ `push_failed`, `rejected`, `platform_hold`; listing đã gỡ thì tạo bản ghi mới trỏ bản cũ); dòng bị chặn có `code`. Việc nền gọi sàn tối đa 5 lần: `under_review`/`live`, hoặc `push_failed` kèm `pushError`. Lỗi cả request theo thứ tự (21 §18.6.11): 409 `shop_not_active` (kèm `current`), `shop_awaiting_stocktake` (§18.6.2), `shop_awaiting_allocation` (lượt kéo đơn còn mở chưa xong hoặc phiếu đầu kỳ đã ghi sổ mà chưa phân hàng xong; problem body thêm `waitingFor: 'open_orders' | 'allocation'`), `shop_not_connected`; không dòng nào đổi, không xếp việc.",
+      "Cần `channel.listing.manage`. Chỉ kiểm và xếp việc nền `channel.listing_push`, không gọi sàn, trả ngay (21 §18.6.4). Kết quả theo từng biến thể: dòng hợp lệ chuyển `pushing` (listing mới, hoặc đẩy lại từ `push_failed`, `rejected`, `platform_hold`; listing đã gỡ thì tạo bản ghi mới trỏ bản cũ); dòng bị chặn có `code`. Việc nền gọi sàn tối đa 5 lần: `under_review`/`live`, hoặc `push_failed` kèm `pushError`. Lỗi cả request theo thứ tự (21 §18.6.11): 409 `shop_not_active` (kèm `current`), `shop_awaiting_stocktake` (§18.6.2), `shop_awaiting_allocation` (lượt kéo đơn còn mở chưa xong hoặc phiếu đầu kỳ đã ghi sổ mà chưa phân hàng xong; problem body thêm `waitingFor: 'open_orders' | 'allocation'`), `shop_not_connected`; không dòng nào đổi, không xếp việc. `listPrices` (21 §18.9 R1): giá người bán gõ thành giá ghi đè tay (`manualPrice`), áp ngay, không thành giá chờ; thực nhận dưới giá thấp nhất thì dòng bị chặn `below_floor`; khoá không nằm trong `variantIds` thì 422 `errors[\"listPrices.<id>\"]`.",
     security: bearer,
     request: { params: ShopParams, body: json(PushBody) },
     responses: {
       200: { description: 'Kết quả theo biến thể', ...json(PushResults) },
       ...onShop,
       409: problemResponse('`shop_not_active`, `shop_awaiting_stocktake`, `shop_awaiting_allocation` kèm `waitingFor`, `shop_not_connected`; `marketplace_rejected` kèm `platformCode`, `platformMessage`'),
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/products/:productId/price-quote',
+    summary: 'Tính thử giá niêm yết → thực nhận theo gian hàng (21 §18.9 R1)',
+    description:
+      'Cần `channel.listing.manage`. Không ghi gì. Thiếu `listPrice` thì dùng giá bộ lọc lần đăng sẽ gửi. Không trả giá thấp nhất; `marginPct` chỉ khi người gọi có `inventory.cost.view`. `blocked.code`: `fee_not_configured` (gian hàng chưa có phí, ba trường số null), `price_missing` (chưa có giá muốn bán và không gõ giá), `fee_config_invalid` (tổng phí từ 100%).',
+    security: bearer,
+    request: { params: PriceQuoteParams, body: json(PriceQuoteBody) },
+    responses: {
+      200: { description: 'Kết quả theo dòng, cùng thứ tự body', ...json(PriceQuoteList) },
+      404: problemResponse('Gian hàng không thuộc công ty'),
+      422: problemResponse('`errors["items.N.variantId"]`: SKU không thuộc sản phẩm'),
     },
   });
   registry.registerPath({

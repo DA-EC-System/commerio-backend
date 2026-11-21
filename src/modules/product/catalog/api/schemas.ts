@@ -491,6 +491,11 @@ export const ProductListQuery = z.object({
   businessStatus: blankAsMissing(
     z.enum(['selling', 'paused', 'discontinued'], 'Trạng thái kinh doanh là selling, paused hoặc discontinued').optional(),
   ),
+  /**
+   * `incomplete`: có ít nhất một SKU chưa lưu trữ đang `incomplete` (`incompleteCount > 0`); `ready`: mọi SKU chưa lưu trữ
+   * đều `ready` (Documents/21 §17.2, lọc "Chờ hoàn thiện").
+   */
+  readiness: blankAsMissing(z.enum(['incomplete', 'ready'], 'Độ hoàn thiện là incomplete hoặc ready').optional()),
   page: blankAsMissing(z.coerce.number().int().min(1, 'Trang từ 1').default(1)),
   pageSize: blankAsMissing(z.coerce.number().int().min(1, 'Từ 1 đến 100 dòng').max(100, 'Từ 1 đến 100 dòng').default(20)),
 });

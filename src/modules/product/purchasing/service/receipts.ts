@@ -82,7 +82,8 @@ export async function createReceipt(
     if (request.status !== 'ordered' && request.status !== 'partially_received') {
       throw new AppError(409, 'invalid_transition', 'Đề nghị chưa đặt NCC hoặc đã đóng', { current: request.status });
     }
-    const lines = (await findLines([request.id])).filter((l) => l.variantId && outstanding(l) > 0);
+    // Kể cả dòng sản phẩm mới chưa có SKU: SKU sinh khi ghi sổ phiếu có hàng về (Documents/21 mục 16.3).
+    const lines = (await findLines([request.id])).filter((l) => outstanding(l) > 0);
     if (!lines.length) throw new AppError(409, 'empty_document', 'Đề nghị không còn hàng chờ');
 
     // Giao bù: phải là phiếu Giao thiếu của chính đề nghị này (25 §4.1, #244)
@@ -107,7 +108,7 @@ export async function createReceipt(
     await insertReceiptLines(
       actor.companyId,
       id,
-      lines.map((l) => ({ requestLineId: l.id, variantId: l.variantId! })),
+      lines.map((l) => ({ requestLineId: l.id, variantId: l.variantId })),
     );
     await recordTransition({ entityType: RECEIPT_ENTITY, entityId: id, from: null, to: 'counting', action: 'create', actorId: actor.accountId });
     await recordAudit({

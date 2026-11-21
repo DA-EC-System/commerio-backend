@@ -1,0 +1,1 @@
+ALTER TABLE "product"."goods_receipt_lines" ALTER COLUMN "variant_id" DROP NOT NULL;
