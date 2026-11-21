@@ -4,7 +4,8 @@ import { PAYLOAD_SCHEMAS } from './config-version.ts';
 
 const source = z.strictObject({
   title: z.string('Nhập tên trang').trim().min(1, 'Nhập tên trang').max(200, 'Tên trang tối đa 200 ký tự'),
-  url: z.url('Đường dẫn không hợp lệ').max(1000, 'Đường dẫn tối đa 1000 ký tự'),
+  // FE hiện thành link: chỉ nhận http, https (chặn `javascript:`, `data:`).
+  url: z.url({ protocol: /^https?$/, error: 'Đường dẫn phải bắt đầu bằng http:// hoặc https://' }).max(1000, 'Đường dẫn tối đa 1000 ký tự'),
   updatedAt: z.iso.date('Ngày cập nhật dạng YYYY-MM-DD'),
 });
 

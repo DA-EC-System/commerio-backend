@@ -73,6 +73,12 @@ describe('biểu phí mẫu (Documents/21 §21.6)', () => {
     const badPayload = await as(admin).post('/platform/fee-templates', { ...template(`p_${randomUUID().slice(0, 6)}`), payload: { ...PAYLOAD, fixedPct: 101 } });
     problem(badPayload, 422, 'validation_failed');
     expect(badPayload.body.errors).toHaveProperty(['payload.fixedPct']);
+    const badUrl = await as(admin).post('/platform/fee-templates', {
+      ...template(`j_${randomUUID().slice(0, 6)}`),
+      sources: [{ title: 'Trang', url: 'javascript:alert(1)', updatedAt: '2026-05-27' }],
+    });
+    problem(badUrl, 422, 'validation_failed');
+    expect(badUrl.body.errors).toHaveProperty(['sources.0.url']);
 
     const updated = await as(admin).put(`/platform/fee-templates/${created.body.id}`, { ...editable(), payload: { ...PAYLOAD, fixedPct: 6 }, version: 1 });
     expect(updated.status, JSON.stringify(updated.body)).toBe(200);
