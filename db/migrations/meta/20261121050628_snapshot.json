@@ -1,6 +1,6 @@
 {
-  "id": "475433a0-58eb-4fa7-9dad-8587238c4ccf",
-  "prevId": "23af9d98-67bf-4858-9722-1ab001af9335",
+  "id": "8d7476f2-c48b-4142-81ae-7968549b30bd",
+  "prevId": "b030f179-efdb-420c-9cec-7bd0a0665777",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -67,7 +67,7 @@
           "name": "company_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "attribute_id": {
           "name": "attribute_id",
@@ -109,7 +109,64 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "axis_mappings_platform_code_uq": {
+          "name": "axis_mappings_platform_code_uq",
+          "columns": [
+            {
+              "expression": "attribute_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "platform",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "attribute_code",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "with": {},
+          "method": "btree",
+          "where": "\"channel\".\"axis_mappings\".\"company_id\" IS NULL",
+          "concurrently": false
+        },
+        "axis_mappings_platform_priority_uq": {
+          "name": "axis_mappings_platform_priority_uq",
+          "columns": [
+            {
+              "expression": "attribute_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "platform",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "priority",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "with": {},
+          "method": "btree",
+          "where": "\"channel\".\"axis_mappings\".\"company_id\" IS NULL",
+          "concurrently": false
+        }
+      },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
@@ -2476,7 +2533,7 @@
           "name": "company_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "field_id": {
           "name": "field_id",
@@ -2518,7 +2575,58 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "spec_field_mappings_platform_priority_uq": {
+          "name": "spec_field_mappings_platform_priority_uq",
+          "columns": [
+            {
+              "expression": "field_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "platform",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "priority",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "with": {},
+          "method": "btree",
+          "where": "\"channel\".\"spec_field_mappings\".\"company_id\" IS NULL",
+          "concurrently": false
+        },
+        "spec_field_mappings_platform_attribute_uq": {
+          "name": "spec_field_mappings_platform_attribute_uq",
+          "columns": [
+            {
+              "expression": "platform",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "attribute_code",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "with": {},
+          "method": "btree",
+          "where": "\"channel\".\"spec_field_mappings\".\"company_id\" IS NULL",
+          "concurrently": false
+        }
+      },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
@@ -2550,6 +2658,15 @@
             "attribute_code"
           ],
           "nullsNotDistinct": false
+        },
+        "spec_field_mappings_field_code_uq": {
+          "name": "spec_field_mappings_field_code_uq",
+          "columns": [
+            "field_id",
+            "platform",
+            "attribute_code"
+          ],
+          "nullsNotDistinct": false
         }
       },
       "policies": {},
@@ -2576,7 +2693,7 @@
           "name": "company_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "field_id": {
           "name": "field_id",
@@ -2625,34 +2742,12 @@
         }
       },
       "indexes": {},
-      "foreignKeys": {
-        "spec_option_mappings_field_fk": {
-          "name": "spec_option_mappings_field_fk",
-          "tableFrom": "spec_option_mappings",
-          "columnsFrom": [
-            "company_id",
-            "field_id",
-            "platform",
-            "attribute_code"
-          ],
-          "tableTo": "spec_field_mappings",
-          "schemaTo": "channel",
-          "columnsTo": [
-            "company_id",
-            "field_id",
-            "platform",
-            "attribute_code"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
-        }
-      },
+      "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
-        "spec_option_mappings_uq": {
-          "name": "spec_option_mappings_uq",
+        "spec_option_mappings_option_uq": {
+          "name": "spec_option_mappings_option_uq",
           "columns": [
-            "company_id",
             "option_id",
             "platform",
             "attribute_code"

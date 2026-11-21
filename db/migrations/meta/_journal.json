@@ -960,6 +960,20 @@
       "when": 1795235349981,
       "tag": "20261121042909_anh-xa-hai-tang-du-lieu",
       "breakpoints": true
+    },
+    {
+      "idx": 137,
+      "version": "7",
+      "when": 1795237588864,
+      "tag": "20261121050628_can-nang-kich-thuoc-du-lieu",
+      "breakpoints": true
+    },
+    {
+      "idx": 138,
+      "version": "7",
+      "when": 1795237590798,
+      "tag": "20261121050630_can-nang-kich-thuoc-tran",
+      "breakpoints": true
     }
   ]
 }
