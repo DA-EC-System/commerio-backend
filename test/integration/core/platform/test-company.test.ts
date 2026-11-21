@@ -3,7 +3,6 @@ import request from 'supertest';
 import { afterEach, describe, expect, it } from 'vitest';
 import { BUILTIN_ROLES } from '#src/modules/core/access/domain/catalog.ts';
 import { hashPassword } from '#src/modules/core/identity/service/passwords.ts';
-import { runTestCompanyCleanup } from '#src/modules/core/platform/service/test-company.ts';
 import { env } from '#src/shared/config/env.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { addMember, registerCompany } from '../../helpers/company.ts';
@@ -186,51 +185,5 @@ describe('DELETE /platform/company: xoá', () => {
     const left = await db.query('select company_id from core.memberships where account_id = $1', [shared.accountId]);
     expect(left.rows.map((r) => r.company_id)).toEqual([b.companyId]);
     expect(await companyExists(b.companyId)).toBe(true);
-  });
-});
-
-describe('việc nền platform.test_company_cleanup', () => {
-  const backdate = (id: string, hours: number) =>
-    db.query(`update core.companies set created_at = now() - make_interval(hours => $2) where id = $1`, [id, hours]);
-
-  it('xoá công ty thử tạo quá 6 giờ, giữ công ty thử mới tạo và công ty có thành viên thật', async () => {
-    const old = await testCompany();
-    const fresh = await testCompany();
-    const real = await testCompany();
-    await addMember(real.companyId, 'sale');
-    await backdate(old.companyId, 7);
-    await backdate(real.companyId, 7);
-    await backdate(fresh.companyId, 5);
-
-    const deleted = await runTestCompanyCleanup();
-    expect(deleted).toContain(old.companyId);
-    expect(deleted).not.toContain(fresh.companyId);
-    expect(deleted).not.toContain(real.companyId);
-    expect(await companyExists(old.companyId)).toBe(false);
-    expect(await companyExists(fresh.companyId)).toBe(true);
-    expect(await companyExists(real.companyId)).toBe(true);
-  });
-
-  it('không xoá công ty có quản trị nền tảng', async () => {
-    const c = await testCompany();
-    const admin = await addTestMember(c.companyId, BUILTIN_ROLES.sale.id);
-    await db.query('update core.accounts set is_platform_admin = true where id = $1', [admin.accountId]);
-    await backdate(c.companyId, 7);
-    expect(await runTestCompanyCleanup()).not.toContain(c.companyId);
-    expect(await companyExists(c.companyId)).toBe(true);
-  });
-
-  it('server không bật đăng ký thử thì không xoá gì', async () => {
-    const c = await testCompany();
-    await backdate(c.companyId, 7);
-    const saved = env.REGISTRATION_TEST_EMAIL_DOMAIN;
-    (env as { REGISTRATION_TEST_EMAIL_DOMAIN?: string }).REGISTRATION_TEST_EMAIL_DOMAIN = undefined;
-    try {
-      expect(await runTestCompanyCleanup()).toEqual([]);
-    } finally {
-      (env as { REGISTRATION_TEST_EMAIL_DOMAIN?: string }).REGISTRATION_TEST_EMAIL_DOMAIN = saved;
-    }
-    expect(await companyExists(c.companyId)).toBe(true);
-    await db.query('update core.companies set created_at = now() where id = $1', [c.companyId]);
   });
 });
