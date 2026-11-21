@@ -3,7 +3,7 @@
 // mới gộp một cha. Chạy trong `withCompany` của bên gọi, không tự mở giao dịch (withCompany không lồng được).
 import { recordAudit } from '../../../core/index.ts';
 import { findGroups } from '../repository/groups.ts';
-import { findProduct, insertProduct, productNameExists, touchProduct } from '../repository/products.ts';
+import { findProduct, findProductByName, insertProduct, productNameExists, touchProduct } from '../repository/products.ts';
 import { findVariants, insertVariant, lockVariants } from '../repository/variants.ts';
 import { type AxisInput, checkAxes, createAxes } from './axes.ts';
 import { isUuid } from './errors.ts';
@@ -35,7 +35,8 @@ type Field = 'parentId' | 'parentName' | 'groupId' | 'optionValues';
  * gộp quá 2 trục (Documents/21 mục 16.4), còn lại `validation_failed`. Rỗng là hợp lệ.
  */
 export interface NewProductErrors {
-  errors: Map<number, { field: Field | null; message: string }>;
+  /** `productId`: sản phẩm đang giữ tên, khi lỗi là tên cha mới vừa bị dùng lúc ghi sổ (`new_product_name_taken`). */
+  errors: Map<number, { field: Field | null; message: string; productId?: string }>;
   code: 'validation_failed' | 'too_many_axes' | 'new_product_name_taken';
 }
 
@@ -108,10 +109,16 @@ async function plan(
         if (!item.groupId || !groups.has(item.groupId)) fail(i, 'groupId', 'Chọn nhóm hàng');
         else if (item.groupId !== groupId) fail(i, 'groupId', 'Các dòng cùng sản phẩm cha phải cùng nhóm hàng');
       }
-      if (await productNameExists(name)) {
-        nameTaken ||= onReceipt;
-        const message = onReceipt ? `Tên «${name}» vừa được dùng cho sản phẩm khác; đổi tên sản phẩm kia rồi ghi sổ lại` : 'Đã có sản phẩm cùng tên';
-        rows.forEach(({ i }) => fail(i, 'parentName', message));
+      if (onReceipt) {
+        // Người nhập kho thường không có quyền sửa sản phẩm: câu nói rõ sản phẩm nào giữ tên và ai đổi được (KB2 2.3).
+        const holder = await findProductByName(name);
+        if (holder) {
+          nameTaken = true;
+          const message = `Tên «${name}» đã là tên của sản phẩm ${holder.code ?? 'khác'}. Người có quyền sửa sản phẩm đổi tên sản phẩm đó, rồi nhập kho lại`;
+          rows.forEach(({ i }) => errors.has(i) || errors.set(i, { field: 'parentName', message, productId: holder.id }));
+        }
+      } else if (await productNameExists(name)) {
+        rows.forEach(({ i }) => fail(i, 'parentName', 'Đã có sản phẩm cùng tên'));
       }
       // Trục của cha mới: theo thứ tự xuất hiện, dòng đầu tiên trước (M1).
       const axes = firstOf(rows.flatMap(({ item }) => item.options.map((o) => normalizeName(o.axis))));
@@ -218,7 +225,8 @@ export async function validateNewProducts(items: readonly NewProductItem[]): Pro
 export async function createPurchaseProducts(
   caller: { companyId: string; accountId: string },
   items: readonly (NewProductItem & { lineId: string })[],
-  description: string,
+  /** Số phiếu nhập kho sinh ra sản phẩm; chỉ ghi vào nhật ký (`after.fromReceipt`), không vào mô tả (KB2 2.5: mô tả lên sàn). */
+  receiptNumber: string,
 ): Promise<{ ok: true; variantIds: string[]; productIds: string[]; reused: number[] } | ({ ok: false } & NewProductErrors)> {
   await lockVariants(caller.companyId);
   const planned = await plan(items, true);
@@ -249,7 +257,7 @@ export async function createPurchaseProducts(
     let productId: string;
     if (parent.kind === 'new') {
       const code = await productCodeFor(allocation.pattern, allocation.skus[0]!.seq);
-      productId = await insertProduct(caller.companyId, parent.groupId, parent.name, description, code);
+      productId = await insertProduct(caller.companyId, parent.groupId, parent.name, '', code);
       await recordAudit({
         companyId: caller.companyId,
         actorId: caller.accountId,
@@ -258,7 +266,7 @@ export async function createPurchaseProducts(
         entityId: productId,
         label: parent.name,
         before: null,
-        after: { name: parent.name, code, group: parent.groupName, description, imageFileIds: [], variants: skus },
+        after: { name: parent.name, code, group: parent.groupName, description: '', imageFileIds: [], variants: skus, fromReceipt: receiptNumber },
       });
     } else {
       productId = parent.productId;
