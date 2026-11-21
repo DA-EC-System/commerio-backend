@@ -76,6 +76,9 @@ export const ShopCapabilities = z
     returnWindow: z.enum(['days', 'platform_status']).meta({
       description: '`days`: hạn trả tính bằng `Shop.returnWindowDays`; `platform_status`: theo trạng thái sàn',
     }),
+    productSpec: z.boolean().meta({ description: 'Sàn có cây category và attribute: có thông tin sàn của sản phẩm, trang đẩy theo spec' }),
+    contentUpdate: z.boolean().meta({ description: 'Sửa được nội dung listing đang bán (§18.3)' }),
+    repackOnReopen: z.boolean().meta({ description: 'Mở kiện đã đóng gói thì sàn huỷ mã kiện cũ; đóng gói lại ra mã kiện, mã vận đơn mới' }),
   })
   .strict()
   .meta({ id: 'ShopCapabilities', description: 'Năng lực sàn do adapter khai (Documents/21 §18.6.3); FE rẽ nhánh theo đây, không theo mã sàn' });

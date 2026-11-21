@@ -40,6 +40,8 @@ export const channelModule: ModuleDefinition = {
   router: channelRouter,
   openapi: registerChannelOpenApi,
   async startBackground(ctx) {
+    // Danh mục sàn trong DB phải khớp registry adapter (Documents/19 mục 3.3): lệch thì worker không chạy.
+    await verifyMarketplaces();
     // Đăng ký qua `workChannelQueue`, `registerChannelConsumer` (`service/background-jobs.ts`): handler chạy như việc nền,
     // lời gọi sàn dùng tới hết phần hạn mức của công ty (#215, Documents/21 §18.6.8).
     // Phiếu kiểm kê đầu kỳ ghi sổ: gian hàng thoát chờ kiểm kê, mốc kéo đơn = thời điểm đếm, bật đẩy tồn (#198 phần 2).
@@ -116,3 +118,4 @@ export {
   marketplaceCarriers, marketplacePack, marketplaceReadyToShip, marketplaceRepack, marketplaceShipPackage,
   marketplaceShippingDocuments, marketplaceSplitAttributes, marketplaceSplitLevel, marketplaceSplitOrder,
 } from './service/order-actions.ts';
+import { verifyMarketplaces } from './service/marketplace-check.ts';

@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V144**, 11 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
+Phiên bản **V146**, 11 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
 **Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
 
@@ -17,7 +17,9 @@ Cột:
 - `id` uuid · khoá chính · mặc định `gen_random_uuid()`
 - `company_id` uuid · not null → `core.companies` (theo công ty)
 - `customer_id` uuid · not null → `order.customers.id` (khoá ngoại)
-- `channel_kind` enum `order.channel_kind` · not null: `tiktok` | `shopee` | `lazada` | `mock` | `messenger` | `email` | `zalo_oa`
+- `source` enum `order.contact_channel` · not null: `marketplace` | `messenger` | `email` | `zalo_oa`
+- `platform` text · null
+  Mã sàn (`channel.marketplaces.code`) khi `source = 'marketplace'`, null với kênh khác. Không có khoá ngoại vì khác module lớn (Documents/17); bên ghi lấy mã từ gian hàng của đơn.
 - `external_user_id` text · not null: mã bên ngoài (sàn, cổng thanh toán)
 - `display_name` text · null
 - `created_at` timestamptz · not null · mặc định `now()`
@@ -26,8 +28,9 @@ Cột:
 
 Ràng buộc và index:
 
-- unique (`company_id`, `channel_kind`, `external_user_id`) `customer_identities_company_id_channel_kind_external_user_id_unique`
+- unique (`company_id`, `source`, `platform`, `external_user_id`) NULLS NOT DISTINCT `customer_identities_uq`
 - index (`customer_id`) `customer_identities_customer_id_index`
+- check `customer_identities_platform`: `(source = 'marketplace') = (platform IS NOT NULL)`
 
 Trỏ vào bảng này:
 
@@ -250,8 +253,6 @@ Cột:
   Số món sàn đã huỷ mà kiện đã đóng gói, chờ mở kiện để bỏ ra (spec 205 §5.10; 19 mục 2).
 - `unit_cost` numeric(18,2) · null
 - `stock_deducted` boolean · not null · mặc định `false`
-- `remap_pending` boolean · not null · mặc định `false`
-  Dòng sống của kiện đã đóng chờ áp ghép SKU mới (spec 237 §5.6, D16): món trong hộp theo ghép cũ, kho mở kiện thì áp. Chỉ có nghĩa khi kiện còn đóng; kiện huỷ hay rời kho thì dấu nằm im (D25). Mở kiện xoá mọi dấu của kiện.
 - `created_at` timestamptz · not null · mặc định `now()`
 - `updated_at` timestamptz · not null · mặc định `now()`
 - `version` integer · not null · mặc định `1`
@@ -268,7 +269,6 @@ Ràng buộc và index:
 - check `package_lines_unmapped`: `variant_id is not null or reserved_qty = 0`
 - check `package_lines_untracked`: `not stock_untracked or (variant_id is null and reserved_qty = 0 and not stock_deducted)`
 - check `package_lines_deducted_cost`: `not stock_deducted or unit_cost is not null`
-- check `package_lines_remap_pending`: `not remap_pending or variant_id is not null or stock_untracked`
 - trigger `package_lines_line_total`: `AFTER INSERT OR DELETE OR UPDATE OF quantity, package_id, order_line_id, pending_drop_qty, kiểm lúc commit → order.check_package_line_total()`, ở `db/migrations/20261114122001_huy-dong-kiem-bang.sql`
 
 ## `order.packages`
@@ -292,7 +292,7 @@ Cột:
 - `self_delivery` boolean · not null · mặc định `false`
 - `status` enum `order.package_status` · not null: `backordered` | `reserved` | `packed` | `awaiting_pickup` | `self_delivering` | `in_transit` | `delivered` | `delivery_failed` | `returning` | `returned` | `lost` | `cancelled`
 - `needs_open` boolean · not null · mặc định `false`
-- `open_purpose` enum `order.open_purpose` · null: `cancel` | `edit` | `resplit` | `stocktake` | `remap`
+- `open_purpose` enum `order.open_purpose` · null: `cancel` | `edit` | `resplit` | `stocktake`
 - `needs_attention` boolean · not null · mặc định `false`
 - `flag_note` text · null
 - `ship_by` timestamptz · null
