@@ -44,7 +44,7 @@ export function registerPlatformOpenApi(registry: OpenAPIRegistry): void {
       'Chỉ có trên server bật đăng ký thử (`REGISTRATION_TEST_EMAIL_DOMAIN`, staging/test); production trả 404. Xoá công ty '
       + 'trong token và mọi dữ liệu của nó trong một giao dịch, cùng tài khoản miền thử không còn ở công ty nào. Chỉ CEO đang '
       + 'hoạt động; mọi thành viên (cả đã khoá) và lời mời đang chờ phải dùng email miền thử, không ai là quản trị nền tảng. '
-      + 'Tệp trên kho lưu trữ giữ nguyên. Việc nền `platform.test_company_cleanup` mỗi đêm xoá công ty thử tạo quá 6 giờ.',
+      + 'Tệp trên kho lưu trữ giữ nguyên. e2e gọi route này sau mỗi lượt chạy.',
     security: bearer,
     responses: {
       204: { description: 'Đã xoá' },

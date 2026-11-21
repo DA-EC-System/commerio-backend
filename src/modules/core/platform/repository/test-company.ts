@@ -143,16 +143,3 @@ export async function purgeOrphanTestAccounts(accountIds: readonly string[], tes
   const res = await getDb().execute(sql`delete from core.accounts where id in (${orphan})`);
   return res.rowCount ?? 0;
 }
-
-/** Công ty tạo trước `before` mà mọi thành viên thuộc miền thử, không ai là quản trị nền tảng (ứng viên của việc nền). */
-export async function staleTestCompanyIds(before: Date, testDomain: string): Promise<string[]> {
-  const found = await rows<{ id: string }>(sql`
-    select c.id from core.companies c
-    where c.created_at < ${before.toISOString()}::timestamptz
-      and exists (select 1 from core.memberships m where m.company_id = c.id)
-      and not exists (
-        select 1 from core.memberships m join core.accounts a on a.id = m.account_id
-        where m.company_id = c.id and (a.is_platform_admin or ${domainOf('a.email')} is distinct from ${testDomain}))
-    order by c.created_at`);
-  return found.map((r) => r.id);
-}
