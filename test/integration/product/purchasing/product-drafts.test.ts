@@ -189,9 +189,11 @@ describe('kiểm ô khi sửa', () => {
   });
 
   it('gộp theo ô: specs theo fieldId (gửi rỗng là xoá), variants theo tổ hợp; lỗi theo chỉ số trong mảng đã gửi', async () => {
-    const r = await createRequest(A.kho, A.supplierId, [fresh(uniq('Áo'), { 'Kích cỡ': 'M' }), fresh(uniq('Áo'), { 'Kích cỡ': 'L' })] as never);
+    const nameM = uniq('Áo');
+    const r = await createRequest(A.kho, A.supplierId, [fresh(nameM, { 'Kích cỡ': 'M' }), fresh(uniq('Áo'), { 'Kích cỡ': 'L' })] as never);
     const drafts = PurchaseRequest.parse((await pur(A.kho).get(`/requests/${r.id}`)).body).productDrafts;
-    const id = drafts[0]!.id;
+    // Hai bản soạn tạo cùng giao dịch, cùng `created_at`: thứ tự trả về không cố định, chọn theo tên (bản của dòng "M").
+    const id = drafts.find((d) => d.parentName === nameM)!.id;
     const field = async () => {
       const res = await api(A.ceo).post('/spec-fields', { name: uniq('Ghi chú'), input: 'text', allowCustom: false });
       expect(res.status, JSON.stringify(res.body)).toBe(201);
