@@ -14,7 +14,7 @@ Modular monolith: một mã nguồn, 6 module lớn gồm 19 module con; mỗi m
 | `worker` | `src/entrypoints/worker.ts` | Việc nền: outbox → Kafka, đẩy tồn lên sàn, email, dựng số liệu |
 | `realtime` | `src/entrypoints/realtime.ts` | Giữ kết nối SSE, đẩy sự kiện xuống trình duyệt |
 
-Stack: Node.js 24 (chạy thẳng `.ts`, không build), Express 5, TypeScript 6, Zod 4, Drizzle ORM + PostgreSQL 18, Redis, Kafka (`@confluentinc/kafka-javascript`, chỉ dùng trong `src/modules/core/platform/service/outbox/`), `decimal.js`, pino, prom-client, Vitest.
+Stack: Node.js 24 (chạy thẳng `.ts`, không build), Express 5, TypeScript 6, Zod 4, Drizzle ORM + PostgreSQL 17 (dev, CI, staging cùng bản), Redis, Kafka (`@confluentinc/kafka-javascript`, chỉ dùng trong `src/modules/core/platform/service/outbox/`), `decimal.js`, pino, prom-client, Vitest.
 
 ## Lệnh
 

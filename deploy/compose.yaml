@@ -4,8 +4,9 @@ name: commerio
 
 services:
   postgres:
-    # Ảnh postgres 18 có sẵn pgvector, cần cho module assistant.
-    image: pgvector/pgvector:pg18
+    # PostgreSQL 17 có sẵn pgvector (module assistant), cùng bản chính với staging Supabase.
+    # Volume tên pgdata17: volume pgdata cũ của ảnh pg18 PG17 không đọc được (README mục "Khi gặp sự cố").
+    image: pgvector/pgvector:pg17
     environment:
       POSTGRES_USER: commerio
       POSTGRES_PASSWORD: commerio
@@ -13,7 +14,7 @@ services:
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql
+      - pgdata17:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U commerio -d commerio"]
       interval: 5s
@@ -108,4 +109,4 @@ services:
       - "127.0.0.1:3030:3000"
 
 volumes:
-  pgdata:
+  pgdata17:
