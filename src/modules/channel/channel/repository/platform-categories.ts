@@ -114,6 +114,20 @@ export async function pathIdsOf(platform: Marketplace, externalIds: readonly str
   return new Map(rows.map((r) => [r.origin, r.ids]));
 }
 
+/**
+ * Category đang `active` trong bảng của sàn (dữ liệu tham chiếu, không RLS), để finance kiểm `categoryRates` của cấu hình
+ * phí (Documents/21 §21.4). Id không có hoặc đã `removed` thì vắng.
+ */
+export async function knownPlatformCategories(platform: string, externalIds: readonly string[]): Promise<Set<string>> {
+  const ids = [...new Set(externalIds)];
+  if (!ids.length) return new Set();
+  const rows = await getDb()
+    .select({ externalId: platformCategories.externalId })
+    .from(platformCategories)
+    .where(and(eq(platformCategories.platform, platform), inArray(platformCategories.externalId, ids), eq(platformCategories.status, 'active')));
+  return new Set(rows.map((r) => r.externalId));
+}
+
 /** Đường dẫn của các category đã có trong cây đã đồng bộ (`synced_at` khác null); id khác không có trong kết quả (#467). */
 export async function syncedPathsOf(platform: Marketplace, externalIds: readonly string[]): Promise<Map<string, string>> {
   const ids = [...new Set(externalIds)];

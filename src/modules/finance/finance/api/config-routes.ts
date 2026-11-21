@@ -40,10 +40,10 @@ export function mountConfigRoutes(router: Router, ctx: FinanceContext): void {
     res.json(await getConfig(caller(res).companyId, id(res)));
   });
   router.post('/configs', manage, validate({ body: CreateConfigBody }), async (_req, res) => {
-    res.status(201).json(await createConfig(caller(res), input<typeof CreateConfigBody>(res, 'body')));
+    res.status(201).json(await createConfig(ctx, caller(res), input<typeof CreateConfigBody>(res, 'body')));
   });
   router.put('/configs/:id', manage, validate({ params: IdParams, body: UpdateConfigBody }), async (_req, res) => {
-    res.json(await updateDraft(caller(res), id(res), input<typeof UpdateConfigBody>(res, 'body')));
+    res.json(await updateDraft(ctx, caller(res), id(res), input<typeof UpdateConfigBody>(res, 'body')));
   });
   router.post('/configs/:id/dry-run', manage, validate({ params: IdParams, body: VersionBody }), async (_req, res) => {
     res.json(await dryRunConfig(ctx, caller(res), id(res), input<typeof VersionBody>(res, 'body').version));

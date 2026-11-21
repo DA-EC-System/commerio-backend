@@ -85,6 +85,23 @@ function checkPayload(kind: ConfigKind, payload: unknown): ConfigPayload {
   throw invalid(errors);
 }
 
+/**
+ * `categoryRates` của phí sàn trỏ category có trong cây đã đồng bộ của sàn của gian hàng (Documents/21 §21.4); sai thì
+ * 422 theo ô. Thiếu cổng channel (test đơn vị, module tách riêng) thì không kiểm.
+ */
+async function checkCategoryRates(ctx: FinanceContext, shopId: string | null, payload: ConfigPayload): Promise<void> {
+  const rates = (payload as ConfigPayload<'fee'>).categoryRates;
+  if (!rates?.length || !shopId || !ctx.knownPlatformCategories || !ctx.shopsOf) return;
+  const shop = (await ctx.shopsOf([shopId])).get(shopId);
+  if (!shop) return;
+  const known = await ctx.knownPlatformCategories(shop.platform, rates.map((r) => r.externalCategoryId));
+  const errors: Record<string, string> = {};
+  rates.forEach((r, i) => {
+    if (!known.has(r.externalCategoryId)) errors[`payload.categoryRates.${i}.externalCategoryId`] = 'Không có category này trong danh mục của sàn';
+  });
+  if (Object.keys(errors).length) throw invalid(errors);
+}
+
 /** `FinanceConfig` của §21.4. `statusHistory` chỉ có ở bản chi tiết (R7). */
 async function view(row: ConfigRow, names = new Map<string, Promise<{ id: string; name: string } | null>>()) {
   return {
@@ -130,7 +147,7 @@ export function getConfig(companyId: string, id: string) {
   return withCompany(companyId, async () => detail(await load(id)));
 }
 
-export function createConfig(caller: Caller, input: ConfigInput) {
+export function createConfig(ctx: FinanceContext, caller: Caller, input: ConfigInput) {
   return withCompany(caller.companyId, async () => {
     const errors: Record<string, string> = {};
     if ((input.kind === 'fee') !== !!input.shopId) errors.shopId = input.kind === 'fee' ? 'Phí sàn cần gian hàng' : 'Chỉ phí sàn mới gắn gian hàng';
@@ -139,6 +156,7 @@ export function createConfig(caller: Caller, input: ConfigInput) {
     if (input.supersedesId && !input.isCorrection) errors.supersedesId = 'Chỉ bản sửa lỗi mới ghi bản bị sửa';
     if (Object.keys(errors).length) throw invalid(errors);
     const payload = checkPayload(input.kind, input.payload);
+    await checkCategoryRates(ctx, input.shopId ?? null, payload);
     if (input.supersedesId) {
       const target = isUuid(input.supersedesId) ? await findConfig(input.supersedesId) : undefined;
       if (!target || target.kind !== input.kind || target.shopId !== (input.shopId ?? null))
@@ -162,12 +180,13 @@ export function createConfig(caller: Caller, input: ConfigInput) {
 }
 
 /** Sửa nội dung, ngày hiệu lực; chỉ bản nháp. Sửa thì kết quả chạy thử cũ hết giá trị. */
-export function updateDraft(caller: Caller, id: string, input: { version: number; payload: unknown; effectiveFrom: string }) {
+export function updateDraft(ctx: FinanceContext, caller: Caller, id: string, input: { version: number; payload: unknown; effectiveFrom: string }) {
   return withCompany(caller.companyId, async () => {
     const row = await load(id, 'update');
     if (row.version !== input.version) throw conflict(row);
     if (row.status !== 'draft') throw new AppError(409, 'invalid_transition', 'Chỉ sửa được phiên bản nháp', { current: row.status });
     const payload = checkPayload(row.kind, input.payload);
+    await checkCategoryRates(ctx, row.shopId, payload);
     if (row.supersedesId) await checkCorrectionOf(row, input.effectiveFrom);
     const updated = await updateConfig(row.id, row, { payload, effectiveFrom: input.effectiveFrom, dryRunResult: null });
     if (!updated) throw conflict(row);
@@ -208,7 +227,10 @@ export interface DryRun {
   rows: {
     shopId: string;
     shopName: string | null;
+    /** Tổng phí % theo hoa hồng mặc định (`categoryRates` không tính, Documents/21 §21.4). */
     feePct: number | null;
+    /** Số dòng hoa hồng theo category của bản này; null khi không phải phí sàn. */
+    categoryCount: number | null;
     taxPct: number | null;
     /** Cần giá theo sàn của C2 (#104): null tới khi có. */
     listingsRepriced: number | null;
@@ -267,7 +289,15 @@ async function computeDryRun(ctx: FinanceContext, row: ConfigRow, now: Date): Pr
   const rows: DryRun['rows'] = [];
   if (row.shopId) {
     const shop = ctx.shopsOf ? (await ctx.shopsOf([row.shopId])).get(row.shopId) : undefined;
-    rows.push({ shopId: row.shopId, shopName: shop?.shopName ?? null, feePct, taxPct, listingsRepriced: null, belowFloor: null });
+    rows.push({
+      shopId: row.shopId,
+      shopName: shop?.shopName ?? null,
+      feePct,
+      categoryCount: row.kind === 'fee' ? ((row.payload as ConfigPayload<'fee'>).categoryRates?.length ?? 0) : null,
+      taxPct,
+      listingsRepriced: null,
+      belowFloor: null,
+    });
   }
   return { at: now.toISOString(), rows, profit30: { now: current.round().toNumber(), next: next.round().toNumber() } };
 }

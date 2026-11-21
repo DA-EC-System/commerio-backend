@@ -11,8 +11,9 @@ const kind = z.enum(CONFIG_KINDS, 'Loại cấu hình là fee, tax_regime, tax_r
 const status = z.enum(CONFIG_STATUSES, 'Trạng thái không hợp lệ');
 const payload = z.record(z.string(), z.unknown(), 'Nội dung cấu hình là một object').meta({
   description:
-    'Theo `kind` (§21.4): `fee` `{ fixedPct, transactionPct, servicePct, optionalPct, returnFee, perItemFee?, roundStep?, roundEnding? }` ' +
-    '(ba trường sau cho bộ lọc giá #225: phí mỗi món, bậc và đuôi làm tròn giá, mặc định 0, 1000, 0; đuôi nhỏ hơn bậc); `tax_regime` ' +
+    'Theo `kind` (§21.4): `fee` `{ fixedPct, transactionPct, servicePct, optionalPct, returnFee, perItemFee?, roundStep?, roundEnding?, categoryRates? }` ' +
+    '(ba trường `perItemFee`, `roundStep`, `roundEnding` cho bộ lọc giá #225: phí mỗi món, bậc và đuôi làm tròn giá, mặc định 0, 1000, 0; đuôi nhỏ hơn bậc; ' +
+    '`categoryRates` `{ externalCategoryId, path, fixedPct }[]` ≤ 500: hoa hồng theo category sàn, áp cho category con, dòng gần nhất thắng, không khớp thì `fixedPct`; category không có trong danh mục sàn: 422); `tax_regime` ' +
     "`{ regime: 'company' | 'household' | 'individual' }`; `tax_rules` `{ vatPct, pitPct, outputVatPct, milestones }` " +
     '(`vatPct`, `pitPct`: thuế sàn khấu trừ của hộ kinh doanh, cá nhân trên doanh thu; `outputVatPct`: thuế suất GTGT ' +
     'đầu ra của doanh nghiệp, doanh thu trong lãi = giá bán / (1 + outputVatPct/100)); `mismatch_threshold` ' +
@@ -59,7 +60,8 @@ const DryRun = z.object({
     z.object({
       shopId: z.uuid(),
       shopName: z.string().nullable(),
-      feePct: z.number().nullable(),
+      feePct: z.number().nullable().meta({ description: 'Tổng phí % theo hoa hồng mặc định (không tính `categoryRates`)' }),
+      categoryCount: z.int().nullable().meta({ description: 'Số dòng hoa hồng theo category (`kind = fee`), null với loại khác' }),
       taxPct: z.number().nullable(),
       listingsRepriced: z.int().nullable(),
       belowFloor: z.int().nullable(),

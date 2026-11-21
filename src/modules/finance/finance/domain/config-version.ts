@@ -54,6 +54,25 @@ export const PAYLOAD_SCHEMAS = {
     perItemFee: vnd('Phí cố định mỗi món').optional(),
     roundStep: vnd('Bậc làm tròn giá').min(1, 'Bậc làm tròn giá ít nhất 1 đồng').optional(),
     roundEnding: vnd('Đuôi giá').optional(),
+    // Hoa hồng theo category sàn (Documents/21 §21.4, Thành chốt 22/11/2026): áp cho category đó và category con, dòng
+    // gần nhất thắng; không khớp thì `fixedPct`. Tuỳ chọn vì bản lưu trước đó không có.
+    categoryRates: z
+      .array(
+        z.strictObject({
+          externalCategoryId: z.string('Chọn category của sàn').trim().min(1, 'Chọn category của sàn').max(100, 'Mã category tối đa 100 ký tự'),
+          path: z.string('Thiếu đường dẫn category').trim().min(1, 'Thiếu đường dẫn category').max(500, 'Đường dẫn category tối đa 500 ký tự'),
+          fixedPct: pct('Hoa hồng theo danh mục'),
+        }),
+      )
+      .max(500, 'Tối đa 500 danh mục')
+      .superRefine((rates, ctx) => {
+        const seen = new Set<string>();
+        rates.forEach((r, i) => {
+          if (seen.has(r.externalCategoryId)) ctx.addIssue({ code: 'custom', path: [i, 'externalCategoryId'], message: 'Category bị trùng' });
+          seen.add(r.externalCategoryId);
+        });
+      })
+      .optional(),
   }).refine((p) => (p.roundEnding ?? 0) < (p.roundStep ?? DEFAULT_ROUND_STEP), {
     path: ['roundEnding'],
     message: 'Đuôi giá phải nhỏ hơn bậc làm tròn',
@@ -83,8 +102,25 @@ export const feeRoundingOf = (p: ConfigPayload<'fee'>) => ({
   roundEnding: p.roundEnding ?? 0,
 });
 
-/** Tổng phần trăm phí sàn trừ trên doanh thu, dùng cho chạy thử. */
-export const feePctOf = (p: ConfigPayload<'fee'>) => p.fixedPct + p.transactionPct + p.servicePct + p.optionalPct;
+/**
+ * Hoa hồng của một SKU theo category sàn (Documents/21 §21.4): `pathIds` là chuỗi `externalId` từ gốc tới category của
+ * SKU (`channel` `pathIdsOf`); dòng `categoryRates` của tổ tiên sâu nhất thắng. Không có category hoặc không khớp dòng
+ * nào thì `fixedPct` mặc định của gian hàng.
+ */
+export function fixedPctFor(p: ConfigPayload<'fee'>, pathIds?: readonly string[] | null): number {
+  const rates = p.categoryRates;
+  if (!rates?.length || !pathIds?.length) return p.fixedPct;
+  const byId = new Map(rates.map((r) => [r.externalCategoryId, r.fixedPct]));
+  for (let i = pathIds.length - 1; i >= 0; i--) {
+    const pct = byId.get(pathIds[i]!);
+    if (pct !== undefined) return pct;
+  }
+  return p.fixedPct;
+}
+
+/** Tổng phần trăm phí sàn trừ trên doanh thu. `pathIds` của SKU (hoa hồng theo category); bỏ trống là tỷ lệ mặc định (chạy thử). */
+export const feePctOf = (p: ConfigPayload<'fee'>, pathIds?: readonly string[] | null) =>
+  fixedPctFor(p, pathIds) + p.transactionPct + p.servicePct + p.optionalPct;
 /** Phần trăm thuế sàn khấu trừ (hộ kinh doanh, cá nhân). */
 export const taxPctOf = (p: ConfigPayload<'tax_rules'>) => p.vatPct + p.pitPct;
 

@@ -31,6 +31,11 @@ export interface FinanceContext extends ModuleContext {
   readonly shopsOf?: (ids: readonly string[]) => Promise<Map<string, ShopInfo>>;
   /** Kéo quyết toán từ sàn (#117): `src/wiring.ts` tiêm các hàm cổng của channel. Thiếu thì không kéo được (422). */
   readonly settlementSource?: SettlementSource;
+  /**
+   * Category sàn có trong cây đã đồng bộ (`channel.platform_categories`), để kiểm `categoryRates` của cấu hình phí
+   * (Documents/21 §21.4). `src/wiring.ts` tiêm; thiếu thì không kiểm.
+   */
+  readonly knownPlatformCategories?: (platform: string, externalIds: readonly string[]) => Promise<Set<string>>;
 }
 
 /** Cổng quyết toán của channel (#117). Hai hàm đầu gọi sàn: gọi ngoài giao dịch; `shops` đọc mọi công ty. */
