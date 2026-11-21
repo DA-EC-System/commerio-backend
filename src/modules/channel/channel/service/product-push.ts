@@ -75,7 +75,11 @@ export async function runProductPush(port: ProductPort, job: ProductPushJob): Pr
     return;
   }
 
-  const productId = sp.productId!;
+  const productId = sp.productId ?? job.productId;
+  if (!productId) {
+    await failAll(errorOf('not_found', 'Không xác định được sản phẩm của lượt đẩy, đăng bán lại'));
+    return;
+  }
   const specOf = async () => (await specChecks(port, shop, adapter, await port.variants(undefined, { productIds: [productId] }))).get(productId);
   const first = await inCompany(specOf);
   if (first && adapter.leafAttributes) {

@@ -46,7 +46,7 @@ import type { PriceFilterResult } from '../domain/price-filter.ts';
 import { pushAttributes, specChecks, specStatusOf } from './product-specs.ts';
 import { keepsPlatformContent, listingText, pushBlock, pushSpec, specBlock } from './push-block.ts';
 import { PUSH_IMAGE_MAX, sendListingPush, sendProductPush } from './shop-jobs.ts';
-import { findAppShopProduct, findShopProduct, insertAppShopProduct, setShopProductPushStarted } from '../repository/shop-products.ts';
+import { findAppShopProduct, findShopProduct, insertAppShopProduct, matchShopProductsOf, setShopProductPushStarted } from '../repository/shop-products.ts';
 import { MarketplaceError } from './marketplaces/index.ts';
 import { type Actor, onMarketplace, ownShop, platformOf, shopSession } from './shops.ts';
 
@@ -393,13 +393,15 @@ export async function pushListings(
   }
   const ids = [...new Set(input.variantIds)];
   const { adapter } = platformOf(shop.platform);
-  const { variants, prices, specs, current, images, sizeCharts } = await inCompany(async () => {
+  const { variants, prices, specs, siblings, current, images, sizeCharts } = await inCompany(async () => {
     const variants = new Map((await port.variants(ids)).map((v) => [v.id, v]));
     const productIds = [...new Set([...variants.values()].map((v) => v.productId))];
+    const siblings = await port.variants(undefined, { productIds });
     return {
       variants,
       prices: await port.standardPrices(ids),
-      specs: await specChecks(port, shop, adapter, await port.variants(undefined, { productIds })),
+      specs: await specChecks(port, shop, adapter, siblings),
+      siblings,
       current: new Map(await Promise.all(ids.map(async (id) => [id, await findListingRow(shop.id, id)] as const))),
       images: await port.productImageUrls(productIds, PUSH_IMAGE_MAX),
       sizeCharts: (await port.productSizeChartUrls?.(productIds)) ?? new Map<string, string>(),
@@ -473,7 +475,8 @@ export async function pushListings(
     results.push(await enqueue(actor, shop.id, v.id, v.sku, existing, imageUrls, sizeChartUrl, price));
   }
   for (const [productId, rows] of groups) {
-    results.push(...(await enqueueProduct(actor, shop.id, productId, rows, images.get(productId) ?? [], sizeCharts.get(productId) ?? null)));
+    const siblingIds = siblings.filter((v) => v.productId === productId).map((v) => v.id);
+    results.push(...(await enqueueProduct(actor, shop.id, productId, rows, images.get(productId) ?? [], sizeCharts.get(productId) ?? null, siblingIds)));
   }
   return { results };
 }
@@ -499,11 +502,18 @@ async function enqueueProduct(
   rows: readonly NewSku[],
   imageUrls: string[],
   sizeChartUrl: string | null,
+  /** Mọi biến thể của cha (kể cả đã có listing), để tìm sản phẩm sàn người bán đã ghép. */
+  siblingIds: readonly string[],
 ): Promise<PushResult[]> {
   const pushStartedAt = new Date();
   try {
     const listed = await withCompany(actor.companyId, async () => {
-      const sp = (await findAppShopProduct(shopId, productId, { lock: true })) ?? (await insertAppShopProduct(actor.companyId, shopId, productId));
+      // Cha đã có sản phẩm trên sàn: dòng `app` (app tạo), hoặc đúng một dòng `match` (sản phẩm người bán ghép vào app, KB3)
+      // thì thêm phân loại vào đó, không tạo sản phẩm sàn mới. Nhiều dòng `match` (người bán tách sản phẩm trên sàn) thì chưa
+      // biết thêm vào đâu, tạo dòng `app` như cũ.
+      const app = await findAppShopProduct(shopId, productId, { lock: true });
+      const matched = app ? [] : await matchShopProductsOf(shopId, siblingIds, { lock: true });
+      const sp = app ?? (matched.length === 1 ? matched[0]! : await insertAppShopProduct(actor.companyId, shopId, productId));
       await setShopProductPushStarted(sp.id, pushStartedAt);
       const out: ListingRow[] = [];
       for (const r of rows) {
@@ -531,6 +541,7 @@ async function enqueueProduct(
         companyId: actor.companyId,
         shopId,
         shopProductId: sp.id,
+        productId,
         pushStartedAt: pushStartedAt.toISOString(),
         imageUrls,
         ...(sizeChartUrl && { sizeChartUrl }),
