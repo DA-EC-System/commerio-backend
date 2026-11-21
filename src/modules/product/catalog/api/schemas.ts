@@ -66,7 +66,13 @@ export const SuggestConfig = z
   })
   .meta({ id: 'SuggestConfig' });
 
-const keepSuggest = SuggestConfig.optional().meta({ description: 'Bỏ trống thì giữ cấu hình đang lưu (tạo mới: chưa đặt)' });
+/**
+ * Cấu hình gợi ý gửi lên (`PUT /settings`, `POST`, `PUT /groups`): từng trường vắng là giữ giá trị đang lưu (tạo mới: chưa
+ * đặt), `null` là xoá (kiểm người bán KB2 2.10: trước đây thiếu trường là 422, phải gửi `null` tường minh).
+ */
+const keepSuggest = SuggestConfig.partial()
+  .optional()
+  .meta({ description: 'Bỏ trống, hoặc vắng từng trường, thì giữ giá trị đang lưu (tạo mới: chưa đặt); `null` là xoá' });
 
 export const GroupBody = z
   .object({

@@ -124,6 +124,16 @@ export async function productNameExists(name: string, exceptId?: string): Promis
   return rows.length > 0;
 }
 
+/** Sản phẩm cùng tên (chữ thường) trong công ty, để báo người dùng sản phẩm nào đang giữ tên (đọc qua RLS). */
+export async function findProductByName(name: string): Promise<{ id: string; code: string | null } | null> {
+  const [row] = await getDb()
+    .select({ id: products.id, code: products.code })
+    .from(products)
+    .where(sql`lower(${products.name}) = lower(${name})`)
+    .limit(1);
+  return row ?? null;
+}
+
 /** Mã cha đã có trong công ty (#204 D5). */
 export async function productCodeTaken(code: string): Promise<boolean> {
   const rows = await getDb().select({ id: products.id }).from(products).where(eq(products.code, code));

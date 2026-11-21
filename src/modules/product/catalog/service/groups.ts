@@ -27,13 +27,13 @@ import {
   scopeOf,
   versionConflict,
 } from './errors.ts';
-import { columnsOf, NO_SUGGEST, type SuggestConfig, suggestOf, withSuggest } from './suggest-config.ts';
+import { columnsOf, mergeSuggest, NO_SUGGEST, type SuggestConfig, type SuggestPatch, suggestOf, withSuggest } from './suggest-config.ts';
 
 export interface GroupInput {
   /** Bắt buộc với nhóm của công ty; nhóm nền tảng không đổi tên được (gửi thì 422). */
   name?: string | undefined;
   /** Bỏ trống là giữ cấu hình đang lưu (tạo mới là chưa đặt, tức theo công ty); gửi là thay cả năm giá trị. */
-  suggest?: SuggestConfig | undefined;
+  suggest?: SuggestPatch | undefined;
   /** Chép trục chuẩn và mẫu thông số của nhóm này (#510, Documents/21 mục 5.5); `PUT` thay mẫu cũ. */
   copyTemplateFromGroupId?: string | undefined;
 }
@@ -118,7 +118,7 @@ export async function createGroup(caller: Caller, input: GroupInput): Promise<Gr
     // Đọc qua RLS gồm cả nhóm nền tảng: tên trùng nhóm chuẩn cũng là trùng (khác tầng, service chặn).
     if (await groupNameExists(input.name)) throw taken();
     const source = await templateSource(input.copyTemplateFromGroupId);
-    const suggest = input.suggest ?? NO_SUGGEST;
+    const suggest = mergeSuggest(NO_SUGGEST, input.suggest);
     const id = await insertGroup(caller.companyId, input.name, columnsOf(suggest));
     if (source) await copyTemplate(caller.companyId, source.id, id);
     await recordAudit({
@@ -137,7 +137,7 @@ async function updatePlatformGroup(caller: Caller, group: GroupRow, input: Group
   if (input.copyTemplateFromGroupId !== undefined) errors.copyTemplateFromGroupId = 'Mẫu của nhóm chuẩn do nền tảng đặt';
   if (Object.keys(errors).length) throw invalid(errors);
   if (group.version !== input.version) throw await conflict(group);
-  const suggest = input.suggest ?? suggestOf(group);
+  const suggest = mergeSuggest(suggestOf(group), input.suggest);
   if (!(await upsertGroupSettingsIfVersion(caller.companyId, group.id, input.version, columnsOf(suggest)))) await lostRace(group.id);
   await recordAudit({
     ...auditOf(caller, 'update', SETTINGS_ENTITY, group.id),
@@ -156,7 +156,7 @@ export async function updateGroup(caller: Caller, id: string, input: GroupInput 
     if (group.version !== input.version) throw await conflict(group);
     if (await groupNameExists(input.name, id)) throw taken();
     const source = await templateSource(input.copyTemplateFromGroupId, id);
-    const suggest = input.suggest ?? suggestOf(group);
+    const suggest = mergeSuggest(suggestOf(group), input.suggest);
     const name = input.name;
     if (!(await updateGroupIfVersion(id, input.version, name, columnsOf(suggest)))) await lostRace(id);
     if (source) await copyTemplate(caller.companyId, source.id, id);

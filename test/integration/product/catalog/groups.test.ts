@@ -192,6 +192,22 @@ describe('GET, PUT /catalog/settings', () => {
     expect(keep.body).toMatchObject({ skuPattern: 'CD{SEQ:3}', suggest: SUGGEST, version: 3 });
   });
 
+  it('PUT `suggest` vắng trường nào thì giữ trường đó, `null` thì xoá (KB2 2.10)', async () => {
+    const { ceo } = await createCompany();
+    const set = await api(ceo.token).put('/settings', { skuPattern: 'AB{SEQ:3}', suggest: SUGGEST, version: 1 });
+    expect(set.status, JSON.stringify(set.body)).toBe(200);
+    const partial = await api(ceo.token).put('/settings', {
+      skuPattern: 'AB{SEQ:3}',
+      suggest: { marginCoefficient: 1.3, priceRounding: null },
+      version: 2,
+    });
+    expect(partial.status, JSON.stringify(partial.body)).toBe(200);
+    expect(partial.body.suggest).toEqual({ ...SUGGEST, marginCoefficient: 1.3, priceRounding: null });
+    const wrong = await api(ceo.token).put('/settings', { skuPattern: 'AB{SEQ:3}', suggest: { reorderLeadDays: 'x' }, version: 3 });
+    expect(wrong.status).toBe(422);
+    expect(wrong.body.errors).toHaveProperty(['suggest.reorderLeadDays']);
+  });
+
   it('đổi mẫu chỉ áp cho SKU sinh sau; cấp số không tăng version cài đặt (P3, P7)', async () => {
     const { ceo } = await createCompany();
     const group = await createGroup(ceo.token, uniq('Áo'));
