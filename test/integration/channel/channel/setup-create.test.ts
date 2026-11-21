@@ -71,8 +71,15 @@ async function connectingShop(c: Company, token = c.ceo.token, withActive = true
   };
 }
 
-async function groupOf(companyId: string): Promise<string> {
-  const { rows } = await testPool().query('select id from product.product_groups where company_id = $1 order by name limit 1', [companyId]);
+/** Nhóm công ty dùng được: nhóm chuẩn của nền tảng (dùng chung mọi công ty, #521). */
+async function groupOf(_companyId: string): Promise<string> {
+  const { rows } = await testPool().query('select id from product.product_groups where company_id is null order by name limit 1');
+  return rows[0].id as string;
+}
+
+/** Nhóm riêng của một công ty (công ty khác không dùng được). */
+async function privateGroupOf(companyId: string): Promise<string> {
+  const { rows } = await testPool().query("insert into product.product_groups (company_id, name) values ($1, 'Nhóm riêng ' || substr(md5(random()::text), 1, 8)) returning id", [companyId]);
   return rows[0].id as string;
 }
 
@@ -285,7 +292,7 @@ describe('lỗi theo dòng (AC-4, AC-5, AC-6) và quyền', () => {
     const t = tag();
     remote = [sku('f1', `p-${t}`, `GRP-${t}`, 'Áo')];
     const { setup } = await connectingShop(c);
-    const res = await setup({ decisions: [create('f1')], createGroupId: await groupOf(other.companyId) });
+    const res = await setup({ decisions: [create('f1')], createGroupId: await privateGroupOf(other.companyId) });
     expect(res.status).toBe(422);
     expect(res.body.errors).toEqual({ createGroupId: 'Nhóm hàng không thuộc công ty' });
     expect(await variantsOf(c.companyId, [`GRP-${t}`])).toEqual([]);
