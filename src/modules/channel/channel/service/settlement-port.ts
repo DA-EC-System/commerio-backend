@@ -4,8 +4,8 @@
 import { currentCompanyId, withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { logger } from '../../../../shared/logger.ts';
-import { findActiveShopsAnyCompany } from '../repository/shops.ts';
-import { inBackground, type Payout, type SettlementTxn } from './marketplaces/index.ts';
+import { findActiveShopsAnyCompany, findShopRow } from '../repository/shops.ts';
+import { getAdapter, inBackground, type Payout, type SettlementTxn } from './marketplaces/index.ts';
 import { onMarketplace, shopSession } from './shops.ts';
 
 const unsupported = () => new AppError(422, 'marketplace_unsupported', 'Sàn này chưa hỗ trợ lấy sao kê sàn');
@@ -41,8 +41,23 @@ export async function settlementPayouts(companyId: string, shopId: string, from:
   });
 }
 
-/** Gian hàng đang hoạt động của mọi công ty, cho việc nền. Gọi ngoài `withCompany`. */
+/** Sàn kéo được quyết toán: adapter có `getTransactions` (#401; TikTok chưa có tới #252). */
+const settlesOn = (platform: string) => Boolean(getAdapter(platform)?.getTransactions);
+
+/**
+ * Gian hàng đang hoạt động của mọi công ty mà sàn kéo được quyết toán, cho việc nền. Gian hàng của sàn chưa hỗ trợ
+ * không có ở đây, để vòng kéo không mở lần chạy chắc chắn lỗi (#401). Gọi ngoài `withCompany`.
+ */
 export async function shopsToSettle(): Promise<{ companyId: string; shopId: string }[]> {
   if (currentCompanyId()) throw new Error('shopsToSettle gọi ngoài withCompany (đọc mọi công ty)');
-  return (await findActiveShopsAnyCompany()).map((s) => ({ companyId: s.companyId, shopId: s.id }));
+  return (await findActiveShopsAnyCompany()).filter((s) => settlesOn(s.platform)).map((s) => ({ companyId: s.companyId, shopId: s.id }));
+}
+
+/**
+ * Gian hàng của công ty có kéo được quyết toán không (#401): finance hỏi trước khi mở lần chạy, để nút Kéo quyết toán
+ * báo `marketplace_unsupported` ngay thay vì để việc nền lỗi. Không gọi sàn; gian hàng không thấy thì `false`.
+ */
+export async function settlementSupported(companyId: string, shopId: string): Promise<boolean> {
+  const shop = await withCompany(companyId, () => findShopRow(shopId));
+  return Boolean(shop && settlesOn(shop.platform));
 }
