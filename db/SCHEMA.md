@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V143** (`20261121061623_can-nang-kich-thuoc-tran`): 101 bảng trong 6 schema, 83 khoá ngoại, 81 cột tham chiếu không có khoá ngoại. Lịch sử từng phiên bản: [VERSIONS.md](VERSIONS.md).
+Phiên bản **V143** (`20261121101636_ban-soan-truoc-rls`): 102 bảng trong 6 schema, 84 khoá ngoại, 83 cột tham chiếu không có khoá ngoại. Lịch sử từng phiên bản: [VERSIONS.md](VERSIONS.md).
 
 Nguồn: snapshot của migration mới nhất, comment trong `src/modules/<lớn>/<con>/repository/schema.ts`, khoá ngoại, trigger, index, EXCLUDE viết tay trong migration. Cột, kiểu, ràng buộc, quan hệ của từng bảng ở `db/schema/<schema>.md`.
 
@@ -45,7 +45,7 @@ Chi tiết: [schema/core.md](schema/core.md)
 - `core.roles` (access): Vai trò có sẵn có `company_id` trống, dùng chung mọi công ty; vai trò tuỳ biến thuộc một công ty.
 - `core.state_transitions` (platform): Lịch sử chuyển trạng thái của mọi thực thể có máy trạng thái (N4, Documents/21 mục 14.1: `statusHistory`), chỉ thêm.
 
-## `product` · Sản phẩm · lớp 2 · 27 bảng
+## `product` · Sản phẩm · lớp 2 · 28 bảng
 
 Chi tiết: [schema/product.md](schema/product.md)
 
@@ -64,6 +64,7 @@ Chi tiết: [schema/product.md](schema/product.md)
 - `product.product_spec_values` (catalog): Giá trị thông số của sản phẩm cha: select một dòng `option_id`, multiselect mỗi lựa chọn một dòng, text/number/date một dòng `value_text`.
 - `product.product_variants` (catalog): Biến thể (SKU); SKU không cấp lại kể cả sau khi lưu trữ (Documents/21 P5).
 - `product.products` (catalog): Sản phẩm; đổi nhóm hàng được, SKU không đổi theo (Documents/21 P6, 19/11/2026).
+- `product.purchase_product_drafts` (purchasing): Bản soạn trước nội dung của **một sản phẩm cha mới** trên một đề nghị (Documents/19 `purchase_product_drafts`, 21 mục 16.3 "Bản soạn trước", 29 bước 1); các dòng cùng tên cha mới dùng chung.
 - `product.purchase_request_lines` (purchasing): Dòng đề nghị.
 - `product.purchase_requests` (purchasing): Một lần xin nhập hàng của một NCC.
 - `product.spec_field_options` (catalog): Lựa chọn của thông số select/multiselect, mỗi lựa chọn một dòng (để khoá ngoại từ giá trị và ánh xạ sàn theo lựa chọn).

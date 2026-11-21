@@ -1,5 +1,6 @@
 // Kiểu chung của adapter sàn (Strategy, #103 B7). Chỉ adapter gọi HTTP sàn, ký request và biết mã lỗi của sàn;
 // nghiệp vụ nhận kiểu đã chuẩn hoá và `MarketplaceError`. #104–#106 thêm năng lực của mình vào `MarketplaceAdapter`.
+import { logger } from '../../../../../shared/logger.ts';
 import type { LedgerKind } from '../../../../finance/index.ts';
 import type { RemoteState } from '../../domain/listing.ts';
 import type { PlatformAttribute, PlatformKind, VariantCapabilities } from '../../domain/product-spec.ts';
@@ -169,7 +170,8 @@ export interface CascadeLevel {
 /** Một sản phẩm một SKU (#104 A1). Tiền là chuỗi thập phân; kích thước theo đơn vị của Commerio. */
 /** Mục đích ảnh khi đưa lên sàn. */
 /** `evidence`: ảnh minh chứng khi từ chối yêu cầu trả (#476), không phải ảnh sản phẩm; sàn không dùng thì coi như `main`. */
-export type ImagePurpose = 'main' | 'size_chart' | 'evidence';
+/** `sale_attribute`: ảnh của một giá trị trục bán hàng (ảnh theo màu, #295); sàn không tách loại ảnh thì bỏ qua. */
+export type ImagePurpose = 'main' | 'size_chart' | 'evidence' | 'sale_attribute';
 
 /**
  * Bảng kích cỡ của danh mục sàn: `required` bắt buộc (thiếu thì sàn từ chối), `optional` gửi được, `unsupported` danh mục
@@ -1015,6 +1017,11 @@ export interface MarketplaceAdapter {
      */
     opts: { reasonId?: string; comment?: string; kind?: 'return' | 'refund'; images?: readonly { name: string; url: string }[] },
   ): Promise<void>;
+  /**
+   * Sàn đòi đủ ảnh cho mọi giá trị của thuộc tính biến thể đã gắn ảnh (#295, Documents/21 §18.5 `variant_images_missing`):
+   * ảnh theo giá trị có một phần thì chặn đẩy trước khi gọi sàn. Không khai là sàn không đòi.
+   */
+  readonly requiresAllVariantImages?: boolean;
   /** Kiểu ảnh sàn nhận làm minh chứng khi từ chối yêu cầu trả (#437); không khai là sàn chưa nhận ảnh qua app. */
   readonly returnImageTypes?: readonly string[];
   /** Báo sàn kho đã nhận hàng trả lúc quét, chưa kiểm hàng (#202, §20.1; Lazada `confirmDelivery`). */
@@ -1164,6 +1171,8 @@ export class MarketplaceError extends Error {
   readonly kind: MarketplaceErrorKind;
   readonly platformCode: string | null;
   readonly platformMessage: string | null;
+  /** `request_id` sàn trả trong phản hồi lỗi (#504): pino ghi cùng `err` ở các dòng log lỗi, đối chiếu ticket với sàn. */
+  requestId: string | null = null;
 
   constructor(kind: MarketplaceErrorKind, platformCode: string | null = null, platformMessage: string | null = null) {
     super(`Sàn trả lỗi ${kind}${platformCode ? ` (${platformCode})` : ''}`);
@@ -1172,6 +1181,20 @@ export class MarketplaceError extends Error {
     this.platformCode = platformCode;
     this.platformMessage = platformMessage;
   }
+}
+
+/** Đọc `request_id` của phản hồi sàn (Lazada, TikTok cùng tên trường); không có thì null. */
+export function platformRequestId(body: object | null | undefined): string | null {
+  const id = (body as { request_id?: unknown } | null | undefined)?.request_id;
+  return typeof id === 'string' && id ? id : typeof id === 'number' ? String(id) : null;
+}
+
+/**
+ * Một dòng log `info` cho mỗi lời gọi **ghi** của sàn (#504), cả khi sàn trả lỗi: đối chiếu ticket, bằng chứng gọi thật
+ * chỉ cần tra log. Không ghi body, token, chữ ký.
+ */
+export function logPlatformWrite(platform: string, path: string, requestId: string | null, code: unknown): void {
+  logger.info({ platform, path, requestId, code: code == null ? null : String(code) }, 'gọi ghi lên sàn');
 }
 
 /**

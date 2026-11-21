@@ -363,11 +363,11 @@ export const PriceQuote = z
     variantId: z.string(),
     listPrice: z.number().nullable(),
     netReceived: z.number().nullable(),
-    belowFloor: z.boolean().nullable(),
+    belowFloor: z.boolean().nullable().meta({ description: 'null khi người gọi thiếu `inventory.cost.view` (R4: dò giá thấp nhất suy ra giá vốn), chưa có giá vốn, hoặc dòng bị chặn' }),
     feeWarning: z.enum(['over_50']).nullable(),
     feeConfigId: z.string().nullable(),
     blocked: z.object({ code: z.enum(['price_missing', 'fee_config_invalid', 'fee_not_configured']) }).nullable(),
-    marginPct: z.number().nullable().optional().meta({ description: 'Chỉ khi người gọi có `inventory.cost.view`' }),
+    marginPct: z.number().nullable().meta({ description: 'null khi người gọi thiếu `inventory.cost.view` (R4) hoặc chưa có giá vốn' }),
   })
   .strict()
   .meta({ id: 'PriceQuote' });
@@ -624,6 +624,21 @@ export const MatchPreview = z
       .nullable()
       .meta({ description: '`shop_waiting_opening`: gian hàng chờ kiểm kê lần đầu; `not_counted`: SKU kho chưa có số, tồn trên sàn giữ nguyên' }),
     priceWillPush: z.boolean(),
+    fillBack: z
+      .array(
+        z
+          .object({
+            field: z.enum(['originCountry', 'brand', 'description', 'weight', 'dimensions', 'platformSpec']),
+            value: z.string().nullable().meta({ description: 'Chữ hiển thị (tên nước, "250 g", "30 × 20 × 5 cm", đường dẫn category); null khi chưa đọc được sàn' }),
+          })
+          .strict(),
+      )
+      .meta({ description: 'Trường app đang trống mà liên kết sẽ điền từ sàn (21 §18.9 R4); `[]` khi không có gì để điền' }),
+    fillBackError: z
+      .object({ code: z.string(), message: z.string() })
+      .strict()
+      .nullable()
+      .meta({ description: 'Không đọc được sản phẩm trên sàn; `fillBack` khi đó liệt kê trường app trống với `value` null, liên kết không bị chặn' }),
   })
   .strict()
   .meta({ id: 'ListingMatchPreview' });

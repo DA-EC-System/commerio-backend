@@ -1,7 +1,14 @@
 import { Decimal } from 'decimal.js';
 import { describe, expect, it } from 'vitest';
 import type { ListingVariant } from '#src/modules/channel/channel/service/product-port.ts';
-import { keepsPlatformContent, pushBlock, pushSpec, type SpecCheck } from '#src/modules/channel/channel/service/push-block.ts';
+import {
+  keepsPlatformContent,
+  pushBlock,
+  pushSpec,
+  type SpecCheck,
+  variantImageGap,
+  variantImageGaps,
+} from '#src/modules/channel/channel/service/push-block.ts';
 
 // Mã chặn size_chart_missing (#347, Documents/21 §18.5).
 const variant: ListingVariant = {
@@ -94,5 +101,45 @@ describe('keepsPlatformContent, pushSpec', () => {
     expect(pushBlock(variant, new Decimal(1), pushSpec(true, bad), true)).toBeNull();
     expect(pushBlock(variant, new Decimal(1), pushSpec(false, undefined), true)?.code).toBe('category_unmapped');
     expect(pushBlock(variant, new Decimal(1), pushSpec(false, bad), true)?.code).toBe('spec_incomplete');
+  });
+});
+
+describe('ảnh theo giá trị có một phần (#295, 21 §18.5 variant_images_missing)', () => {
+  const sku = (id: string, color: [string, string], size: [string, string], image: string | null, archived = false): ListingVariant => ({
+    ...variant,
+    id,
+    archived,
+    attributes: [
+      { attributeId: 'a-color', attributeName: 'Màu sắc', platformKind: 'color', valueId: color[0], value: color[1] },
+      { attributeId: 'a-size', attributeName: 'Kích cỡ', platformKind: 'size', valueId: size[0], value: size[1] },
+    ],
+    image: image ? { attributeValueId: image, url: `https://cdn.test/${image}.png` } : null,
+  });
+
+  it('một màu có ảnh, màu khác (SKU chưa lưu trữ) chưa có: liệt kê giá trị thiếu, không lặp; SKU đã lưu trữ không tính', () => {
+    const vs = [
+      sku('1', ['den', 'Đen'], ['s', 'S'], 'den'),
+      sku('2', ['trang', 'Trắng'], ['s', 'S'], null),
+      sku('3', ['trang', 'Trắng'], ['m', 'M'], null),
+      sku('4', ['xanh', 'Xanh'], ['s', 'S'], null, true),
+    ];
+    expect(variantImageGap(vs)).toEqual({ attributeName: 'Màu sắc', values: ['Trắng'] });
+  });
+
+  it('chưa có ảnh phân loại nào, hoặc đủ ảnh: không chặn', () => {
+    expect(variantImageGap([sku('1', ['den', 'Đen'], ['s', 'S'], null), sku('2', ['trang', 'Trắng'], ['s', 'S'], null)])).toBeNull();
+    expect(variantImageGap([sku('1', ['den', 'Đen'], ['s', 'S'], 'den'), sku('2', ['trang', 'Trắng'], ['m', 'M'], 'trang')])).toBeNull();
+  });
+
+  it('chỉ chặn khi adapter khai requiresAllVariantImages; pushBlock trả mã và câu "thêm ảnh … rồi đăng lại"', () => {
+    const vs = [sku('1', ['den', 'Đen'], ['s', 'S'], 'den'), sku('2', ['trang', 'Trắng'], ['s', 'S'], null)];
+    expect(variantImageGaps({}, vs).size).toBe(0);
+    const gap = variantImageGaps({ requiresAllVariantImages: true }, vs).get('p')!;
+    expect(pushBlock(variant, price, map('optional'), true, false, gap)).toEqual({
+      code: 'variant_images_missing',
+      message: 'Sàn bắt buộc ảnh cho mọi giá trị của Màu sắc: thêm ảnh cho Trắng rồi đăng lại',
+    });
+    // Thiếu ảnh sản phẩm báo trước.
+    expect(pushBlock(variant, price, map('optional'), false, false, gap)).toMatchObject({ code: 'images_missing' });
   });
 });
