@@ -121,7 +121,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/shops/platforms',
     summary: 'Sàn và cách nối trên môi trường này (§18.1, §18.7.3)',
     description:
-      'Cần `channel.shop.view`. Adapter đăng ký theo thứ tự đăng ký, rồi sàn chưa có adapter (`shopee`, `tiktok` tới commerio-backend#217). Adapter đủ cấu hình cho ít nhất một cách nối: `connectable: true`, `reason: null`. Adapter thiếu cấu hình trên môi trường này hoặc sàn chưa có adapter: `connectable: false`, `methods: []`, `reason` cho người đọc. Không trả `mock`, không lộ khoá, URL nội bộ, tên biến môi trường. Danh sách có thể không có mục nào `connectable: true`.',
+      'Cần `channel.shop.view`. Adapter đăng ký theo thứ tự đăng ký, rồi sàn trong danh sách chưa có adapter. Adapter đủ cấu hình cho ít nhất một cách nối: `connectable: true`, `reason: null`. Adapter thiếu cấu hình trên môi trường này hoặc sàn chưa có adapter: `connectable: false`, `methods: []`, `reason` cho người đọc. Không trả `mock`, không lộ khoá, URL nội bộ, tên biến môi trường. Danh sách có thể không có mục nào `connectable: true`.',
     security: bearer,
     responses: { 200: { description: 'Danh sách sàn', ...json(ShopPlatformList) }, ...auth },
   });
@@ -177,7 +177,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/shops/:platform/token',
     summary: 'Nối gian hàng bằng token lấy trên console của sàn',
     description:
-      'Cần `channel.shop.connect`. Dùng cho shop thử (không đi OAuth được). Trả như `callback` (có `shops`; một token có thể ra nhiều gian hàng). Lazada: có `refreshToken` thì làm mới một lần để biết hạn token. `shopId` (Kết nối lại, #398) kiểm như `authorize-url` trước khi gọi sàn: sai dạng hay rỗng thì 422 `errors.shopId`, gian hàng không thuộc công ty hay khác sàn thì 404, đã ngắt vẫn nhận; token của seller khác thì 409 `shop_mismatch` như `callback`, không ghi gian hàng nào; gian hàng mất trước khi ghi thì 404.',
+      'Cần `channel.shop.connect`. Dùng cho shop thử (không đi OAuth được). Trả như `callback` (có `shops`; một token có thể ra nhiều gian hàng). Sàn trả hạn token qua lần làm mới: có `refreshToken` thì làm mới một lần để biết hạn. `shopId` (Kết nối lại, #398) kiểm như `authorize-url` trước khi gọi sàn: sai dạng hay rỗng thì 422 `errors.shopId`, gian hàng không thuộc công ty hay khác sàn thì 404, đã ngắt vẫn nhận; token của seller khác thì 409 `shop_mismatch` như `callback`, không ghi gian hàng nào; gian hàng mất trước khi ghi thì 404.',
     security: bearer,
     request: { params: PlatformParams, body: json(TokenBody) },
     responses: {
@@ -260,7 +260,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/platforms/:platform/categories',
     summary: 'Cây category của sàn (#400)',
     description:
-      'Cần `channel.shop.view`. Đọc từ DB, không gọi sàn. `search` (≥ 2 ký tự): leaf `active` có đường dẫn gần đúng (bỏ dấu, `đ` = `d`), tối đa 50, gần nhất trước; `parentId`: con trực tiếp; không gửi gì: cấp gốc. `shopId` (#448): gian hàng của công ty cùng sàn thì leaf kèm `permission` của gian hàng đó (đọc `shop_category_permissions`, null là chưa kiểm hoặc sàn không có quyền theo gian hàng như Lazada); không gửi thì không có trường `permission`.',
+      'Cần `channel.shop.view`. Đọc từ DB, không gọi sàn. `search` (≥ 2 ký tự): leaf `active` có đường dẫn gần đúng (bỏ dấu, `đ` = `d`), tối đa 50, gần nhất trước; `parentId`: con trực tiếp; không gửi gì: cấp gốc. `shopId` (#448): gian hàng của công ty cùng sàn thì leaf kèm `permission` của gian hàng đó (đọc `shop_category_permissions`, null là chưa kiểm hoặc sàn không có quyền theo gian hàng); không gửi thì không có trường `permission`.',
     security: bearer,
     request: { params: PlatformParams, query: PlatformCategoriesQuery },
     responses: {
@@ -275,7 +275,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/platforms/:platform/categories/sync',
     summary: 'Đồng bộ ngay cây category của sàn (#400)',
     description:
-      'Cần `channel.shop.sync`. Xếp một lượt `channel.category_sync` (cùng việc chạy mỗi đêm) rồi trả 202; đã có lượt chờ thì `queued: false`. Category sàn bỏ thì `status = removed`, spec trỏ tới sang `categoryStatus = removed`. TikTok mượn token gian hàng `active` nối sớm nhất trên sàn; không có thì lượt bỏ qua. Sàn trả cây thiếu quá ngưỡng (từ 100 node đang dùng, bỏ hơn 5%) thì lượt không ghi gì, log `error` kèm số node sắp bỏ và tổng node; quản trị nền tảng (`is_platform_admin`) gửi `allowShrink: true` để lượt đó vẫn ghi (khoá lượt chờ riêng, không gộp vào lượt thường).',
+      'Cần `channel.shop.sync`. Xếp một lượt `channel.category_sync` (cùng việc chạy mỗi đêm) rồi trả 202; đã có lượt chờ thì `queued: false`. Category sàn bỏ thì `status = removed`, spec trỏ tới sang `categoryStatus = removed`. Sàn cần token để đọc cây thì mượn token gian hàng `active` nối sớm nhất trên sàn; không có thì lượt bỏ qua. Sàn trả cây thiếu quá ngưỡng (từ 100 node đang dùng, bỏ hơn 5%) thì lượt không ghi gì, log `error` kèm số node sắp bỏ và tổng node; quản trị nền tảng (`is_platform_admin`) gửi `allowShrink: true` để lượt đó vẫn ghi (khoá lượt chờ riêng, không gộp vào lượt thường).',
     security: bearer,
     request: { params: PlatformParams, body: { required: false, content: { 'application/json': { schema: CategorySyncBody } } } },
     responses: {
@@ -290,7 +290,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/platforms/:platform/categories/:externalId',
     summary: 'Chi tiết một leaf: attribute, luật bảng kích cỡ, sản phẩm đang dùng (#400)',
     description:
-      'Cần `channel.shop.view`. Attribute đọc từ bảng; chưa có hoặc quá 7 ngày thì gọi sàn (Lazada không cần token; TikTok bằng token gian hàng `shopId`, không gửi thì gian hàng `active` đầu tiên của công ty) rồi ghi bảng. Sàn lỗi hoặc không có gian hàng mà bảng còn bản cũ: trả bản cũ, `stale: true`.',
+      'Cần `channel.shop.view`. Attribute đọc từ bảng; chưa có hoặc quá 7 ngày thì gọi sàn (sàn cần token thì dùng token gian hàng `shopId`, không gửi thì gian hàng `active` đầu tiên của công ty) rồi ghi bảng. Sàn lỗi hoặc không có gian hàng mà bảng còn bản cũ: trả bản cũ, `stale: true`.',
     security: bearer,
     request: { params: PlatformLeafParams, query: LeafDetailQuery },
     responses: {
@@ -307,9 +307,9 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
   registry.registerPath({
     method: 'get',
     path: '/platforms/:platform/categories/:externalId/cascade',
-    summary: 'Giá trị cấp kế của attribute cascade (Lazada propCascade) (#400)',
+    summary: 'Giá trị cấp kế của attribute cascade (#400)',
     description:
-      'Cần `channel.listing.manage`. Gọi sàn (Lazada GetNextCascadeProp), không lưu. Cần token gian hàng Lazada: `shopId`, không gửi thì gian hàng `active` đầu tiên. `path` là các cấp đã chọn theo định dạng `path` của sàn; `leaf = true` là cấp cuối, spec lưu `path` tới cấp đó.',
+      'Cần `channel.listing.manage`. Gọi sàn, không lưu. Cần token gian hàng: `shopId`, không gửi thì gian hàng `active` đầu tiên. `path` là các cấp đã chọn theo định dạng `path` của sàn; `leaf = true` là cấp cuối, spec lưu `path` tới cấp đó.',
     security: bearer,
     request: { params: PlatformLeafParams, query: CascadeQuery },
     responses: {
@@ -326,7 +326,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/shops/:id/warehouses',
     summary: 'Kho của gian hàng trên sàn (#430)',
     description:
-      'Cần `channel.shop.view`. Gọi sàn mỗi lần (Lazada GetWarehouseBySellerId `/rc/warehouse/get`). MVP một kho: app chỉ quản kho mặc định (`managed`), kho khác người bán dùng việc riêng, app không đọc tồn, không đẩy tồn, không nhận món xuất từ đó. Không có ô chọn kho. Sàn chỉ có một kho bán (TikTok) thì `items: []`.',
+      'Cần `channel.shop.view`. Gọi sàn mỗi lần. MVP một kho: app chỉ quản kho mặc định (`managed`), kho khác người bán dùng việc riêng, app không đọc tồn, không đẩy tồn, không nhận món xuất từ đó. Không có ô chọn kho. Sàn chỉ có một kho bán thì `items: []`.',
     security: bearer,
     request: { params: ShopParams },
     responses: {
@@ -342,7 +342,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/shops/:id/category-suggestions',
     summary: 'Gợi ý category của sàn cho một sản phẩm (#400)',
     description:
-      'Cần `channel.listing.manage`. Gọi sàn bằng token gian hàng theo tên và ảnh đầu của sản phẩm: Lazada GetCategorySuggestion (tối đa 5, đúng thứ tự sàn; `701` → `items: []`, `permission: null`), TikTok Recommend Category (1 leaf kèm `permission` của gian hàng, ghi vào `shop_category_permissions`). `path` lấy từ cây đã đồng bộ khi có, không thì đường dẫn sàn trả. Sàn `unavailable` thì gọi lại một lần. Chưa có cache: `cached` luôn false. `group` (category của sản phẩm cùng nhóm hàng) và `recent` (công ty dùng gần đây) đọc từ DB, luôn trả (#448). Không gọi được sàn thì 200 `items: []` kèm `suggestError` (`product_name_too_short` kèm `min`, `images_missing`, `marketplace_unavailable`), hai lỗi đầu không gọi sàn; TikTok gửi thêm mô tả sản phẩm.',
+      'Cần `channel.listing.manage`. Gọi sàn bằng token gian hàng theo tên và ảnh đầu của sản phẩm: sàn trả tối đa 5 gợi ý theo thứ tự của sàn; sàn có quyền category theo gian hàng thì kèm `permission` và ghi vào `shop_category_permissions`, không thì `permission: null`. `path` lấy từ cây đã đồng bộ khi có, không thì đường dẫn sàn trả. Sàn `unavailable` thì gọi lại một lần. Chưa có cache: `cached` luôn false. `group` (category của sản phẩm cùng nhóm hàng) và `recent` (công ty dùng gần đây) đọc từ DB, luôn trả (#448). Không gọi được sàn thì 200 `items: []` kèm `suggestError` (`product_name_too_short` kèm `min`, `images_missing`, `marketplace_unavailable`), hai lỗi đầu không gọi sàn; adapter có thể gửi thêm mô tả sản phẩm.',
     security: bearer,
     request: { params: ShopParams, query: CategorySuggestionsQuery },
     responses: {
@@ -373,14 +373,14 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/products/:productId/specs/:platform',
     summary: 'Lưu thông tin sàn của sản phẩm (#400)',
     description:
-      'Cần `channel.listing.manage`. Attribute của leaf chưa có hoặc quá 7 ngày thì lấy từ sàn trước khi kiểm (TikTok bằng gian hàng `active` đầu tiên). `attributes` là toàn bộ tập ghi đè (#509): khoá không gửi hoặc rỗng là không ghi đè; giá trị trùng giá trị catalog, hồ sơ công ty, mặc định sàn thì không lưu; ghi đè được mọi attribute không phải sales, kể cả thương hiệu, xuất xứ. Bắt buộc kiểm trên giá trị sau khi áp ghi đè. Ghi nhật ký.',
+      'Cần `channel.listing.manage`. Attribute của leaf chưa có hoặc quá 7 ngày thì lấy từ sàn trước khi kiểm (sàn cần token thì dùng gian hàng `active` đầu tiên). `attributes` là toàn bộ tập ghi đè (#509): khoá không gửi hoặc rỗng là không ghi đè; giá trị trùng giá trị catalog, hồ sơ công ty, mặc định sàn thì không lưu; ghi đè được mọi attribute không phải sales, kể cả thương hiệu, xuất xứ. Bắt buộc kiểm trên giá trị sau khi áp ghi đè. Ghi nhật ký.',
     security: bearer,
     request: { params: ProductSpecParams, body: { content: { 'application/json': { schema: ProductSpecBody } } } },
     responses: {
       200: { description: 'Spec đã lưu', ...json(ProductSpecView) },
       ...auth,
       404: problemResponse('`not_found`'),
-      409: problemResponse('`version_conflict` kèm `current`; `shop_not_connected`: TikTok chưa có gian hàng `active` và chưa có bản attribute nào'),
+      409: problemResponse('`version_conflict` kèm `current`; `shop_not_connected`: sàn cần token mà chưa có gian hàng `active` và chưa có bản attribute nào'),
       422: problemResponse('`validation_failed` kèm `errors` theo ô (`externalCategoryId`, `attributes.<code>`, `axisMap.<attributeId>` kể cả `__custom` ở sàn không nhận tên trục tự đặt, `valueMap.<id>`); `marketplace_unsupported`'),
       503: problemResponse('`marketplace_unavailable`: sàn lỗi khi chưa có bản attribute nào'),
     },
@@ -458,7 +458,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/products/:productId/specs/:platform/apply-category',
     summary: 'Đổi category của sản phẩm trên sàn theo spec (commerio-backend#467)',
     description:
-      'Cần `channel.listing.manage`; nhóm sẽ xếp có listing `contentSource = platform` (sản phẩm người bán tự đăng) thì cần thêm vai trò CEO, không thì 403 `forbidden`. Chọn listing `live`, `hidden` của sản phẩm trên mọi gian hàng của sàn, có `externalProductId`, `externalCategoryId` khác category của spec; mỗi (gian hàng, sản phẩm sàn) một việc nền `channel.category_apply`, không gọi sàn trong request. Listing được xếp có `categoryChange.status = queued`. Việc nền chỉ đổi category và attribute (TikTok: Edit Product dựng từ Get Product), bảng size của app chỉ gửi khi sản phẩm trên sàn chưa có mà category mới bắt buộc. Sản phẩm đang tắt thì tắt lại sau Edit Product (sàn bật lại khi sửa).',
+      'Cần `channel.listing.manage`; nhóm sẽ xếp có listing `contentSource = platform` (sản phẩm người bán tự đăng) thì cần thêm vai trò CEO, không thì 403 `forbidden`. Chọn listing `live`, `hidden` của sản phẩm trên mọi gian hàng của sàn, có `externalProductId`, `externalCategoryId` khác category của spec; mỗi (gian hàng, sản phẩm sàn) một việc nền `channel.category_apply`, không gọi sàn trong request. Listing được xếp có `categoryChange.status = queued`. Việc nền chỉ đổi category và attribute (adapter dựng bản sửa từ bản đọc lại trên sàn), bảng size của app chỉ gửi khi sản phẩm trên sàn chưa có mà category mới bắt buộc. Sản phẩm đang tắt thì tắt lại sau Edit Product (sàn bật lại khi sửa).',
     security: bearer,
     request: { params: ProductSpecParams, body: { content: { 'application/json': { schema: ApplyCategoryBody } } } },
     responses: {
@@ -597,7 +597,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/shops/:id/setup',
     summary: 'Gợi ý ghép listing có sẵn khi thiết lập lần đầu (§18.2)',
     description:
-      'Cần `channel.shop.connect`. Mọi SKU người bán trên sàn (sàn chưa đọc được cả gian hàng thì chỉ SKU trùng SKU Commerio), mỗi dòng `match` `sku` / `name` (tên giống từ 0.4 theo pg_trgm, kèm `score`) / `none`; biến thể lưu trữ hay đã có listing ở gian hàng không được gợi ý; SKU sàn trùng tiêu đề với SKU khác (một sản phẩm nhiều SKU) hoặc không có SKU người bán không được gợi ý theo tên (21 §18.7.5). `proposedCutoffAt`, `firstShopOfCompany` (§18.6.2). Gian hàng không ở `connecting`: 409 `invalid_transition`. Gian hàng quá 10000 sản phẩm (Lazada): 409 `marketplace_rejected` `too_many_products`.',
+      'Cần `channel.shop.connect`. Mọi SKU người bán trên sàn (sàn chưa đọc được cả gian hàng thì chỉ SKU trùng SKU Commerio), mỗi dòng `match` `sku` / `name` (tên giống từ 0.4 theo pg_trgm, kèm `score`) / `none`; biến thể lưu trữ hay đã có listing ở gian hàng không được gợi ý; SKU sàn trùng tiêu đề với SKU khác (một sản phẩm nhiều SKU) hoặc không có SKU người bán không được gợi ý theo tên (21 §18.7.5). `proposedCutoffAt`, `firstShopOfCompany` (§18.6.2). Gian hàng không ở `connecting`: 409 `invalid_transition`. Gian hàng vượt giới hạn đọc của sàn: 409 `marketplace_rejected` `too_many_products`.',
     security: bearer,
     request: { params: ShopParams },
     responses: { 200: { description: 'Gợi ý', ...json(ShopSetupPreview) }, ...onShop },
@@ -716,7 +716,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/shops/:id/listings/:listingId/outside-change/:action',
     summary: 'CEO quyết listing bị sàn đổi ngoài app (#360, 21 §18.3)',
     description:
-      'Cần `channel.listing.manage` và vai trò CEO (người khác: 403 `forbidden`). `restore`: sàn đã bán lại thì không gọi bật, không thì bật SKU trên sàn; `hidden → live`, xoá `outsideChange`, đẩy lại tồn và giá của app. Sàn tắt theo cả sản phẩm (TikTok): quyết cho mọi listing `disabled` cùng sản phẩm, listing còn ẩn được đẩy tồn 0 trước khi bật sản phẩm (sàn duyệt lại); đẩy 0 lỗi thì 409 `marketplace_rejected`, không bật. Sàn chưa hỗ trợ bật từ app: 422 `marketplace_unsupported`. SKU đang tạm ngừng: chỉ xoá `outsideChange`, listing giữ `hidden`. `accept-price` chỉ với `outsideChange.kind = price_changed`, chỉ listing được bấm: giá sàn thành giá ghi đè tay (`priceSource = override`), bật SKU, `hidden → live`, không đẩy giá; giá sàn dưới giá thấp nhất trả 422 `below_floor`. Gỡ dùng route `delist`.',
+      'Cần `channel.listing.manage` và vai trò CEO (người khác: 403 `forbidden`). `restore`: sàn đã bán lại thì không gọi bật, không thì bật SKU trên sàn; `hidden → live`, xoá `outsideChange`, đẩy lại tồn và giá của app. Sàn tắt theo cả sản phẩm: quyết cho mọi listing `disabled` cùng sản phẩm, listing còn ẩn được đẩy tồn 0 trước khi bật sản phẩm (sàn duyệt lại); đẩy 0 lỗi thì 409 `marketplace_rejected`, không bật. Sàn chưa hỗ trợ bật từ app: 422 `marketplace_unsupported`. SKU đang tạm ngừng: chỉ xoá `outsideChange`, listing giữ `hidden`. `accept-price` chỉ với `outsideChange.kind = price_changed`, chỉ listing được bấm: giá sàn thành giá ghi đè tay (`priceSource = override`), bật SKU, `hidden → live`, không đẩy giá; giá sàn dưới giá thấp nhất trả 422 `below_floor`. Gỡ dùng route `delist`.',
     security: bearer,
     request: { params: OutsideChangeParams, body: json(OutsideChangeBody) },
     responses: {
@@ -769,7 +769,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     summary: 'Đưa nội dung mới của sản phẩm lên listing đang bán (§18.3, #293)',
     description:
       'Cần `channel.listing.manage`. Tên, mô tả, thuộc tính bắt buộc dựng từ catalog như lúc đẩy; không đổi ảnh, SKU, giá, tồn. ' +
-      'Sàn vẫn bán bản cũ trong lúc duyệt (TikTok) thì giữ `live` kèm `pendingRevision.status = auditing`; sàn ngừng bán để ' +
+      'Sàn vẫn bán bản cũ trong lúc duyệt thì giữ `live` kèm `pendingRevision.status = auditing`; sàn ngừng bán để ' +
       'duyệt thì `under_review` (hệ thống `request_review`). Đồng bộ 15 phút xoá bản sửa khi qua duyệt, ghi `failed` khi trượt.',
     security: bearer,
     request: { params: UpdateContentParams, body: json(UpdateContentBody) },

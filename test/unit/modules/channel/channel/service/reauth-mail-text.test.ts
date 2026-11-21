@@ -5,7 +5,7 @@ const shopId = '11111111-2222-4333-8444-555555555555';
 const base = {
   shopId,
   shopName: 'Shop Áo\nThun',
-  platform: 'lazada',
+  platformName: 'Lazada',
   authDeadline: new Date('2026-11-14T17:30:00.000Z'),
   lostAt: null,
   webUrl: 'https://app.example.test/',
