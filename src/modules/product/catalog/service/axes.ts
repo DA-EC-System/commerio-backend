@@ -64,7 +64,8 @@ export async function checkAxes(axes: readonly AxisInput[]): Promise<{ errors: R
 
 /**
  * Bước ghi, sau `checkAxes` không lỗi và trong cùng giao dịch: tạo thuộc tính tên mới, giá trị mới (giá trị trùng
- * `lower(value)` với giá trị có sẵn thì dùng lại), mã giá trị không trùng mã đang có (`uniqueValueCode`, B1).
+ * `lower(value)` với giá trị có sẵn thì dùng lại), mã giá trị không trùng mã đang có (`uniqueValueCode`, B1). Thuộc
+ * tính nền tảng: giá trị trùng dòng nền tảng dùng dòng nền tảng, giá trị mới là dòng của công ty (Documents/21 mục 5.6).
  */
 export async function createAxes(companyId: string, axes: readonly AxisInput[], found: readonly (AttributeRow | null)[]): Promise<ResolvedAxis[]> {
   const result: ResolvedAxis[] = [];
@@ -79,10 +80,10 @@ export async function createAxes(companyId: string, axes: readonly AxisInput[], 
       codes.add(code);
       fresh.push({ value: v.value.trim(), code });
     }
-    for (const row of await insertValues(companyId, attr.id, fresh)) existing.set(key(row.value), { ...row, inUse: false });
+    for (const row of await insertValues(companyId, attr.id, fresh)) existing.set(key(row.value), { ...row, companyId, inUse: false });
     // Thuộc tính có sẵn vừa có thêm giá trị: tăng `version` để form sửa thuộc tính đang mở nhận 409 thay vì xoá mất
-    // giá trị vừa thêm (PUT xoá giá trị vắng mặt).
-    if (fresh.length && found[i]) await bumpAttributeVersion(attr.id);
+    // giá trị vừa thêm (PUT xoá giá trị vắng mặt). Thuộc tính nền tảng không có form sửa (giá trị mới là của công ty).
+    if (fresh.length && found[i] && attr.companyId !== null) await bumpAttributeVersion(attr.id);
     const byId = new Map(attr.values.map((v) => [v.id, v]));
     const values = new Map(
       axis.values.map((v) => {

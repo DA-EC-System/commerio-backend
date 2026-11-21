@@ -3,7 +3,33 @@
 <!-- Sinh tự động bởi `npm run db:docs` từ db/migrations. Không sửa tay. -->
 
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
-Mới nhất: **V132**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+Mới nhất: **V135**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+
+## V135 · 21/11/2026 · du-lieu-chung-chuyen
+
+`db/migrations/20261121032708_du-lieu-chung-chuyen.sql` · viết tay
+
+- viết tay: quyền, khoá ngoại, dữ liệu
+- Dữ liệu chuẩn hai tầng (#521, Documents/21 mục 5.6 "Migration", 19 mục 2): ghi dòng nền tảng (12 nhóm, 76 thông số, mẫu, trục, 4 thuộc tính chuẩn), gộp bản sao của từng công ty vào dòng nền tảng, chuyển mọi tham chiếu, xoá bản sao.
+
+## V134 · 21/11/2026 · du-lieu-chung-rls
+
+`db/migrations/20261121032412_du-lieu-chung-rls.sql` · viết tay
+
+- viết tay: RLS
+- Dữ liệu chuẩn hai tầng (#521, Documents/19 mục 2 "Dữ liệu chuẩn hai tầng", 21 mục 5.6).
+
+## V133 · 21/11/2026 · du-lieu-chung
+
+`db/migrations/20261121032353_du-lieu-chung.sql` · sinh từ schema
+
+- + bảng `product.company_group_settings`
+- `product.attribute_values`: đổi cột `company_id` (thành null); − unique `attribute_values_attribute_id_code_unique`; + index `attribute_values_platform_lower_value_uq`, `attribute_values_platform_code_uq`, `attribute_values_company_lower_value_uq`, `attribute_values_company_code_uq`; − index `attribute_values_attribute_lower_value_uq`
+- `product.attributes`: đổi cột `company_id` (thành null); + index `attributes_platform_lower_name_uq`, `attributes_platform_kind_uq`; − index `attributes_company_platform_kind_uq`; đổi index `attributes_company_lower_name_uq`
+- `product.group_spec_fields`: + cột `id`; đổi cột `company_id` (thành null); − khoá chính `group_spec_fields_group_id_field_id_pk`; + unique `group_spec_fields_group_field_company_uq`
+- `product.product_groups`: đổi cột `company_id` (thành null); + index `product_groups_platform_lower_name_uq`; đổi index `product_groups_company_lower_name_uq`
+- `product.spec_field_options`: đổi cột `company_id` (thành null); + index `spec_field_options_platform_lower_value_uq`, `spec_field_options_company_lower_value_uq`; − index `spec_field_options_field_lower_value_uq`
+- `product.spec_fields`: đổi cột `company_id` (thành null); − unique `spec_fields_company_code_uq`; + index `spec_fields_platform_code_uq`, `spec_fields_platform_lower_name_uq`, `spec_fields_company_code_uq`; đổi index `spec_fields_company_lower_name_uq`
 
 ## V132 · 21/11/2026 · san-pham-san-du-lieu
 

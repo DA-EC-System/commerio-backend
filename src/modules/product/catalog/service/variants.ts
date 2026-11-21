@@ -60,7 +60,16 @@ export interface VariantSummary {
   /** Ảnh phân loại theo giá trị của SKU ở thuộc tính gắn ảnh (#340); `url` rỗng khi thiếu `S3_PUBLIC_URL`. */
   image: VariantImage | null;
   // `platformKind`: loại thuộc tính chuẩn sàn của trục (#510), channel ghép sales attribute theo loại.
-  attributes: { attributeId: string; attributeName: string; platformKind: PlatformKind | null; valueId: string; value: string; code: string }[];
+  attributes: {
+    attributeId: string;
+    attributeName: string;
+    platformKind: PlatformKind | null;
+    scope: 'platform' | 'company';
+    valueScope: 'platform' | 'company';
+    valueId: string;
+    value: string;
+    code: string;
+  }[];
 }
 
 /**

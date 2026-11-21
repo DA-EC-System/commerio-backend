@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, ilike, inArray, isNull, or, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
-import { productGroups, productVariants, products } from './schema.ts';
+import { companyGroupSettings, productGroups, productVariants, products } from './schema.ts';
+import { effectiveSuggest, settingsJoin } from './groups.ts';
 
 // Mọi hàm chạy trong `withCompany` của service.
 
@@ -47,15 +48,12 @@ export async function findBulkVariants(filter: BulkFilter) {
       productName: products.name,
       groupId: productGroups.id,
       groupName: productGroups.name,
-      marginCoefficient: productGroups.marginCoefficient,
-      priceRounding: productGroups.priceRounding,
-      reorderLeadDays: productGroups.reorderLeadDays,
-      reorderSafetyQty: productGroups.reorderSafetyQty,
-      reorderDefaultQty: productGroups.reorderDefaultQty,
+      ...effectiveSuggest,
     })
     .from(productVariants)
     .innerJoin(products, eq(products.id, productVariants.productId))
     .innerJoin(productGroups, eq(productGroups.id, products.groupId))
+    .leftJoin(companyGroupSettings, settingsJoin)
     .where(where)
     .orderBy(asc(products.name), asc(productVariants.createdAt), asc(productVariants.sku))
     .limit(filter.pageSize)

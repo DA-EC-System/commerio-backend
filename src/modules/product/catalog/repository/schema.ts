@@ -43,15 +43,17 @@ function suggestChecks(table: string, t: SuggestColumns) {
   ];
 }
 
+// Hai tầng (dữ liệu chung, Documents/19 D12): `company_id` NULL là dòng nền tảng, đọc chung mọi công ty, chỉ migration ghi;
+// có giá trị là dòng của công ty. RLS `tier_*` ở migration `*_du-lieu-chung-rls`. Trùng khác tầng do service chặn.
 /**
  * Nhóm hàng (Documents/19 D11, 21 mục 5.2): một cấp, không gắn sàn, không gắn SKU. Tên không trùng theo chữ thường trong
- * công ty. Gợi ý `null` thì theo cài đặt công ty.
+ * tầng. Gợi ý `null` thì theo cài đặt công ty; nhóm nền tảng không mang gợi ý (gợi ý theo công ty ở `company_group_settings`).
  */
 export const productGroups = catalogSchema.table(
   'product_groups',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    companyId: uuid('company_id').notNull(),
+    companyId: uuid('company_id'),
     name: text('name').notNull(),
     ...suggestColumns,
     // Trục phân loại chuẩn của nhóm (thông số sản phẩm, Documents/19 §3.2, 21 §5.5): form tạo sản phẩm chọn sẵn, người
@@ -63,7 +65,8 @@ export const productGroups = catalogSchema.table(
     ...version,
   },
   (t) => [
-    uniqueIndex('product_groups_company_lower_name_uq').on(t.companyId, sql`lower(${t.name})`),
+    uniqueIndex('product_groups_platform_lower_name_uq').on(sql`lower(${t.name})`).where(sql`${t.companyId} is null`),
+    uniqueIndex('product_groups_company_lower_name_uq').on(t.companyId, sql`lower(${t.name})`).where(sql`${t.companyId} is not null`),
     ...suggestChecks('product_groups', t),
     check('product_groups_axis_order', sql`${t.axis2AttributeId} is null or ${t.axis1AttributeId} is not null`),
     check('product_groups_axis_distinct', sql`${t.axis1AttributeId} <> ${t.axis2AttributeId}`),
@@ -88,34 +91,61 @@ export const companyProductSettings = catalogSchema.table(
   (t) => [check('company_product_settings_sku_next_seq', sql`${t.skuNextSeq} >= 1`), ...suggestChecks('company_product_settings', t)],
 );
 
+/**
+ * Cài đặt của một công ty trên nhóm nền tảng (dữ liệu chung, Documents/19 D12): ẩn nhóm không bán, gợi ý giá và ngưỡng
+ * tồn riêng. Chỉ cho nhóm nền tảng (service kiểm); nhóm của công ty giữ gợi ý ở `product_groups`. Chưa có dòng là không
+ * ẩn, gợi ý trống, `version` 0 (API). RLS `company_isolation` ở `*_du-lieu-chung-rls`.
+ */
+export const companyGroupSettings = catalogSchema.table(
+  'company_group_settings',
+  {
+    companyId: uuid('company_id').notNull(),
+    groupId: uuid('group_id')
+      .notNull()
+      .references(() => productGroups.id, { onDelete: 'cascade' }),
+    hidden: boolean('hidden').notNull().default(false),
+    ...suggestColumns,
+    ...timestamps,
+    ...version,
+  },
+  (t) => [primaryKey({ columns: [t.companyId, t.groupId] }), index().on(t.groupId), ...suggestChecks('company_group_settings', t)],
+);
+
 export { PLATFORM_KINDS, type PlatformKind } from '../domain/specs.ts';
 
+/** Thuộc tính (trục phân loại), hai tầng: Màu sắc, Kích cỡ, Dung tích, Hương vị là dòng nền tảng. */
 export const attributes = catalogSchema.table(
   'attributes',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    companyId: uuid('company_id').notNull(),
+    companyId: uuid('company_id'),
     name: text('name').notNull(),
-    // Thuộc tính chuẩn sàn, do hệ thống gắn khi lập công ty; API chỉ đọc.
+    // Thuộc tính chuẩn sàn: chỉ dòng nền tảng mang (CHECK), mỗi loại một dòng; API chỉ đọc.
     platformKind: text('platform_kind', { enum: PLATFORM_KINDS }),
     ...timestamps,
     ...version,
   },
   (t) => [
-    uniqueIndex('attributes_company_lower_name_uq').on(t.companyId, sql`lower(${t.name})`),
-    uniqueIndex('attributes_company_platform_kind_uq').on(t.companyId, t.platformKind).where(sql`${t.platformKind} is not null`),
+    uniqueIndex('attributes_platform_lower_name_uq').on(sql`lower(${t.name})`).where(sql`${t.companyId} is null`),
+    uniqueIndex('attributes_company_lower_name_uq').on(t.companyId, sql`lower(${t.name})`).where(sql`${t.companyId} is not null`),
+    uniqueIndex('attributes_platform_kind_uq').on(t.platformKind).where(sql`${t.companyId} is null and ${t.platformKind} is not null`),
     check('attributes_platform_kind', sql`${t.platformKind} in ('color', 'size', 'volume', 'flavor')`),
+    // CHECK `attributes_platform_kind_tier` (platform_kind chỉ ở dòng nền tảng) thêm ở migration viết tay
+    // `du-lieu-chung-chuyen`, sau khi gộp thuộc tính chuẩn của từng công ty vào dòng nền tảng.
     // Tên trục tối đa 15 ký tự (Lazada `VARIATION_*`, Documents/21 mục 5.2).
     check('attributes_name_length', sql`char_length(${t.name}) <= 15`),
   ],
 );
 
-/** Giá trị thuộc tính; `code` là phần ghép vào {VAL} của SKU (19-D27, D36). */
+/**
+ * Giá trị thuộc tính; `code` là phần ghép vào {VAL} của SKU (19-D27, D36). Hai tầng: công ty thêm giá trị riêng vào
+ * thuộc tính nền tảng (dòng có `company_id`); giá trị và mã không trùng giá trị nền tảng cùng thuộc tính (service).
+ */
 export const attributeValues = catalogSchema.table(
   'attribute_values',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    companyId: uuid('company_id').notNull(),
+    companyId: uuid('company_id'),
     attributeId: uuid('attribute_id')
       .notNull()
       .references(() => attributes.id),
@@ -125,8 +155,12 @@ export const attributeValues = catalogSchema.table(
     ...version,
   },
   (t) => [
-    uniqueIndex('attribute_values_attribute_lower_value_uq').on(t.attributeId, sql`lower(${t.value})`),
-    unique().on(t.attributeId, t.code),
+    uniqueIndex('attribute_values_platform_lower_value_uq').on(t.attributeId, sql`lower(${t.value})`).where(sql`${t.companyId} is null`),
+    uniqueIndex('attribute_values_platform_code_uq').on(t.attributeId, t.code).where(sql`${t.companyId} is null`),
+    uniqueIndex('attribute_values_company_lower_value_uq')
+      .on(t.companyId, t.attributeId, sql`lower(${t.value})`)
+      .where(sql`${t.companyId} is not null`),
+    uniqueIndex('attribute_values_company_code_uq').on(t.companyId, t.attributeId, t.code).where(sql`${t.companyId} is not null`),
     // Đích của khoá ngoại ghép `pavi_value_fk` (#340, migration `*_anh-phan-loai-rls`).
     unique('attribute_values_id_attribute_uq').on(t.id, t.attributeId),
     check('attribute_values_code_format', sql`${t.code} ~ '^[A-Z0-9]{1,6}$'`),
@@ -298,7 +332,7 @@ export const specFields = catalogSchema.table(
   'spec_fields',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    companyId: uuid('company_id').notNull(),
+    companyId: uuid('company_id'),
     code: text('code').notNull(),
     name: text('name').notNull(),
     input: text('input', { enum: SPEC_INPUTS }).notNull(),
@@ -309,8 +343,10 @@ export const specFields = catalogSchema.table(
     ...version,
   },
   (t) => [
-    unique('spec_fields_company_code_uq').on(t.companyId, t.code),
-    uniqueIndex('spec_fields_company_lower_name_uq').on(t.companyId, sql`lower(${t.name})`),
+    uniqueIndex('spec_fields_platform_code_uq').on(t.code).where(sql`${t.companyId} is null`),
+    uniqueIndex('spec_fields_platform_lower_name_uq').on(sql`lower(${t.name})`).where(sql`${t.companyId} is null`),
+    uniqueIndex('spec_fields_company_code_uq').on(t.companyId, t.code).where(sql`${t.companyId} is not null`),
+    uniqueIndex('spec_fields_company_lower_name_uq').on(t.companyId, sql`lower(${t.name})`).where(sql`${t.companyId} is not null`),
     check('spec_fields_input', sql`${t.input} in ('select', 'multiselect', 'text', 'number', 'date')`),
     check('spec_fields_code_format', sql`${t.code} ~ '^[a-z0-9_]{1,40}$'`),
     check('spec_fields_name_length', sql`char_length(${t.name}) between 1 and 40`),
@@ -326,7 +362,8 @@ export const specFieldOptions = catalogSchema.table(
   'spec_field_options',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    companyId: uuid('company_id').notNull(),
+    // Hai tầng: công ty thêm lựa chọn riêng vào thông số nền tảng (chốt 4).
+    companyId: uuid('company_id'),
     fieldId: uuid('field_id')
       .notNull()
       .references(() => specFields.id, { onDelete: 'cascade' }),
@@ -336,7 +373,10 @@ export const specFieldOptions = catalogSchema.table(
     ...version,
   },
   (t) => [
-    uniqueIndex('spec_field_options_field_lower_value_uq').on(t.fieldId, sql`lower(${t.value})`),
+    uniqueIndex('spec_field_options_platform_lower_value_uq').on(t.fieldId, sql`lower(${t.value})`).where(sql`${t.companyId} is null`),
+    uniqueIndex('spec_field_options_company_lower_value_uq')
+      .on(t.companyId, t.fieldId, sql`lower(${t.value})`)
+      .where(sql`${t.companyId} is not null`),
     unique('spec_field_options_id_field_uq').on(t.id, t.fieldId),
     check('spec_field_options_value_length', sql`char_length(${t.value}) between 1 and 60`),
     check('spec_field_options_position', sql`${t.position} >= 0`),
@@ -350,7 +390,9 @@ export const specFieldOptions = catalogSchema.table(
 export const groupSpecFields = catalogSchema.table(
   'group_spec_fields',
   {
-    companyId: uuid('company_id').notNull(),
+    id: uuid('id').primaryKey().defaultRandom(),
+    // Hai tầng: dòng nền tảng là mẫu chuẩn; dòng công ty trên nhóm nền tảng là phần công ty thêm (chốt 1).
+    companyId: uuid('company_id'),
     groupId: uuid('group_id')
       .notNull()
       .references(() => productGroups.id, { onDelete: 'cascade' }),
@@ -362,7 +404,8 @@ export const groupSpecFields = catalogSchema.table(
     ...timestamps,
   },
   (t) => [
-    primaryKey({ columns: [t.groupId, t.fieldId] }),
+    // Documents/19 §3.2: một dòng mỗi (nhóm, thông số, tầng); dòng công ty trùng thông số của mẫu nền tảng: service 422.
+    unique('group_spec_fields_group_field_company_uq').on(t.groupId, t.fieldId, t.companyId).nullsNotDistinct(),
     index().on(t.fieldId),
     check('group_spec_fields_position', sql`${t.position} >= 0`),
   ],

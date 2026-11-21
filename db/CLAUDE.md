@@ -66,7 +66,7 @@ Ba thứ **sinh tự động, không sửa tay** (`npm run db:docs`; `db:generat
 
 ## Row-Level Security
 
-Bảng thuộc công ty có `company_id` và chính sách `company_isolation`: chỉ thấy dòng có `company_id = current_setting('app.company_id')`.
+Bảng thuộc công ty có `company_id` và chính sách `company_isolation`: chỉ thấy dòng có `company_id = current_setting('app.company_id')`. Ngoại lệ là bảng dữ liệu chuẩn hai tầng (#521, `Documents/19` mục 2): `product.product_groups`, `attributes`, `attribute_values`, `spec_fields`, `spec_field_options`, `group_spec_fields` dùng bốn policy `tier_read` (SELECT: `company_id IS NULL OR = app.company_id`), `tier_insert`, `tier_update`, `tier_delete` (chỉ `= app.company_id`) ở `*_du-lieu-chung-rls`; dòng `company_id` NULL là của nền tảng, `commerio_app` không ghi được, chỉ migration đổi. `test/integration/shared/rls-coverage.test.ts` liệt kê ở `TIER_TABLES`.
 
 - **Request trong một công ty:** transaction chạy `SET LOCAL ROLE commerio_app` và `set_config('app.company_id', <id>, true)`. Role này không phải chủ bảng nên RLS có hiệu lực; chưa đặt `app.company_id` thì không thấy dòng nào.
 - **Luồng không thuộc công ty nào** (đăng ký, đăng nhập, chọn công ty, quản trị nền tảng, worker): chạy bằng role đăng nhập, là chủ bảng nên bỏ qua RLS. Vì vậy không bật `FORCE ROW LEVEL SECURITY`.

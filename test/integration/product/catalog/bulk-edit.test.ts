@@ -155,7 +155,7 @@ describe('GET /variants/bulk-edit', () => {
     const groups = (await api(owner).get('/groups')).body.items as { id: string; name: string; version: number }[];
     const electronics = groups.find((g) => g.name.startsWith('Điện tử'))!;
     const blank = groups.find((g) => g.name === 'Khác')!;
-    const set = await api(owner).put(`/groups/${electronics.id}`, { name: electronics.name, suggest: { ...NO_SUGGEST, marginCoefficient: 1.2 }, version: electronics.version });
+    const set = await api(owner).put(`/groups/${electronics.id}`, { suggest: { ...NO_SUGGEST, marginCoefficient: 1.2 }, version: electronics.version });
     expect(set.status, JSON.stringify(set.body)).toBe(200);
 
     const inGroup = await createProduct(owner, { name: uniq('Tai nghe'), groupId: electronics.id, variants: [[]] });
