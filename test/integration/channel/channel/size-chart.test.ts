@@ -7,7 +7,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { PushResults } from '#src/modules/channel/channel/api/schemas.ts';
 import { runListingPush } from '#src/modules/channel/channel/service/listing-push.ts';
 import { type CategoryRules, MarketplaceError, type NewProduct, type SizeChartRule } from '#src/modules/channel/channel/service/marketplaces/common.ts';
-import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
+import { getAdapter, registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
 import { type ListingVariant, setProductPort } from '#src/modules/channel/channel/service/product-port.ts';
 import { stopJobs } from '#src/modules/core/platform/service/jobs/boss.ts';
 import { createCompany } from '../../helpers/company.ts';
@@ -161,6 +161,51 @@ beforeEach(() => {
   categoryRules.mockClear();
   uploadImage.mockClear();
   createProduct.mockClear();
+});
+
+// Cùng khung request đẩy: mã chặn `variant_images_missing` (#295, 21 §18.5) theo dòng của `PushResult`.
+describe('request đẩy: chặn variant_images_missing khi sàn đòi đủ ảnh theo giá trị', () => {
+  async function colors(images: Record<string, boolean>) {
+    const leaf = String(randomInt(800_000_000, 900_000_000));
+    rules.set(leaf, 'optional');
+    await testPool().query(
+      `insert into channel.platform_categories (platform, external_id, name, is_leaf, path, path_search, synced_at, size_chart_rule)
+       values ('tiktok', $1, 'Áo', true, 'Thời trang > Áo', 'thoi trang > ao', now(), 'optional')`,
+      [leaf],
+    );
+    const productId = randomUUID();
+    const vs = Object.entries(images).map(([value, has]) => {
+      const v = newVariant();
+      const valueId = randomUUID();
+      Object.assign(v, {
+        productId,
+        attributesLabel: value,
+        attributes: [{ attributeId: 'a-color', attributeName: 'Màu sắc', platformKind: 'color', valueId, value }],
+        image: has ? { attributeValueId: valueId, url: `https://cdn.test/${valueId}.png` } : null,
+      });
+      return v;
+    });
+    await seedSpecs(company.companyId, 'tiktok', leaf, vs);
+    return vs;
+  }
+
+  it('một màu có ảnh, màu kia chưa: mọi dòng của sản phẩm bị chặn, câu nêu giá trị thiếu; adapter không đòi thì không chặn', async () => {
+    const tiktok = getAdapter('tiktok') as { requiresAllVariantImages?: boolean };
+    tiktok.requiresAllVariantImages = true;
+    try {
+      const vs = await colors({ Đen: true, Trắng: false });
+      const results = await push(vs.map((v) => v.id));
+      expect(results.map((r) => [r.code, r.listingId])).toEqual([
+        ['variant_images_missing', null],
+        ['variant_images_missing', null],
+      ]);
+      expect(results[0]!.message).toBe('Sàn bắt buộc ảnh cho mọi giá trị của Màu sắc: thêm ảnh cho Trắng rồi đăng lại');
+    } finally {
+      delete tiktok.requiresAllVariantImages;
+    }
+    const other = await colors({ Đen: true, Trắng: false });
+    expect((await push(other.map((v) => v.id))).map((r) => r.code)).toEqual([null, null]);
+  });
 });
 
 describe('request đẩy: chặn size_chart_missing trước khi xếp việc', () => {

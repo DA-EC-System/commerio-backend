@@ -44,7 +44,7 @@ import { firstPushCalculations } from './repricing.ts';
 import { evaluatePrices } from './price-inputs.ts';
 import type { PriceFilterResult } from '../domain/price-filter.ts';
 import { pushAttributes, specChecks, specStatusOf } from './product-specs.ts';
-import { keepsPlatformContent, listingText, pushBlock, pushSpec, specBlock } from './push-block.ts';
+import { keepsPlatformContent, listingText, pushBlock, pushSpec, specBlock, variantImageGaps } from './push-block.ts';
 import { PUSH_IMAGE_MAX, sendListingPush, sendProductPush } from './shop-jobs.ts';
 import { findAppShopProduct, findShopProduct, insertAppShopProduct, setShopProductPushStarted } from '../repository/shop-products.ts';
 import { MarketplaceError } from './marketplaces/index.ts';
@@ -393,13 +393,16 @@ export async function pushListings(
   }
   const ids = [...new Set(input.variantIds)];
   const { adapter } = platformOf(shop.platform);
-  const { variants, prices, specs, current, images, sizeCharts } = await inCompany(async () => {
+  const { variants, prices, specs, gaps, current, images, sizeCharts } = await inCompany(async () => {
     const variants = new Map((await port.variants(ids)).map((v) => [v.id, v]));
     const productIds = [...new Set([...variants.values()].map((v) => v.productId))];
+    const siblings = await port.variants(undefined, { productIds });
     return {
       variants,
       prices: await port.standardPrices(ids),
-      specs: await specChecks(port, shop, adapter, await port.variants(undefined, { productIds })),
+      specs: await specChecks(port, shop, adapter, siblings),
+      // Ảnh theo giá trị có một phần, chỉ khi sàn đòi đủ ảnh (21 §18.5 `variant_images_missing`).
+      gaps: variantImageGaps(adapter, siblings),
       current: new Map(await Promise.all(ids.map(async (id) => [id, await findListingRow(shop.id, id)] as const))),
       images: await port.productImageUrls(productIds, PUSH_IMAGE_MAX),
       sizeCharts: (await port.productSizeChartUrls?.(productIds)) ?? new Map<string, string>(),
@@ -450,6 +453,7 @@ export async function pushListings(
       pushSpec(keepsPlatformContent(existing), specs.get(v.productId)),
       Boolean(existing?.externalImageUrls?.length || imageUrls.length),
       Boolean(sizeChartUrl),
+      keepsPlatformContent(existing) ? null : (gaps.get(v.productId) ?? null),
     );
     if (block) {
       results.push(blocked(variantId, existing, block.code, block.message));
