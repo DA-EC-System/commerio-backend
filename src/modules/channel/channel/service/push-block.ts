@@ -15,6 +15,7 @@ export interface PushBlock {
     | 'category_not_permitted'
     | 'dimensions_missing'
     | 'images_missing'
+    | 'variant_images_missing'
     | 'size_chart_missing';
   message: string;
 }
@@ -68,12 +69,57 @@ export function pushSpec(keepContent: boolean, spec: SpecCheck | undefined): Spe
  * `hasImages`: listing đã có ảnh trên sàn, hoặc sản phẩm có ảnh trong catalog (#303). `hasSizeChart`: sản phẩm có ảnh bảng
  * kích cỡ trong catalog (#347); category sàn `required` mà chưa có thì chặn `size_chart_missing`.
  */
+/** Thuộc tính gắn ảnh còn giá trị chưa có ảnh (#295). */
+export interface VariantImageGap {
+  attributeName: string;
+  values: string[];
+}
+
+/**
+ * Ảnh theo giá trị có một phần (Documents/21 §17 ảnh phân loại, §18.5 `variant_images_missing`), tính trên mọi SKU của một
+ * sản phẩm cha: thuộc tính gắn ảnh là thuộc tính có giá trị trùng `image.attributeValueId` của SKU; có ít nhất một giá trị
+ * có ảnh mà còn giá trị đang được SKU chưa lưu trữ dùng chưa có ảnh. Chưa có ảnh phân loại nào thì null. Hàm thuần.
+ */
+export function variantImageGap(variants: readonly ListingVariant[]): VariantImageGap | null {
+  const live = variants.filter((v) => !v.archived);
+  const withImage = new Set(live.flatMap((v) => (v.image ? [v.image.attributeValueId] : [])));
+  if (!withImage.size) return null;
+  const attr = live.flatMap((v) => v.attributes).find((a) => withImage.has(a.valueId));
+  if (!attr) return null;
+  const missing: string[] = [];
+  for (const v of live) {
+    const a = v.attributes.find((x) => x.attributeId === attr.attributeId);
+    if (a && !withImage.has(a.valueId) && !missing.includes(a.value)) missing.push(a.value);
+  }
+  return missing.length ? { attributeName: attr.attributeName, values: missing } : null;
+}
+
+/** Khoảng trống ảnh theo giá trị của mỗi sản phẩm, chỉ khi sàn đòi đủ ảnh (`requiresAllVariantImages` của adapter). */
+export function variantImageGaps(adapter: { requiresAllVariantImages?: boolean }, variants: readonly ListingVariant[]): Map<string, VariantImageGap> {
+  const out = new Map<string, VariantImageGap>();
+  if (!adapter.requiresAllVariantImages) return out;
+  const byProduct = new Map<string, ListingVariant[]>();
+  for (const v of variants) byProduct.set(v.productId, [...(byProduct.get(v.productId) ?? []), v]);
+  for (const [productId, vs] of byProduct) {
+    const gap = variantImageGap(vs);
+    if (gap) out.set(productId, gap);
+  }
+  return out;
+}
+
+export const variantImagesMissing = (gap: VariantImageGap): PushBlock => ({
+  code: 'variant_images_missing',
+  message: `Sàn bắt buộc ảnh cho mọi giá trị của ${gap.attributeName}: thêm ảnh cho ${gap.values.join(', ')} rồi đăng lại`,
+});
+
 export function pushBlock(
   v: ListingVariant,
   price: Decimal | null,
   spec: SpecCheck | undefined,
   hasImages: boolean,
   hasSizeChart = false,
+  /** Sàn đòi đủ ảnh theo giá trị mà sản phẩm còn thiếu (`variantImageGaps`); bỏ trống khi không gửi nội dung (bật lại SKU). */
+  imageGap: VariantImageGap | null = null,
 ): PushBlock | null {
   // Tạm dùng trạng thái kinh doanh tới khi #204 trả `readiness` của SKU (#219 A2, Documents/25 §6.3).
   if (v.businessStatus === 'paused') return { code: 'sku_not_ready', message: 'SKU đang tạm ngừng kinh doanh, chưa đẩy được' };
@@ -84,6 +130,7 @@ export function pushBlock(
     return { code: 'dimensions_missing', message: 'Thiếu cân nặng hoặc kích thước gói của SKU' };
   }
   if (!hasImages) return { code: 'images_missing', message: 'Sàn bắt buộc ảnh: thêm ảnh cho sản phẩm' };
+  if (imageGap) return variantImagesMissing(imageGap);
   if (spec!.sizeChartRule === 'required' && !hasSizeChart) {
     return { code: 'size_chart_missing', message: 'Danh mục này bắt buộc ảnh bảng kích cỡ: thêm ảnh bảng kích cỡ cho sản phẩm' };
   }
