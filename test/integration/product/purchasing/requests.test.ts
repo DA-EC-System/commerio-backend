@@ -6,7 +6,7 @@ import { addMember, createCompany, createCustomRole } from '../../helpers/compan
 import { testPool } from '../../helpers/db.ts';
 import { raceBehindLock } from '../../helpers/locks.ts';
 import { inv } from '../inventory/helpers.ts';
-import { act, createRequest, createSupplier, pur, runActions } from './helpers.ts';
+import { act, countBody, createReceipt, createRequest, createSupplier, pur, runActions } from './helpers.ts';
 
 // Đề nghị nhập /purchasing/requests (Documents/21 mục 16.2, 16.3; spec #108 mục 11).
 let A: { companyId: string; ceo: string; requester: string; receiver: string; supplierId: string; v1: string; v2: string; groupId: string };
@@ -226,11 +226,18 @@ describe('gửi duyệt và duyệt', () => {
     expect(last.body.code).toBe('all_lines_excluded');
   });
 
-  it('duyệt sinh sản phẩm và SKU theo mẫu SKU của công ty cho dòng sản phẩm mới', async () => {
+  it('duyệt chưa sinh gì; ghi sổ phiếu nhập kho sinh sản phẩm và SKU theo mẫu SKU của công ty (21 mục 16.3)', async () => {
     const name = newName();
     const r = await createRequest(A.requester, A.supplierId, [{ newProduct: { parentId: null, parentName: name, groupId: A.groupId, optionValues: {} }, quantity: 5, unitCost: 90000 }]);
-    const body = await runActions([[A.requester, 'submit'], [A.ceo, 'approve']], r.id, r.version);
-    const line = body.lines[0]!;
+    const body = await runActions([[A.requester, 'submit'], [A.ceo, 'approve'], [A.requester, 'order', { expectedDeliveryDate: '2026-12-01' }]], r.id, r.version);
+    expect(body.lines[0]!.variantId).toBeNull();
+
+    const draft = await createReceipt(A.requester, r.id);
+    const saved = await pur(A.requester).put(`/goods-receipts/${draft.id}`, countBody(draft, [{ announced: 5, accepted: 5 }]));
+    expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+    const posted = await pur(A.ceo).post(`/goods-receipts/${draft.id}/post`, { version: saved.body.version });
+    expect(posted.status, JSON.stringify(posted.body)).toBe(200);
+    const line = PurchaseRequest.parse((await pur(A.ceo).get(`/requests/${r.id}`)).body).lines[0]!;
     expect(line.variantId).not.toBeNull();
     expect(line.sku).toMatch(/^SP\d{5}$/);
     const product = await testPool().query(
@@ -238,7 +245,7 @@ describe('gửi duyệt và duyệt', () => {
       [line.variantId],
     );
     // Mã cha (#204 D5): sản phẩm một SKU không thuộc tính có mã bằng SKU.
-    expect(product.rows[0]).toEqual({ name, description: `Tạo từ đơn đặt hàng nhập ${r.number}`, code: line.sku });
+    expect(product.rows[0]).toEqual({ name, description: `Tạo khi nhập kho phiếu ${draft.number}`, code: line.sku });
   });
 
   it('tên sản phẩm mới bị dùng trước lúc duyệt: 422 và không đổi trạng thái', async () => {
