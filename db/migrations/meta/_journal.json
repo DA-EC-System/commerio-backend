@@ -971,15 +971,22 @@
     {
       "idx": 138,
       "version": "7",
-      "when": 1795238548938,
-      "tag": "20261121052228_can-nang-kich-thuoc-du-lieu",
+      "when": 1795240638567,
+      "tag": "20261121055718_dong-phieu-nhan-chua-co-sku",
       "breakpoints": true
     },
     {
       "idx": 139,
       "version": "7",
-      "when": 1795238550920,
-      "tag": "20261121052230_can-nang-kich-thuoc-tran",
+      "when": 1795240941802,
+      "tag": "20261121060221_can-nang-kich-thuoc-du-lieu",
+      "breakpoints": true
+    },
+    {
+      "idx": 140,
+      "version": "7",
+      "when": 1795240944066,
+      "tag": "20261121060224_can-nang-kich-thuoc-tran",
       "breakpoints": true
     }
   ]
