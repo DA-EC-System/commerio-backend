@@ -30,6 +30,7 @@ export const ORDER_FLAGS = [
   'cancelling',
   'platform_cancelled',
   'due_soon',
+  'overdue',
   'return_requested',
   'cod_mismatch',
   'shop_disconnected',

@@ -8,12 +8,12 @@ import {
   codUnconfirmed,
   completionBlocker,
   DEFAULT_RETURN_POLICY,
-  isDueSoon,
   lastDeliveredAt,
   orderCancelReasonFromLines,
   orderMachine,
   outcomeOf,
   returnWindowEndsAt,
+  shipByFlag,
   stageOf,
 } from '#src/modules/order/sales/domain/order.ts';
 
@@ -179,13 +179,45 @@ describe('stageOf', () => {
   });
 });
 
-describe('isDueSoon', () => {
-  const now = Date.parse('2026-10-29T00:00:00Z');
-  it('còn kiện chưa rời kho và hạn dưới 24 giờ', () => {
-    expect(isDueSoon('2026-10-29T10:00:00Z', ['reserved'], now)).toBe(true);
-    expect(isDueSoon('2026-10-31T10:00:00Z', ['reserved'], now)).toBe(false);
-    expect(isDueSoon('2026-10-29T10:00:00Z', ['in_transit'], now)).toBe(false);
-    expect(isDueSoon(null, ['reserved'], now)).toBe(false);
+describe('shipByFlag: Sắp trễ hạn ≤ 25%, Trễ hạn (#432)', () => {
+  const H = 3_600_000;
+  // Đơn TikTok ca test 18/11: về 03:00, hạn 19:00 (16 giờ).
+  const startAt = at('2026-11-18T03:00:00Z');
+  const shipBy = at('2026-11-18T19:00:00Z');
+  const flag = (now: number, packages: PackageStatus[] = ['reserved'], o: Partial<{ shipBy: Date | null; startAt: Date }> = {}) =>
+    shipByFlag({ shipBy, startAt, packages, now, ...o });
+
+  it('đơn hạn 16 giờ: không cờ ở giờ đầu, còn trên 25% cũng không', () => {
+    expect(flag(startAt.getTime() + H)).toBeNull();
+    expect(flag(shipBy.getTime() - 4 * H - 60_000)).toBeNull();
+  });
+  it('còn đúng 4 giờ (25%) tới trước hạn 1 ms: due_soon', () => {
+    expect(flag(shipBy.getTime() - 4 * H)).toBe('due_soon');
+    expect(flag(shipBy.getTime() - 1)).toBe('due_soon');
+  });
+  it('đúng lúc tới hạn và sau hạn: overdue, không due_soon', () => {
+    expect(flag(shipBy.getTime())).toBe('overdue');
+    expect(flag(shipBy.getTime() + 11 * 24 * H)).toBe('overdue');
+  });
+  it('chỉ xét kiện chưa bàn giao', () => {
+    const late = shipBy.getTime() + H;
+    expect(flag(late, ['in_transit', 'delivered'])).toBeNull();
+    expect(flag(late, ['cancelled'])).toBeNull();
+    expect(flag(late, [])).toBeNull();
+    expect(flag(late, ['in_transit', 'packed'])).toBe('overdue');
+    expect(flag(late, ['backordered'])).toBe('overdue');
+    expect(flag(late, ['awaiting_pickup'])).toBe('overdue');
+  });
+  it('không có hạn thì không cờ', () => {
+    expect(flag(shipBy.getTime() + H, ['reserved'], { shipBy: null })).toBeNull();
+  });
+  it('đơn đặt sớm, kéo về muộn: tính từ lúc đặt nên còn 8/48 giờ là due_soon', () => {
+    const placed = at('2026-11-16T19:00:00Z'); // 48 giờ trước hạn
+    expect(flag(shipBy.getTime() - 8 * H, ['reserved'], { startAt: placed })).toBe('due_soon');
+  });
+  it('mốc bắt đầu không trước hạn: chỉ có thể overdue', () => {
+    expect(flag(shipBy.getTime() - H, ['reserved'], { startAt: shipBy })).toBeNull();
+    expect(flag(shipBy.getTime() + H, ['reserved'], { startAt: at('2026-11-18T20:00:00Z') })).toBe('overdue');
   });
 });
 

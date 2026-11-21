@@ -36,6 +36,7 @@ export {
   isStopped,
   packageMachine,
   platformUpdate,
+  PRE_HANDOVER,
   type PackageAction,
   type PackageStatus,
 } from './domain/package.ts';
