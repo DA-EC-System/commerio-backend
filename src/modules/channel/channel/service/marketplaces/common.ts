@@ -96,6 +96,11 @@ export interface RemoteProductFacts {
 
 export interface RemoteSkuMeasures {
   externalSkuId: string;
+  /**
+   * Giá trị phân loại của SKU trên sàn theo thứ tự trục (KB3: tạo SKU kho từ SKU sàn anh em lấy làm giá trị thuộc tính biến
+   * thể). TikTok `skus[].sales_attributes[].value_name`, Lazada `skus[].saleProp`; thiếu khi sàn không trả.
+   */
+  saleValues?: string[];
   weightG: number | null;
   lengthMm: number | null;
   widthMm: number | null;
