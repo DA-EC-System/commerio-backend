@@ -286,6 +286,7 @@ export const PurchaseRequestLine = z
         optionValues: z.record(z.string(), z.string()),
         name: z.string(),
         groupName: z.string(),
+        draftId: z.uuid().nullable().meta({ description: 'Bản soạn trước của cha mới (21 mục 16.3); dòng thêm vào cha có sẵn: null' }),
       })
       .strict()
       .nullable(),
@@ -322,6 +323,107 @@ const summaryShape = {
 
 export const PurchaseRequestSummary = z.object(summaryShape).strict().meta({ id: 'PurchaseRequestSummary' });
 
+// ---------- Bản soạn trước (Documents/21 mục 16.3 "Bản soạn trước") ----------
+
+const draftSummaryShape = {
+  id: z.uuid(),
+  requestId: z.uuid(),
+  requestNumber: z.string(),
+  requestStatus: z.string(),
+  supplierName: z.string(),
+  expectedDeliveryDate: z.iso.date().nullable(),
+  parentName: z.string(),
+  groupId: z.string().nullable(),
+  groupName: z.string(),
+  readiness: z.object({ missing: z.array(z.string()) }).strict().meta({ description: 'Như độ hoàn thiện 17.1, tính trên bản soạn' }),
+  productId: z.uuid().nullable().meta({ description: 'Có khi ghi sổ phiếu nhận đã tạo sản phẩm; từ đó phần sản phẩm chỉ đọc' }),
+  version: z.number().int(),
+};
+
+export const ProductDraftSummary = z.object(draftSummaryShape).strict().meta({ id: 'ProductDraftSummary' });
+
+const factsOut = {
+  standardPrice: z.number().int().nullable().meta({ description: 'Số nguyên đồng' }),
+  targetNetPrice: z.number().int().nullable().meta({ description: 'Giá muốn thực nhận, số nguyên đồng' }),
+  weightG: z.number().int().nullable(),
+  lengthMm: z.number().int().nullable(),
+  widthMm: z.number().int().nullable(),
+  heightMm: z.number().int().nullable(),
+  minQty: z.number().int().nullable(),
+};
+
+const fileRef = z.object({ fileId: z.uuid(), url: z.string() }).strict();
+const specValue = z
+  .object({ fieldId: z.string(), optionIds: z.array(z.string()).optional(), newValues: z.array(z.string()).optional(), value: z.string().optional() })
+  .strict();
+
+export const ProductDraft = z
+  .object({
+    ...draftSummaryShape,
+    description: z.string(),
+    brand: z.string().nullable(),
+    originCountry: z.string().nullable(),
+    images: z.array(fileRef),
+    sizeChart: fileRef.nullable(),
+    specs: z.array(specValue),
+    imageAxis: z.string().nullable().meta({ description: 'Tên thuộc tính biến thể gắn ảnh' }),
+    optionImages: z.array(z.object({ axis: z.string(), value: z.string(), fileId: z.uuid(), url: z.string() }).strict()),
+    variantDefaults: z.object(factsOut).strict(),
+    variants: z.array(
+      z
+        .object({ optionValues: z.record(z.string(), z.string()), variantId: z.uuid().nullable(), ...factsOut })
+        .strict()
+        .meta({ description: 'Mọi tổ hợp của cha mới trên đề nghị; số null là dùng variantDefaults' }),
+    ),
+  })
+  .strict()
+  .meta({ id: 'ProductDraft' });
+
+export const ProductDraftPage = z
+  .object({ items: z.array(ProductDraftSummary), total: z.int(), page: z.int(), pageSize: z.int() })
+  .strict()
+  .meta({ id: 'ProductDraftPage' });
+
+export const ProductDraftListQuery = z.object({
+  pending: z
+    .enum(['true', 'false'], 'pending là true hoặc false')
+    .default('true')
+    .transform((v) => v === 'true'),
+  ...page,
+});
+
+const nonNegMoney = (label: string) => z.number(label).int(label).min(0, label).max(1_000_000_000_000, label);
+const positive = (label: string, max: number) => z.number(label).int(label).min(1, label).max(max, label);
+const factsIn = {
+  standardPrice: nonNegMoney('Giá chuẩn là số nguyên đồng ≥ 0').nullish(),
+  targetNetPrice: nonNegMoney('Giá muốn thực nhận là số nguyên đồng ≥ 0').nullish(),
+  weightG: positive('Cân nặng là số nguyên gam > 0', 1_000_000).nullish(),
+  lengthMm: positive('Chiều dài là số nguyên mm > 0', 100_000).nullish(),
+  widthMm: positive('Chiều rộng là số nguyên mm > 0', 100_000).nullish(),
+  heightMm: positive('Chiều cao là số nguyên mm > 0', 100_000).nullish(),
+  minQty: z.number('Ngưỡng tồn là số nguyên ≥ 0').int('Ngưỡng tồn là số nguyên ≥ 0').min(0, 'Ngưỡng tồn là số nguyên ≥ 0').max(1_000_000).nullish(),
+};
+
+export const ProductDraftUpdateInput = z
+  .object({
+    description: z.string().max(5000, 'Mô tả tối đa 5000 ký tự').nullish(),
+    brand: z.string().max(100, 'Thương hiệu tối đa 100 ký tự').nullish(),
+    originCountry: z
+      .string()
+      .trim()
+      .regex(/^([A-Za-z]{2})?$/, 'Xuất xứ là mã nước 2 chữ')
+      .nullish(),
+    imageFileIds: z.array(z.uuid('Ảnh không hợp lệ')).max(9, 'Tối đa 9 ảnh').optional(),
+    sizeChartFileId: z.uuid('Ảnh không hợp lệ').nullish(),
+    specs: z.array(specValue).max(200).optional(),
+    imageAxis: z.string().max(15).nullish(),
+    optionImages: z.array(z.object({ axis: z.string(), value: z.string(), fileId: z.uuid('Ảnh không hợp lệ') }).strict()).max(50).optional(),
+    variantDefaults: z.object(factsIn).strict().optional(),
+    variants: z.array(z.object({ optionValues: z.record(z.string(), z.string()), ...factsIn }).strict()).max(200).optional(),
+    version,
+  })
+  .strict();
+
 export const PurchaseRequest = z
   .object({
     ...summaryShape,
@@ -338,6 +440,7 @@ export const PurchaseRequest = z
     ),
     sourceReturn: z.object({ type: z.literal('supplier_return'), id: z.uuid(), number: z.string() }).strict().nullable(),
     countingReceipts: z.number().int(),
+    productDrafts: z.array(ProductDraftSummary).meta({ description: 'Bản soạn trước của các cha mới trên đề nghị (21 mục 16.3)' }),
     statusHistory: z.array(StatusChangeSchema),
   })
   .strict()
