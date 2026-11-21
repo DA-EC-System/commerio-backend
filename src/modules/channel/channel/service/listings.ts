@@ -41,7 +41,7 @@ import { insertConfirmed, type NewPriceCalculation } from '../repository/price-c
 import { countRemoteSkusOfProduct } from '../repository/remote-skus.ts';
 import { currentPrices, type ListingPrice, listingPrices } from './listing-prices.ts';
 import { firstPushCalculations } from './repricing.ts';
-import { evaluatePrices } from './price-inputs.ts';
+import { evaluatePrices, shopPriceConfig } from './price-inputs.ts';
 import type { PriceFilterResult } from '../domain/price-filter.ts';
 import { pushAttributes, specChecks, specStatusOf } from './product-specs.ts';
 import { keepsPlatformContent, listingText, pushBlock, pushSpec, specBlock, variantImageGaps } from './push-block.ts';
@@ -393,7 +393,7 @@ export async function pushListings(
   }
   const ids = [...new Set(input.variantIds)];
   const { adapter } = platformOf(shop.platform);
-  const { variants, prices, specs, siblings, gaps, current, images, sizeCharts } = await inCompany(async () => {
+  const { variants, prices, specs, siblings, gaps, current, images, sizeCharts, feeConfigured } = await inCompany(async () => {
     const variants = new Map((await port.variants(ids)).map((v) => [v.id, v]));
     const productIds = [...new Set([...variants.values()].map((v) => v.productId))];
     const siblings = await port.variants(undefined, { productIds });
@@ -407,6 +407,7 @@ export async function pushListings(
       current: new Map(await Promise.all(ids.map(async (id) => [id, await findListingRow(shop.id, id)] as const))),
       images: await port.productImageUrls(productIds, PUSH_IMAGE_MAX),
       sizeCharts: (await port.productSizeChartUrls?.(productIds)) ?? new Map<string, string>(),
+      feeConfigured: (await shopPriceConfig(shop.id)).fee !== null,
     };
   });
   // Giá người bán gõ lúc đăng (21 §18.9 R1) là giá ghi đè tay (25 §6.2 bước 6): áp ngay, không thành giá chờ, vẫn qua bước 5.
@@ -441,6 +442,15 @@ export async function pushListings(
     }
     if (existing && LISTED.includes(existing.status)) {
       results.push(blocked(variantId, existing, 'already_listed', 'Đã có trên sàn: giá và tồn cập nhật bằng Đồng bộ'));
+      continue;
+    }
+    // 21 §18.9 R5: lần đăng đầu, đăng lại sau gỡ hay sau lỗi mà gian hàng chưa có phí đang áp dụng thì không tính được giá
+    // thấp nhất, kể cả giá gõ tay. Bật lại SKU người bán (`content_source = platform`) là liên kết sẵn có, không chặn.
+    const firstListing = !existing || existing.status === 'delisted' || (existing.status === 'push_failed' && !keepsPlatformContent(existing));
+    if (firstListing && !feeConfigured) {
+      results.push(
+        blocked(variantId, existing, 'fee_not_configured', `Gian hàng ${shop.shopName} chưa có cấu hình phí. Soạn cấu hình phí và chờ CEO duyệt rồi đăng`),
+      );
       continue;
     }
     const imageUrls = images.get(v.productId) ?? [];
