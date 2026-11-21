@@ -1,14 +1,12 @@
 // Một dòng của PATCH sửa hàng loạt (#242). Service kiểm từng dòng bằng schema này để lỗi một dòng không chặn dòng khác;
 // api/schemas.ts dùng lại cho tài liệu OpenAPI.
 import { z } from 'zod';
+import { edgeMm, weightG } from './measure.ts';
 
 const POSITIVE_INT = 'Nhập số nguyên lớn hơn 0';
 const version = z.number('Thiếu version').int().positive();
 /** Giá (đồng); bỏ trường là giữ, `null` là xoá. */
 const price = z.int(POSITIVE_INT).positive(POSITIVE_INT).nullable().optional();
-
-const bulkMeasure = (max: number, what: string) =>
-  z.int(POSITIVE_INT).positive(POSITIVE_INT).max(max, `${what} tối đa ${max}`).nullable().optional();
 
 /** Một dòng lưu. Kiểm từng dòng ở service (lỗi một dòng không chặn dòng khác), schema này để tài liệu và để service kiểm. */
 export const BulkRowInput = z
@@ -31,10 +29,10 @@ export const BulkRowInput = z
         .nullable()
         .optional()
         .meta({ description: 'Ngưỡng tồn; cần quyền `inventory.reorder.manage`; null là bỏ ngưỡng' }),
-      weightG: bulkMeasure(50_000, 'Cân nặng (g)').meta({ description: 'Cân nặng gói (gam), tối đa 50.000' }),
-      lengthMm: bulkMeasure(2_000, 'Chiều dài (mm)').meta({ description: 'Chiều dài gói (mm), tối đa 2.000' }),
-      widthMm: bulkMeasure(2_000, 'Chiều rộng (mm)').meta({ description: 'Chiều rộng gói (mm), tối đa 2.000' }),
-      heightMm: bulkMeasure(2_000, 'Chiều cao (mm)').meta({ description: 'Chiều cao gói (mm), tối đa 2.000' }),
+      weightG: weightG.meta({ description: 'Cân nặng gói (gam), tối đa 50.000' }),
+      lengthMm: edgeMm('Chiều dài').meta({ description: 'Chiều dài gói (mm), tối đa 2.000' }),
+      widthMm: edgeMm('Chiều rộng').meta({ description: 'Chiều rộng gói (mm), tối đa 2.000' }),
+      heightMm: edgeMm('Chiều cao').meta({ description: 'Chiều cao gói (mm), tối đa 2.000' }),
     },
     { error: (iss) => (iss.code === 'unrecognized_keys' ? `Không sửa được trường ${iss.keys.join(', ')} ở đây` : undefined) },
   )
