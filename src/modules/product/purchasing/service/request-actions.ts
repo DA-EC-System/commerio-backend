@@ -2,11 +2,11 @@
 import { canSelfApprove, publishEvent, recordTransition } from '../../../core/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
-import { createPurchaseProducts } from '../../catalog/index.ts';
+import { validateNewProducts } from '../../catalog/index.ts';
 import { recheckThresholds } from '../../inventory/index.ts';
 import { countsIncoming, variantIdsOf } from '../domain/request.ts';
 import { purchaseRequestMachine, REQUEST_USER_ACTIONS } from '../domain/request-machine.ts';
-import { findLines, findRequest, type LineRow, receiptsOf, type RequestRow, updateLine, updateRequest } from '../repository/requests.ts';
+import { findLines, findRequest, type LineRow, receiptsOf, type RequestRow, updateRequest } from '../repository/requests.ts';
 import { findSupplier } from '../repository/suppliers.ts';
 import { type Actor, invalid, notFound, type PurchaseRequestView, toDetail } from './request-views.ts';
 import { closeShortRequest } from './request-receiving.ts';
@@ -44,27 +44,19 @@ async function assertSupplierActive(row: RequestRow): Promise<void> {
 const RETURN_HINT = '. Trả về cho người lập sửa dòng này';
 
 /**
- * Duyệt: dòng sản phẩm mới (không bị loại) sinh SKU, các dòng cùng cha mới sinh một sản phẩm cha (Documents/21 mục
- * 16.3); lỗi thì 422 và rollback cả lần duyệt.
+ * Gửi duyệt, gửi lại, duyệt: kiểm lại dòng sản phẩm mới (không bị loại) theo dữ liệu hiện tại, cùng mã lỗi lúc lập;
+ * **không tạo gì**. SKU sinh khi ghi sổ phiếu nhập kho có hàng về (Documents/21 mục 16.3, 25 §4.2; đổi 22/11/2026).
  */
-async function createNewProducts(actor: Actor, row: RequestRow, lines: readonly LineRow[]): Promise<void> {
+async function recheckNewProducts(lines: readonly LineRow[], hint: string): Promise<void> {
   const pending = lines.flatMap((l, i) => (!l.excluded && !l.variantId && (l.newParentProductId || l.newParentName) ? [{ l, i }] : []));
   if (!pending.length) return;
-  const items = pending.map(({ l, i }) => ({
-    line: i,
-    lineId: l.id,
-    parentId: l.newParentProductId,
-    parentName: l.newParentName,
-    groupId: l.newGroupId,
-    options: l.newOptionValues ?? [],
-  }));
-  const result = await createPurchaseProducts(actor, items, `Tạo từ đơn đặt hàng nhập ${row.number}`);
-  if (!result.ok) {
-    const errors: Record<string, string> = {};
-    for (const [k, e] of result.errors) errors[`lines.${pending[k]!.i}${e.field ? `.newProduct.${e.field}` : ''}`] = e.field ? e.message + RETURN_HINT : e.message;
-    throw invalid(errors, result.code);
-  }
-  for (const [k, { l }] of pending.entries()) await updateLine(l.id, { variantId: result.variantIds[k]! });
+  const checked = await validateNewProducts(
+    pending.map(({ l, i }) => ({ line: i, parentId: l.newParentProductId, parentName: l.newParentName, groupId: l.newGroupId, options: l.newOptionValues ?? [] })),
+  );
+  if (!checked.errors.size) return;
+  const errors: Record<string, string> = {};
+  for (const [k, e] of checked.errors) errors[`lines.${pending[k]!.i}${e.field ? `.newProduct.${e.field}` : ''}`] = e.field ? e.message + hint : e.message;
+  throw invalid(errors, checked.code);
 }
 
 export async function runRequestAction(actor: Actor, id: string, action: string, input: ActionInput): Promise<PurchaseRequestView> {
@@ -99,9 +91,10 @@ export async function runRequestAction(actor: Actor, id: string, action: string,
       case 'resubmit':
         await assertSupplierActive(row);
         assertPriced(lines);
+        await recheckNewProducts(lines, '');
         break;
       case 'approve':
-        await createNewProducts(actor, row, lines);
+        await recheckNewProducts(lines, RETURN_HINT);
         Object.assign(set, { approvedBy: actor.accountId, approvedAt: now, selfApproved });
         break;
       case 'request_changes':
