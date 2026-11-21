@@ -518,7 +518,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/products/:productId/price-quote',
     summary: 'Tính thử giá niêm yết → thực nhận theo gian hàng (21 §18.9 R1)',
     description:
-      'Cần `channel.listing.manage`. Không ghi gì. Thiếu `listPrice` thì dùng giá bộ lọc lần đăng sẽ gửi. Không trả giá thấp nhất; `marginPct` chỉ khi người gọi có `inventory.cost.view`. `blocked.code`: `fee_not_configured` (gian hàng chưa có phí, ba trường số null), `price_missing` (chưa có giá muốn bán và không gõ giá), `fee_config_invalid` (tổng phí từ 100%).',
+      'Cần `channel.listing.manage`. Không ghi gì. Thiếu `listPrice` thì dùng giá bộ lọc lần đăng sẽ gửi. Không trả giá thấp nhất. Người gọi thiếu `inventory.cost.view` nhận `belowFloor`, `marginPct` null (R4: dò giá thấp nhất bằng giá gõ thử là suy ra giá vốn); khi đăng BE vẫn chặn `below_floor`. Hai dòng cùng (`shopId`, `variantId`): 422. `blocked.code`: `fee_not_configured` (gian hàng chưa có phí, ba trường số null), `price_missing` (chưa có giá muốn bán và không gõ giá), `fee_config_invalid` (tổng phí từ 100%).',
     security: bearer,
     request: { params: PriceQuoteParams, body: json(PriceQuoteBody) },
     responses: {

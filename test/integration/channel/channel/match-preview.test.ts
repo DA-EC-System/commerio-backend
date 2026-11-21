@@ -173,3 +173,37 @@ describe('match-preview: fillBack, trường sẽ điền ngược (21 §18.9 R4
     expect(res.body.fillBack.every((f: { value: unknown }) => f.value === null)).toBe(true);
   });
 });
+
+// Cột "Tồn sẽ đẩy" của ListingRow (Documents/21 §18.9 R3): cùng nghĩa, cùng thứ tự xét với match-preview.
+describe('ListingRow.stockToPush, stockHeldReason (21 §18.9 R3)', () => {
+  const rowOf = async (productId: string) => {
+    const res = await request(testApp())
+      .get(`/api/v1/channel/products/${productId}/listings`)
+      .set('Authorization', `Bearer ${company.ceo.token}`);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    return (res.body.items as { shopId: string; stockToPush: number | null; stockHeldReason: string | null }[]).find((r) => r.shopId === shopId)!;
+  };
+
+  it('chưa có số: null kèm not_counted; nhập 4 thì 4; gian hàng chờ kiểm kê thì shop_waiting_opening', async () => {
+    const { variantId, productId } = await createVariant(company.companyId);
+    expect(await rowOf(productId)).toMatchObject({ stockToPush: null, stockHeldReason: 'not_counted' });
+    await receive(company.companyId, variantId, 4, 1000);
+    expect(await rowOf(productId)).toMatchObject({ stockToPush: 4, stockHeldReason: null });
+    await testPool().query("update channel.shops set opening_stocktake_id = $2, opening_stocktake_number = 'KK-T' where id = $1", [shopId, randomUUID()]);
+    try {
+      expect(await rowOf(productId)).toMatchObject({ stockToPush: null, stockHeldReason: 'shop_waiting_opening' });
+    } finally {
+      await testPool().query('update channel.shops set opening_stocktake_id = null, opening_stocktake_number = null where id = $1', [shopId]);
+    }
+  });
+
+  it('GET /shops/:id/listings cũng có hai trường', async () => {
+    const { variantId } = await createVariant(company.companyId);
+    await receive(company.companyId, variantId, 2, 1000);
+    const res = await request(testApp())
+      .get(`/api/v1/channel/shops/${shopId}/listings`)
+      .set('Authorization', `Bearer ${company.ceo.token}`);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.items.find((r: { variantId: string }) => r.variantId === variantId)).toMatchObject({ stockToPush: 2, stockHeldReason: null });
+  });
+});
