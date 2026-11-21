@@ -482,7 +482,7 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
       const skus = productSkus(p);
       const sellerSkus = skus.map((x) => x.sellerSku);
       const found: (RemoteSku | null)[] = [];
-      for (const sku of sellerSkus) found.push(deps.findSku ? await deps.findSku(token, sku) : null);
+      for (const sku of sellerSkus) found.push(deps.findSku && !p.skipExistingSkuCheck ? await deps.findSku(token, sku) : null); // #295 regroup: bỏ chống trùng
       const existing = existingFromSkus(sellerSkus, found);
       if (existing) {
         return existing;
