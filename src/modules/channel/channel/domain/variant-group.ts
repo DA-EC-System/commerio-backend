@@ -3,15 +3,18 @@ import { type AttributeOption, CUSTOM_AXIS, type PlatformAttribute } from './pro
 
 export interface GroupVariant {
   id: string;
-  /** Giá trị thuộc tính theo `position` của catalog. */
-  attributes: readonly { attributeId: string; attributeName: string; value: string }[];
+  /** Giá trị thuộc tính theo `position` của catalog. `valueId` để tìm trục gắn ảnh. */
+  attributes: readonly { attributeId: string; attributeName: string; value: string; valueId?: string }[];
+  /** Ảnh phân loại của SKU theo giá trị ở thuộc tính gắn ảnh (catalog #340); `url` rỗng coi như không có. */
+  image?: { attributeValueId: string; url: string } | null;
 }
 
 export interface GroupAxis {
   /** Mã sale prop của leaf; null là trục tự đặt tên (`axisMap` = `__custom`). */
   code: string | null;
   name: string;
-  values: { optionId: string | null; label: string }[];
+  /** `imageUrl`: link ảnh catalog của giá trị (chưa nằm trên sàn); bên gọi tải lên rồi điền `imageUri`. */
+  values: { optionId: string | null; label: string; imageUrl?: string }[];
 }
 
 export type VariantGroup =
@@ -62,5 +65,28 @@ export function groupVariants(
     }
     axes.push(axis);
   }
+  attachImages(variants, ids, axes, valuesOf);
   return { ok: true, axes, valuesOf };
+}
+
+/**
+ * Ảnh theo giá trị (#295): trục gắn ảnh là trục có giá trị trùng `image.attributeValueId` của SKU. Sàn bắt buộc ảnh cho
+ * **mọi** giá trị của trục đã gắn ảnh (TikTok OAS `sku_img`: "you must attach an image for each value of the chosen
+ * attribute"), nên chỉ gắn khi mọi giá trị của trục trong lượt này có ảnh; thiếu một giá trị thì không gắn ảnh nào (catalog
+ * đã báo `variantImages` ở độ hoàn thiện).
+ */
+function attachImages(variants: readonly GroupVariant[], ids: readonly string[], axes: GroupAxis[], valuesOf: Map<string, string[]>) {
+  const withImage = variants.filter((v) => v.image?.url);
+  if (!withImage.length) return;
+  const at = ids.findIndex((_, i) => withImage.some((v) => v.attributes[i]?.valueId === v.image!.attributeValueId));
+  if (at < 0) return;
+  const urlOf = new Map<string, string>();
+  for (const v of withImage) {
+    if (v.attributes[at]?.valueId !== v.image!.attributeValueId) continue;
+    const label = valuesOf.get(v.id)![at]!;
+    if (!urlOf.has(label)) urlOf.set(label, v.image!.url);
+  }
+  const axis = axes[at]!;
+  if (!axis.values.every((x) => urlOf.has(x.label))) return;
+  for (const x of axis.values) x.imageUrl = urlOf.get(x.label)!;
 }

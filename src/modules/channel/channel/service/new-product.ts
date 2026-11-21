@@ -8,7 +8,7 @@ import { groupVariants } from '../domain/variant-group.ts';
 import type { ListingRow } from '../repository/listings.ts';
 import type { ShopRow } from '../repository/shops.ts';
 import { currentPrices } from './listing-prices.ts';
-import { refreshPermission, sizeChartRuleOf, uploadAll } from './listing-push.ts';
+import { refreshPermission, sizeChartRuleOf, uploadAll, uploadAxisImages } from './listing-push.ts';
 import { countedOf } from './listing-sync.ts';
 import type { MarketplaceAdapter, NewProduct, ProductSku } from './marketplaces/index.ts';
 import { evaluatePrices } from './price-inputs.ts';
@@ -112,7 +112,7 @@ export async function prepareNewProduct(args: {
     return { ok: false, blocked: blocked.length ? blocked : rows.map((row) => ({ row, code: 'category_unmapped', message: 'Chưa chọn category của sàn cho sản phẩm' })) };
   }
   const group = groupVariants(
-    ready.map((r) => ({ id: r.v.id, attributes: r.v.attributes })),
+    ready.map((r) => ({ id: r.v.id, attributes: r.v.attributes, image: r.v.image ?? null })),
     map.row.axisMap,
     map.attributes,
   );
@@ -120,6 +120,7 @@ export async function prepareNewProduct(args: {
   for (const r of ready) r.sku.values = group.valuesOf.get(r.v.id)!;
   const lead = ready[0]!.v;
   const imageUrls = await uploadAll(adapter, accessToken, args.imageUrls);
+  const salesAttributes = await uploadAxisImages(adapter, accessToken, group.axes);
   const sizeChartUri =
     args.sizeChartUrl && sizeChartRule !== 'unsupported' ? await adapter.uploadImage(accessToken, args.sizeChartUrl, 'size_chart') : null;
   const product: NewProduct = {
@@ -132,7 +133,7 @@ export async function prepareNewProduct(args: {
     imageUrls,
     ...(sizeChartUri && { sizeChartUri }),
     ...ready[0]!.sku,
-    ...(group.axes.length && { salesAttributes: group.axes }),
+    ...(salesAttributes.length && { salesAttributes }),
     skus: ready.map((r) => r.sku),
     idempotencyKey: args.idempotencyKey,
     skipExistingSkuCheck: true,

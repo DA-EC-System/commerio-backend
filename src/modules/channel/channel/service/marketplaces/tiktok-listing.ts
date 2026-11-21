@@ -276,7 +276,8 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
    * `use_case` của Upload Product Image 202309 (OAS cục bộ, tra 20/11/2026). Ảnh minh chứng (#476) gửi `DESCRIPTION_IMAGE`:
    * chỉ chịu giới hạn chung 100–20000 px; `MAIN_IMAGE` đòi 300–4000 px và ép ảnh lệch tỉ lệ 3:4–4:3 về 1:1.
    */
-  const USE_CASE = { main: 'MAIN_IMAGE', size_chart: 'SIZE_CHART_IMAGE', evidence: 'DESCRIPTION_IMAGE' } as const;
+  // `sku_img.uri` phải tải với `ATTRIBUTE_IMAGE` (OAS Create Product 202309, `skus[].sales_attributes[].sku_img`).
+  const USE_CASE = { main: 'MAIN_IMAGE', size_chart: 'SIZE_CHART_IMAGE', evidence: 'DESCRIPTION_IMAGE', sale_attribute: 'ATTRIBUTE_IMAGE' } as const;
 
   // Sàn chỉ nhận file (multipart), không nhận URL: tải ảnh nguồn rồi đưa lên. Không gửi `shop_cipher` (API không theo
   // gian hàng). Trả `uri`, chuỗi Create Product cần trong `main_images`.
