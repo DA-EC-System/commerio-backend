@@ -95,6 +95,7 @@ const EXPECTED_TABLES: Record<string, readonly string[]> = {
     'conversation_notes',
     'conversation_tags',
     'conversations',
+    'listing_sync_runs',
     'listings',
     'marketplaces',
     'message_channels',
