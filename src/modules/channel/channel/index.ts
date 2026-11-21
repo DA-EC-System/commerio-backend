@@ -100,6 +100,8 @@ export { loseShopAuth, markNeedsReauth } from './service/shops.ts';
 // Cho finance kéo quyết toán (#117), tiêm qua `ctx.settlementSource` ở `src/wiring.ts`.
 export { settlementPayouts, settlementTransactions, shopsToSettle } from './service/settlement-port.ts';
 export type { Payout, SettlementTxn } from './service/marketplaces/index.ts';
+// Finance kiểm `platform` của biểu phí mẫu (Documents/21 §21.6) qua `src/wiring.ts`.
+export { listMarketplaces } from './repository/marketplaces.ts';
 
 // Gian hàng của công ty cho checklist onboarding (#461).
 export { shopSetupState } from './repository/shops.ts';

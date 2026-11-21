@@ -16,6 +16,8 @@ export const financeModule: ModuleDefinition = {
 export { getEffectiveConfig } from './service/config-versions.ts';
 // Bộ lọc giá theo gian hàng của channel (#225) đọc phí, thuế, lãi tối thiểu đang áp dụng.
 export { type ConfigPayload, feePctOf, feeRoundingOf, vnDate } from './domain/config-version.ts';
+// Biểu phí mẫu (Documents/21 §21.6): route quản trị nền tảng ở core/platform nhận các hàm này qua `src/wiring.ts`.
+export { createFeeTemplate, type FeeTemplateDeps, type FeeTemplateView, listPlatformFeeTemplates, updateFeeTemplate } from './service/fee-templates.ts';
 // Loại khoản trong sổ: adapter sàn của channel điền `kind` cho khoản quyết toán (#203).
 export { LEDGER_KINDS, type LedgerKind } from './domain/ledger.ts';
 // Ghi sổ theo sự kiện (#116, Documents/21 §11.2); consumer `finance-ledger` đăng ký ở startFinanceBackground (#228).

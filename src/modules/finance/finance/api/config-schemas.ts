@@ -35,8 +35,32 @@ export const CreateConfigBody = z
     supersedesId: z.uuid('Bản bị sửa không hợp lệ').optional(),
     isCorrection: z.boolean('isCorrection là true hoặc false').optional(),
     retroactiveFrom: day('Ngày hồi tố').optional(),
+    templateId: z.uuid('Biểu phí mẫu không hợp lệ').optional().meta({
+      description: 'Biểu phí mẫu đã chọn (chỉ `kind = fee`, Documents/21 §21.6): chỉ để ghi `sourceTemplate`, `payload` vẫn bắt buộc',
+    }),
   })
   .meta({ id: 'FinanceConfigCreateRequest' });
+
+export const FeeTemplateQuery = z.object({
+  platform: z.string().trim().min(1).max(30).optional().meta({ description: 'Lọc theo mã sàn' }),
+});
+
+/** Biểu phí mẫu của nền tảng (Documents/21 §21.6). */
+export const FeeTemplate = z
+  .object({
+    id: z.uuid(),
+    platform: z.string(),
+    shopType: z.string(),
+    shopTypeLabel: z.string(),
+    payload: z.record(z.string(), z.unknown()).meta({ description: 'Cùng hình dạng `payload` của `fee` (§21.4)' }),
+    sources: z.array(z.object({ title: z.string(), url: z.string(), updatedAt: z.iso.date() })),
+    effectiveFrom: z.iso.date(),
+    note: z.string(),
+    version: z.int(),
+    updatedAt: z.iso.datetime(),
+  })
+  .meta({ id: 'FeeTemplate' });
+export const FeeTemplateList = z.object({ items: z.array(FeeTemplate) }).meta({ id: 'FeeTemplateList' });
 
 export const UpdateConfigBody = z
   .object({ version: VersionBody.shape.version, payload, effectiveFrom: day('Ngày hiệu lực') })
@@ -85,6 +109,11 @@ export const FinanceConfigSummary = z
     approvedBy: UserRef.nullable(),
     selfApproved: z.boolean(),
     dryRun: DryRun.nullable(),
+    sourceTemplate: z
+      .object({ id: z.uuid(), platform: z.string(), shopType: z.string(), version: z.int() })
+      .nullable()
+      .meta({ description: 'Biểu phí mẫu đã dùng khi soạn (Documents/21 §21.6); null khi soạn tay hay mẫu đã bị xoá' }),
+    templateOutdated: z.boolean().meta({ description: 'Bản `active` dựng từ mẫu mà mẫu đã đổi sau đó: nhắc xem lại' }),
     createdAt: z.iso.datetime(),
     version: z.int(),
   })
