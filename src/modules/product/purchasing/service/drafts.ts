@@ -34,9 +34,16 @@ import {
 } from '../repository/drafts.ts';
 import { findLines, type LineRow, lockRequest } from '../repository/requests.ts';
 import type { DraftVariantFacts } from '../repository/schema.ts';
-import type { Actor } from './request-views.ts';
 
-// Tự dựng lỗi (không import giá trị từ request-views: request-views đọc `draftSummaries`, tránh vòng).
+/** Cùng hình `Actor` của request-views; khai lại vì request-views import file này (depcruise cấm vòng, kể cả import kiểu). */
+export interface Actor {
+  readonly companyId: string;
+  readonly accountId: string;
+  readonly permissions: readonly string[];
+  readonly enabledModules: readonly string[];
+}
+
+// Tự dựng lỗi (không import từ request-views: request-views đọc `draftSummaries`, tránh vòng).
 const notFound = (what: string) => new AppError(404, 'not_found', `Không tìm thấy ${what}`);
 const invalid = (errors: Record<string, string>, code = 'validation_failed') => new AppError(422, code, 'Dữ liệu gửi lên không hợp lệ', { errors });
 
@@ -87,6 +94,18 @@ const contentOf = (d: DraftRow): DraftContent => ({
 function factsOfDraft(d: DraftRow, combo: Record<string, string>): DraftFacts {
   const own = d.variantFacts.find((f) => comboKey(f.optionValues) === comboKey(combo));
   return factsFor(d.variantDefaults, own);
+}
+
+const FACT_KEYS = ['standardPrice', 'targetNetPrice', 'weightG', 'lengthMm', 'widthMm', 'heightMm', 'minQty'] as const;
+
+/** Gộp số gửi lên vào số đang lưu theo từng ô: vắng là giữ, `null` là xoá (không lưu khoá rỗng). */
+function mergeFacts(current: DraftVariantFacts, sent: DraftVariantFacts): DraftVariantFacts {
+  const out: Record<string, string | number> = {};
+  for (const k of FACT_KEYS) {
+    const v = sent[k] === undefined ? current[k] : sent[k];
+    if (v !== null && v !== undefined) out[k] = v;
+  }
+  return out as DraftVariantFacts;
 }
 
 /** Tiền lưu chuỗi `numeric`, ra API số nguyên đồng (21 R2). */
@@ -177,10 +196,20 @@ export async function syncDrafts(companyId: string, requestId: string): Promise<
   }
 }
 
-const canView = (actor: Actor) =>
-  ['purchasing.request.manage', 'purchasing.request.approve', 'purchasing.receipt.manage', 'purchasing.return.manage', 'catalog.product.manage'].some((p) =>
-    hasPermission(actor, p),
-  );
+/** Xem bản soạn (21 mục 16.2): một quyền xem đề nghị (16.1) hoặc `catalog.product.manage`. */
+export const DRAFT_VIEW_PERMISSIONS = [
+  'catalog.product.manage',
+  'purchasing.request.manage',
+  'purchasing.request.approve',
+  'purchasing.receipt.manage',
+  'purchasing.return.manage',
+] as const;
+/** Sửa bản soạn (21 mục 16.2): `purchasing.request.manage` hoặc `catalog.product.manage`. */
+export const DRAFT_EDIT_PERMISSIONS = ['catalog.product.manage', 'purchasing.request.manage'] as const;
+
+const canView = (actor: Actor) => DRAFT_VIEW_PERMISSIONS.some((p) => hasPermission(actor, p));
+const canEdit = (actor: Actor) => DRAFT_EDIT_PERMISSIONS.some((p) => hasPermission(actor, p));
+const forbidden = () => new AppError(403, 'forbidden', 'Bạn không có quyền xem hoặc sửa bản soạn trước của sản phẩm mới');
 
 export async function getDraft(actor: Actor, id: string): Promise<ProductDraftView> {
   return withCompany(actor.companyId, async () => {
@@ -191,6 +220,7 @@ export async function getDraft(actor: Actor, id: string): Promise<ProductDraftVi
 }
 
 export async function listDraftPage(actor: Actor, q: { pending: boolean; page: number; pageSize: number }) {
+  if (!canView(actor)) throw forbidden();
   return withCompany(actor.companyId, async () => {
     const { items, total } = await listDrafts(q);
     const drafts = items.map((i) => i.draft);
@@ -222,6 +252,8 @@ const PRODUCT_KEYS = ['description', 'brand', 'originCountry', 'imageFileIds', '
  * `variant_created`. Thứ tự khoá: đề nghị → bản soạn (ghi sổ phiếu nhận khoá đề nghị trước khi chép).
  */
 export async function updateDraftContent(actor: Actor, id: string, input: DraftUpdateInput): Promise<ProductDraftView> {
+  // Kiểm quyền trước mọi việc, kể cả `confirmUploads` (hỏi kho tệp, đánh dấu tệp đã tải): route đã kiểm, service kiểm lại.
+  if (!canEdit(actor)) throw forbidden();
   const fileIds = [...(input.imageFileIds ?? []), ...(input.sizeChartFileId ? [input.sizeChartFileId] : []), ...(input.optionImages ?? []).map((o) => o.fileId)];
   await confirmUploads(actor.companyId, fileIds);
   return withCompany(actor.companyId, async () => {
@@ -246,14 +278,14 @@ export async function updateDraftContent(actor: Actor, id: string, input: DraftU
     const errors: Record<string, string> = {};
     let code = 'validation_failed';
     const canReorder = hasPermission(actor, 'inventory.reorder.manage');
-    if (input.variantDefaults?.minQty != null && !canReorder) errors['variantDefaults.minQty'] = 'Cần quyền chỉnh ngưỡng tồn';
+    if (input.variantDefaults?.minQty !== undefined && !canReorder) errors['variantDefaults.minQty'] = 'Cần quyền chỉnh ngưỡng tồn';
     for (const [i, v] of (input.variants ?? []).entries()) {
       const line = shape.lines.find((l) => comboKey(toRecord(l.newOptionValues)) === comboKey(v.optionValues));
       if (!line) errors[`variants.${i}.optionValues`] = 'Không có dòng nào trên đề nghị có biến thể này';
       else if (line.variantId) {
         errors[`variants.${i}`] = 'Biến thể đã được tạo khi nhập kho; sửa ở trang sản phẩm';
         code = 'variant_created';
-      } else if (v.minQty != null && !canReorder) errors[`variants.${i}.minQty`] = 'Cần quyền chỉnh ngưỡng tồn';
+      } else if (v.minQty !== undefined && !canReorder) errors[`variants.${i}.minQty`] = 'Cần quyền chỉnh ngưỡng tồn';
     }
     Object.assign(
       errors,
@@ -276,11 +308,17 @@ export async function updateDraftContent(actor: Actor, id: string, input: DraftU
     if (input.specs !== undefined) set.specs = [...input.specs];
     if (input.imageAxis !== undefined) set.imageAxis = input.imageAxis?.trim() || null;
     if (input.optionImages !== undefined) set.optionImages = input.optionImages;
-    if (input.variantDefaults !== undefined) set.variantDefaults = input.variantDefaults;
+    // Số chung và số theo tổ hợp gộp theo từng ô như các trường cấp trên: vắng là giữ, `null` là xoá (tổ hợp xoá thì dùng số chung).
+    if (input.variantDefaults !== undefined) set.variantDefaults = mergeFacts(draft.variantDefaults, input.variantDefaults);
     if (input.variants !== undefined) {
-      // Thay số của các tổ hợp gửi lên; tổ hợp không gửi giữ nguyên.
-      const sent = new Set(input.variants.map((v) => comboKey(v.optionValues)));
-      set.variantFacts = [...draft.variantFacts.filter((f) => !sent.has(comboKey(f.optionValues))), ...input.variants];
+      const facts = [...draft.variantFacts];
+      for (const v of input.variants) {
+        const i = facts.findIndex((f) => comboKey(f.optionValues) === comboKey(v.optionValues));
+        const { optionValues, ...sent } = v;
+        if (i < 0) facts.push({ optionValues, ...mergeFacts({}, sent) });
+        else facts[i] = { optionValues: facts[i]!.optionValues, ...mergeFacts(facts[i]!, sent) };
+      }
+      set.variantFacts = facts;
     }
     if (!(await updateDraftIfVersion(id, input.version, set))) {
       throw new AppError(409, 'version_conflict', 'Có người vừa sửa bản soạn này', { current: await toDraftView((await findDraft(id))!) });
