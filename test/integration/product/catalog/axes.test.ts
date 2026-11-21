@@ -75,11 +75,13 @@ describe('POST /catalog/products với axes (AC-2, AC-S8)', () => {
 
   it('trục chỉ có tên trùng thuộc tính có sẵn ("màu sắc" chữ thường) dùng lại thuộc tính đó; giá trị trùng giá trị có sẵn dùng lại (AC-S8, AC-S12)', async () => {
     const { token, group, color } = await freshCompany();
+    const before = await attrs(token);
     const res = await api(token).post('/products', body(uniq('Áo'), group.id, [{ name: 'màu sắc', values: [{ value: 'đen' }] }], [['đen']]));
     expect(res.status, JSON.stringify(res.body)).toBe(201);
     const after = await attrs(token);
-    expect(after).toHaveLength(4);
-    expect(after.find((a) => a.id === color.id)!.values).toHaveLength(8);
+    // Không tạo thuộc tính, giá trị mới (#531: số thuộc tính, giá trị chuẩn theo `DEFAULT_ATTRIBUTES`).
+    expect(after).toHaveLength(before.length);
+    expect(after.find((a) => a.id === color.id)!.values).toHaveLength(before.find((a) => a.id === color.id)!.values.length);
     expect(res.body.variants[0].attributes[0]).toMatchObject({ value: 'Đen' });
   });
 

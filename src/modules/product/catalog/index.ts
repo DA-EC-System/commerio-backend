@@ -16,7 +16,7 @@ export { hasCatalogData } from './repository/variants.ts';
 export { findAttributeKinds as attributeKindsOf } from './repository/attributes.ts';
 // Dữ liệu có sẵn của công ty mới (#447, Documents/21 mục 11.3); core gọi qua `ModuleContext` lúc đăng ký.
 export { seedCompanyDefaults } from './service/seed.ts';
-export { DEFAULT_ATTRIBUTES, DEFAULT_GROUPS } from './domain/defaults.ts';
+export { DEFAULT_ATTRIBUTES, DEFAULT_GROUPS, GROUP_RENAMES, GROUP_SPLITS } from './domain/defaults.ts';
 /** Độ hoàn thiện theo SKU (#204); `product/index.ts` ghép với ngưỡng tồn thành `variantReadiness` cho channel. */
 export { variantReadinessOf } from './service/labels.ts';
 // Sửa hàng loạt có gợi ý (#242): dữ liệu của purchasing, inventory, sales vào qua cổng này (src/modules/product/index.ts).

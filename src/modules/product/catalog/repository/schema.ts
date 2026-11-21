@@ -61,6 +61,10 @@ export const productGroups = catalogSchema.table(
     // (`size_chart_missing`, 21 §18.5).
     axis1AttributeId: uuid('axis1_attribute_id').references((): AnyPgColumn => attributes.id, { onDelete: 'restrict' }),
     axis2AttributeId: uuid('axis2_attribute_id').references((): AnyPgColumn => attributes.id, { onDelete: 'restrict' }),
+    // Gộp 12 danh mục cũ vào 27 danh mục chuẩn (#531, Documents/21 mục 5.7): tên cũ khi đổi tên giữ id, và danh mục hẹp
+    // hơn tách ra (FE gợi ý chuyển sản phẩm, người dùng tự xác nhận). Chỉ dòng nền tảng; migration ghi.
+    renamedFrom: text('renamed_from'),
+    splitInto: uuid('split_into').array(),
     ...timestamps,
     ...version,
   },
@@ -70,6 +74,7 @@ export const productGroups = catalogSchema.table(
     ...suggestChecks('product_groups', t),
     check('product_groups_axis_order', sql`${t.axis2AttributeId} is null or ${t.axis1AttributeId} is not null`),
     check('product_groups_axis_distinct', sql`${t.axis1AttributeId} <> ${t.axis2AttributeId}`),
+    check('product_groups_merge_platform', sql`${t.companyId} is null or (${t.renamedFrom} is null and ${t.splitInto} is null)`),
   ],
 );
 
@@ -113,7 +118,7 @@ export const companyGroupSettings = catalogSchema.table(
 
 export { PLATFORM_KINDS, type PlatformKind } from '../domain/specs.ts';
 
-/** Thuộc tính (trục phân loại), hai tầng: Màu sắc, Kích cỡ, Dung tích, Hương vị là dòng nền tảng. */
+/** Thuộc tính (trục phân loại), hai tầng: 23 thuộc tính biến thể chuẩn (`platform_kind`) là dòng nền tảng (#531). */
 export const attributes = catalogSchema.table(
   'attributes',
   {
@@ -129,7 +134,7 @@ export const attributes = catalogSchema.table(
     uniqueIndex('attributes_platform_lower_name_uq').on(sql`lower(${t.name})`).where(sql`${t.companyId} is null`),
     uniqueIndex('attributes_company_lower_name_uq').on(t.companyId, sql`lower(${t.name})`).where(sql`${t.companyId} is not null`),
     uniqueIndex('attributes_platform_kind_uq').on(t.platformKind).where(sql`${t.companyId} is null and ${t.platformKind} is not null`),
-    check('attributes_platform_kind', sql`${t.platformKind} in ('color', 'size', 'volume', 'flavor')`),
+    check('attributes_platform_kind', sql`${t.platformKind} in (${sql.raw(PLATFORM_KINDS.map((k) => `'${k}'`).join(', '))})`),
     // CHECK `attributes_platform_kind_tier` (platform_kind chỉ ở dòng nền tảng) thêm ở migration viết tay
     // `du-lieu-chung-chuyen`, sau khi gộp thuộc tính chuẩn của từng công ty vào dòng nền tảng.
     // Tên trục tối đa 15 ký tự (Lazada `VARIATION_*`, Documents/21 mục 5.2).
@@ -408,6 +413,36 @@ export const groupSpecFields = catalogSchema.table(
     unique('group_spec_fields_group_field_company_uq').on(t.groupId, t.fieldId, t.companyId).nullsNotDistinct(),
     index().on(t.fieldId),
     check('group_spec_fields_position', sql`${t.position} >= 0`),
+  ],
+);
+
+/**
+ * Thuộc tính biến thể được phép của danh mục (#531, Documents/21 mục 5.7, 19 §3.2): chỉ để gợi ý và lọc ô chọn, không
+ * ràng buộc `variant_attribute_values` (sản phẩm dùng thuộc tính ngoài danh sách vẫn lưu, FE cảnh báo). Hai tầng: danh mục
+ * nền tảng có dòng nền tảng; công ty thêm dòng của mình vào danh mục nền tảng (không bỏ được dòng nền tảng); danh mục của
+ * công ty chỉ có dòng công ty. Trục chuẩn luôn nằm trong danh sách (migration ghi, service tự thêm). RLS `tier_*` ở
+ * migration `*_danh-muc-chuan-du-lieu`.
+ */
+export const groupAllowedAttributes = catalogSchema.table(
+  'group_allowed_attributes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    companyId: uuid('company_id'),
+    groupId: uuid('group_id')
+      .notNull()
+      .references(() => productGroups.id, { onDelete: 'cascade' }),
+    // Xoá thuộc tính của công ty thì rút khỏi danh sách.
+    attributeId: uuid('attribute_id')
+      .notNull()
+      .references(() => attributes.id, { onDelete: 'cascade' }),
+    position: integer('position').notNull(),
+    ...timestamps,
+  },
+  (t) => [
+    // Dòng công ty trùng thuộc tính của danh sách nền tảng: service 422.
+    unique('group_allowed_attributes_group_attr_company_uq').on(t.groupId, t.attributeId, t.companyId).nullsNotDistinct(),
+    index().on(t.attributeId),
+    check('group_allowed_attributes_position', sql`${t.position} >= 0`),
   ],
 );
 

@@ -59,6 +59,11 @@ import {
   RemoteSkusQuery,
   OrderPullResult,
   PushBody,
+  MatchBulkBody,
+  MatchBulkResult,
+  CreateVariantBody,
+  CreateVariantParams,
+  CreateVariantResult,
   PriceQuoteBody,
   PriceQuoteList,
   PriceQuoteParams,
@@ -574,6 +579,35 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
       202: { description: 'Chờ CEO duyệt: listing có `pendingMapping`', ...json(ChannelListing) },
       ...onShop,
       409: problemResponse('`shop_not_active`, `mapping_pending`, `invalid_transition`, `version_conflict` kèm `current`'),
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/shops/:id/listings/match-bulk',
+    summary: 'Liên kết SKU sàn hàng loạt (21 §18.9 R2)',
+    description:
+      'Cần `channel.listing.match`. Mỗi cặp một giao dịch riêng qua đúng luật của `listings/match`, thành công được một phần: HTTP 200 kể cả khi có cặp lỗi, `results` theo thứ tự body (`matched`, `pending` chờ CEO duyệt, `failed` kèm `code`, `message` của `listings/match`). Hai cặp trùng `externalSkuId`: 422 `errors["pairs.N.externalSkuId"]`, không ghi cặp nào.',
+    security: bearer,
+    request: { params: ShopParams, body: json(MatchBulkBody) },
+    responses: {
+      200: { description: 'Kết quả theo cặp', ...json(MatchBulkResult) },
+      ...onShop,
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/shops/:id/remote-skus/:externalSkuId/create-variant',
+    summary: 'Tạo SKU kho từ SKU sàn rồi liên kết (21 §18.9 R2)',
+    description:
+      'Cần `channel.listing.match`; tạo SKU kho cần thêm `catalog.product.manage` (thiếu: 403). Cùng luật dòng `create: true` của `POST /setup` (#500): SKU người bán làm SKU kho, giá chuẩn = giá niêm yết trên sàn, giá muốn bán tính ngược theo phí của gian hàng. SKU người bán trùng SKU kho chưa lưu trữ thì không tạo, liên kết vào SKU đó (`created: false`). Một giao dịch: liên kết lỗi thì không tạo gì. Lỗi: 404 → 409 `shop_not_active` → 422 `errors.externalSkuId` (không có trong bản sao SKU sàn, không có SKU người bán, quá dài, trùng SKU kho đã lưu trữ) → 403 → 422 `errors.groupId` → lỗi của `listings/match`.',
+    security: bearer,
+    request: { params: CreateVariantParams, body: json(CreateVariantBody) },
+    responses: {
+      201: { description: 'Đã tạo SKU kho và liên kết', ...json(CreateVariantResult) },
+      200: { description: 'Liên kết vào SKU kho có sẵn', ...json(CreateVariantResult) },
+      202: { description: 'Liên kết vào SKU kho có sẵn, chờ CEO duyệt', ...json(CreateVariantResult) },
+      ...onShop,
+      409: problemResponse('`shop_not_active`, và lỗi 409 của `listings/match`'),
     },
   });
   registry.registerPath({

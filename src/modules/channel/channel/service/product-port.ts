@@ -123,6 +123,14 @@ export interface ProductPort {
 type Extended = VariantSummary &
   Partial<Record<'description', string | null> & Record<'weightG' | 'lengthMm' | 'widthMm' | 'heightMm', number | null>>;
 
+/**
+ * Kind channel đã ánh xạ (`standardSalesAttributes`). Catalog có 23 kind từ #531; kind channel chưa biết coi như không
+ * kind (trục tự đặt hoặc `axis_unmapped`, như thuộc tính riêng) tới khi union của channel thêm kind đó.
+ */
+type ChannelKind = 'color' | 'size' | 'volume' | 'flavor';
+const CHANNEL_KINDS: readonly string[] = ['color', 'size', 'volume', 'flavor'] satisfies ChannelKind[];
+const channelKind = (k: string | null): ChannelKind | null => (k !== null && CHANNEL_KINDS.includes(k) ? (k as ChannelKind) : null);
+
 function toListingVariant(v: Extended): ListingVariant {
   return {
     id: v.id,
@@ -135,7 +143,7 @@ function toListingVariant(v: Extended): ListingVariant {
     attributes: v.attributes.map(({ attributeId, attributeName, platformKind, valueId, value }) => ({
       attributeId,
       attributeName,
-      platformKind,
+      platformKind: channelKind(platformKind),
       valueId,
       value,
     })),
@@ -165,7 +173,7 @@ export function catalogSpecPort(): Pick<ProductPort, 'productSpecs' | 'specField
 export function productPort(ctx: ModuleContext): ProductPort {
   return (
     override ?? {
-      attributes: attributeKindsOf,
+      attributes: async () => (await attributeKindsOf()).map((a) => ({ ...a, platformKind: channelKind(a.platformKind) })),
       variants: async (ids, opts) => (await getVariants(ids, opts)).map(toListingVariant),
       standardPrices: (ids) => standardPricesOf(ctx, ids),
       availableOf,
