@@ -21,6 +21,8 @@ const tag = randomUUID().slice(0, 8);
 const MATERIAL = `t509_material_${tag}`;
 const MATERIAL2 = `t509_material2_${tag}`;
 const STYLE = `t509_style_${tag}`;
+// Mã của ánh xạ mặc định mà cache chưa có leaf nào chứa: nhãn do adapter khai (`defaultAttributeLabels`).
+const SEEDED = `t509_seeded_${tag}`;
 
 const attr = (code: string, extra: Partial<PlatformAttribute> = {}): PlatformAttribute => ({
   code,
@@ -41,7 +43,10 @@ const leafAttrs = [
   attr(MATERIAL, { label: 'Chất liệu', input: 'multiselect', options: [{ id: 'm1', label: 'Bông' }, { id: 'm2', label: 'Polyester' }] }),
   attr(STYLE, { label: `Phong cách ${tag}`, required: true, allowCustom: true }),
 ];
-registerAdapter('lazada', fakeAdapter({ categoriesNeedToken: false, leafAttributes: async () => leafAttrs }));
+registerAdapter(
+  'lazada',
+  fakeAdapter({ categoriesNeedToken: false, leafAttributes: async () => leafAttrs, defaultAttributeLabels: { [SEEDED]: 'Tính năng vật liệu' } }),
+);
 
 const leaf = `LEAF509-${tag}`;
 let ceo: { token: string; companyId: string };
@@ -144,6 +149,15 @@ describe('ánh xạ thông số sang sàn', () => {
     expect(unknown.body.errors['codes.0.attributeCode']).toBeDefined();
     const badOption = await putMapping(materialField.id, [{ attributeCode: MATERIAL, options: [{ optionId: materialField.cotton, platformOptionId: 'zz' }] }]);
     expect(badOption.body.errors['codes.0.options.0']).toBeDefined();
+  });
+
+  it('mã mặc định chưa có trong cache: GET hiện nhãn adapter khai, PUT lại vẫn nhận (không 422)', async () => {
+    const res = await putMapping(styleField, [{ attributeCode: SEEDED }]);
+    expect(res.status).toBe(200);
+    expect(SpecMappingSchema.parse(res.body).codes).toMatchObject([{ attributeCode: SEEDED, attributeLabel: 'Tính năng vật liệu' }]);
+    const row = SpecMappingList.parse((await listMappings()).body).items.find((i) => i.fieldId === styleField)!;
+    expect(row.codes.map((c) => c.attributeLabel)).toEqual(['Tính năng vật liệu']);
+    expect((await putMapping(styleField, [])).status).toBe(200);
   });
 
   it('bỏ một mã thì CSDL xoá ánh xạ lựa chọn của mã đó', async () => {
