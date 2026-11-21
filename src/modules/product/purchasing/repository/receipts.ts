@@ -143,7 +143,7 @@ export async function updateReceipt(id: string, set: Partial<typeof goodsReceipt
 export async function insertReceiptLines(
   companyId: string,
   receiptId: string,
-  lines: readonly { requestLineId: string; variantId: string }[],
+  lines: readonly { requestLineId: string; variantId: string | null }[],
 ): Promise<void> {
   if (!lines.length) return;
   await getDb()

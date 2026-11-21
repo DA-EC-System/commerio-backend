@@ -76,7 +76,8 @@ export const purchaseRequests = purchasingSchema.table(
 );
 
 /**
- * Dòng đề nghị. Dòng sản phẩm mới chưa có `variant_id`; khi duyệt, hệ thống tạo SKU rồi điền vào.
+ * Dòng đề nghị. Dòng sản phẩm mới chưa có `variant_id` tới lần ghi sổ phiếu nhận đầu tiên có đạt hoặc lỗi giữ > 0;
+ * lúc đó hệ thống tạo SKU rồi điền vào (Documents/21 mục 16.3, đổi 22/11/2026; trước đây điền khi duyệt).
  * `còn chờ = ordered − received − defective − closed_short` (25 §3.1), luôn ≥ 0. `excluded`: CEO loại dòng khi duyệt.
  */
 export const purchaseRequestLines = purchasingSchema.table(
@@ -192,6 +193,8 @@ export const goodsReceipts = purchasingSchema.table(
 /**
  * Dòng phiếu nhận: số NCC báo giao, số đạt (vào tồn thực), số lỗi giữ lại (vào chờ xử lý), số trả tại chỗ.
  * `shortage_qty` tự tính. `đạt + lỗi ≤ còn chờ` của dòng đề nghị do service kiểm (khác bảng, `over_outstanding`).
+ * `variant_id` trống khi dòng đề nghị là sản phẩm mới chưa có SKU; ghi sổ điền SKU vừa tạo. Service ép phiếu đã ghi sổ
+ * không còn dòng trống mà có đạt hoặc lỗi giữ > 0 (Documents/19, 21 mục 16.3).
  */
 export const goodsReceiptLines = purchasingSchema.table(
   'goods_receipt_lines',
@@ -204,7 +207,7 @@ export const goodsReceiptLines = purchasingSchema.table(
     requestLineId: uuid('request_line_id')
       .notNull()
       .references(() => purchaseRequestLines.id),
-    variantId: uuid('variant_id').notNull(),
+    variantId: uuid('variant_id'),
     declaredQty: integer('declared_qty').notNull().default(0),
     acceptedQty: integer('accepted_qty').notNull().default(0),
     defectiveQty: integer('defective_qty').notNull().default(0),
