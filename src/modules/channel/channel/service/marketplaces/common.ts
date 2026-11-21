@@ -4,10 +4,10 @@ import { logger } from '../../../../../shared/logger.ts';
 import type { LedgerKind } from '../../../../finance/index.ts';
 import type { RemoteState } from '../../domain/listing.ts';
 import type { PlatformAttribute, PlatformKind, VariantCapabilities } from '../../domain/product-spec.ts';
-import type { ShopCapabilities } from '../../domain/shop.ts';
+import type { DeclaredCapabilities, ShopCapabilities } from '../../domain/shop.ts';
 import type { ResponsibleOrg } from '../../../../core/index.ts';
 
-export type { PlatformAttribute, ShopCapabilities };
+export type { DeclaredCapabilities, PlatformAttribute, ShopCapabilities };
 
 /**
  * Token của một gian hàng. `accessToken`, `refreshToken` là **chuỗi mờ do adapter tự định dạng**: app chỉ mã hoá, lưu,
@@ -754,8 +754,8 @@ export interface MarketplaceAdapter {
   readonly name: string;
   /** Cách nối dùng được với cấu hình hiện tại; rỗng là sàn chưa nối được trên môi trường này. */
   connectMethods(): readonly ConnectMethod[];
-  /** Năng lực tĩnh của sàn, không phụ thuộc cấu hình (Documents/21 §18.6.3). */
-  readonly capabilities: ShopCapabilities;
+  /** Năng lực tĩnh của sàn, không phụ thuộc cấu hình (Documents/21 §18.6.3). Ba cờ còn lại suy từ hàm có cài (`capabilitiesOf`). */
+  readonly capabilities: DeclaredCapabilities;
   /** URL trang uỷ quyền của sàn, mang `state` để kiểm ở callback. */
   authorizeUrl(state: string): string;
   /**
