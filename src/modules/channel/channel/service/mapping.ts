@@ -34,6 +34,7 @@ import { type ChannelListing, moveListing, requesterNames, toListing } from './l
 import type { ProductPort } from './product-port.ts';
 import { type Actor, ownShop } from './shops.ts';
 import { sendSpecFromMatch } from './spec-from-match.ts';
+import { type CannotCreateReason, createBlocker, suggestMatches } from './setup.ts';
 
 const ENTITY = 'listings';
 /** Dòng nhật ký của lần tự duyệt ghép SKU: nhãn là SKU người bán, thiếu thì mã SKU sàn (#352). */
@@ -55,6 +56,13 @@ export interface RemoteSkuItem {
   pendingMapping: ChannelListing['pendingMapping'];
   /** Tên trên sàn khác tên lúc ghép (#396), chỉ với listing đang ghép SKU này. */
   remoteTitleChanged: RemoteTitleChanged | null;
+  /**
+   * Gợi ý liên kết (§18.9 R2), cùng lõi với `/setup` (`suggestMatches`); null khi SKU sàn đã có listing (đã liên kết hoặc
+   * đang chờ duyệt) hay không tìm được. `score` 0..1 chỉ khi `match = 'name'`.
+   */
+  suggestion: { variantId: string; sku: string; productName: string; match: 'sku' | 'name'; score: number | null } | null;
+  canCreate: boolean;
+  cannotCreateReason: CannotCreateReason | 'already_matched' | null;
 }
 
 /** Ghép đang có hiệu lực: dòng tạo ra chỉ để chờ duyệt "không quản tồn" (chưa ai duyệt) là chưa ghép. */
@@ -74,6 +82,7 @@ const invalid = (field: string, message: string) =>
  * Ghép theo `external_sku_id` của listing chưa gỡ. `unmatched`: chỉ SKU chưa có ghép hiệu lực.
  */
 export async function remoteSkus(
+  port: ProductPort,
   actor: Actor,
   shopId: string,
   unmatched: boolean,
@@ -100,9 +109,18 @@ export async function remoteSkus(
     const names = await requesterNames(rows);
     const byExternal = new Map(rows.flatMap((r) => (r.externalSkuId ? [[r.externalSkuId, r] as const] : [])));
     const byPending = new Map(rows.flatMap((r) => (r.pendingExternalSkuId ? [[r.pendingExternalSkuId, r] as const] : [])));
+    // Gợi ý chỉ cho SKU sàn chưa có listing, vào biến thể chưa lưu trữ chưa gắn SKU sàn nào ở gian hàng này (§18.9 R2).
+    const variants = await port.variants();
+    const linked = new Set(rows.flatMap((r) => (r.variantId && (r.externalSkuId || r.pendingExternalSkuId) ? [r.variantId] : [])));
+    const free = remote.filter((r) => !byExternal.has(r.externalSkuId) && !byPending.has(r.externalSkuId));
+    const { chosen } = await suggestMatches(free, variants.filter((v) => !v.archived && !linked.has(v.id)));
+    const suggested = new Map([...chosen].map(([i, c]) => [free[i]!.externalSkuId, c] as const));
+    const cannotCreate = createBlocker(variants, actor);
     const items = remote.map((r): RemoteSkuItem => {
       // SKU sàn chờ CEO duyệt ghép vào listing lỗi đẩy (#346): chưa ghép, CEO duyệt qua listing đó.
       const listing = byExternal.get(r.externalSkuId) ?? byPending.get(r.externalSkuId);
+      const s = suggested.get(r.externalSkuId);
+      const reason = listing ? 'already_matched' : cannotCreate(r.sellerSku);
       const mode = listing?.externalSkuId === r.externalSkuId ? effectiveMode(listing) : null;
       return {
         externalProductId: r.externalProductId,
@@ -118,6 +136,11 @@ export async function remoteSkus(
         listingVersion: listing?.version ?? null,
         pendingMapping: listing ? toListing(listing, names).pendingMapping : null,
         remoteTitleChanged: listing?.externalSkuId === r.externalSkuId ? remoteTitleChanged(listing, r) : null,
+        suggestion: s
+          ? { variantId: s.variant.id, sku: s.variant.sku, productName: s.variant.productName, match: s.score === null ? 'sku' : 'name', score: s.score }
+          : null,
+        canCreate: reason === null,
+        cannotCreateReason: reason,
       };
     });
     return {

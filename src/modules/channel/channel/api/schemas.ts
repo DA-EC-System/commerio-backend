@@ -504,6 +504,22 @@ export const RemoteSkuList = z
           listingVersion: z.number().int().nullable().meta({ description: '`version` của listing đó, gửi kèm khi duyệt; null khi chưa có listing' }),
           pendingMapping,
           remoteTitleChanged: RemoteTitleChanged,
+          suggestion: z
+            .object({
+              variantId: z.uuid(),
+              sku: z.string(),
+              productName: z.string(),
+              match: z.enum(['sku', 'name']).meta({ description: '`name` chỉ là đoán, FE không tự chọn sẵn; liên kết hàng loạt chỉ gom cặp `sku`' }),
+              score: z.number().min(0).max(1).nullable().meta({ description: 'Độ giống tên 0..1, chỉ khi `match = name`' }),
+            })
+            .strict()
+            .nullable()
+            .meta({ description: 'Gợi ý liên kết, cùng lõi với `/setup` (21 §18.9 R2); null khi SKU sàn đã có listing hoặc không tìm được' }),
+          canCreate: z.boolean().meta({ description: 'Tạo được SKU kho từ SKU sàn này (`create-variant`)' }),
+          cannotCreateReason: z
+            .enum(['no_seller_sku', 'sku_too_long', 'sku_taken', 'no_permission', 'already_matched'])
+            .nullable()
+            .meta({ description: 'Có khi và chỉ khi `canCreate = false`; `already_matched`: SKU sàn đã có listing (đã liên kết hoặc chờ duyệt)' }),
         })
         .strict(),
     ),
@@ -539,6 +555,47 @@ export const MatchBody = z
     variantId: z.uuid('Biến thể không hợp lệ').nullable().meta({ description: 'null là "không quản tồn" (cần CEO duyệt)' }),
   })
   .meta({ id: 'ListingMatchInput' });
+
+export const MatchBulkBody = z
+  .object({
+    pairs: z
+      .array(
+        z.object({
+          externalSkuId: z.string('Thiếu SKU sàn').trim().min(1, 'Thiếu SKU sàn').max(200),
+          variantId: z.uuid('Biến thể không hợp lệ'),
+        }),
+      )
+      .min(1, 'Chọn ít nhất một cặp')
+      .max(100, 'Tối đa 100 cặp mỗi lần'),
+  })
+  .meta({ id: 'ListingMatchBulkInput' });
+export const MatchBulkResult = z
+  .object({
+    results: z.array(
+      z
+        .object({
+          externalSkuId: z.string(),
+          variantId: z.uuid(),
+          outcome: z.enum(['matched', 'pending', 'failed']).meta({ description: '`pending`: chờ CEO duyệt, như 202 của `listings/match`' }),
+          code: z.string().nullable().meta({ description: 'Mã lỗi của `listings/match` khi `failed`' }),
+          message: z.string().nullable(),
+        })
+        .strict(),
+    ),
+  })
+  .strict()
+  .meta({ id: 'ListingMatchBulkResult' });
+export const CreateVariantParams = z.object({ id: z.string(), externalSkuId: z.string().trim().min(1).max(200) });
+export const CreateVariantBody = z.object({ groupId: z.uuid('Chọn nhóm hàng') }).meta({ id: 'RemoteSkuCreateVariantInput' });
+export const CreateVariantResult = z
+  .object({
+    variantId: z.uuid(),
+    created: z.boolean().meta({ description: '`false`: SKU người bán trùng SKU kho có sẵn, liên kết vào SKU đó' }),
+    pending: z.boolean().meta({ description: 'Liên kết chờ CEO duyệt (HTTP 202)' }),
+    listing: ChannelListing,
+  })
+  .strict()
+  .meta({ id: 'RemoteSkuCreateVariantResult' });
 
 export const MatchPreviewQuery = z.object({
   externalSkuId: z.string('Thiếu SKU sàn').trim().min(1, 'Thiếu SKU sàn').max(200),
