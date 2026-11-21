@@ -8,7 +8,7 @@ import { stopJobs } from '#src/modules/core/platform/service/jobs/boss.ts';
 import { ChannelListing, ListingList, PushResults } from '#src/modules/channel/channel/api/schemas.ts';
 import { variantsBySellerSku } from '#src/modules/channel/channel/repository/raw-orders.ts';
 import { runListingPush } from '#src/modules/channel/channel/service/listing-push.ts';
-import type { NewProduct } from '#src/modules/channel/channel/service/marketplaces/common.ts';
+import { MarketplaceError, type NewProduct } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
 import { type ListingVariant, setProductPort } from '#src/modules/channel/channel/service/product-port.ts';
 import { withCompany } from '#src/shared/db/client.ts';
@@ -80,7 +80,7 @@ setProductPort(port);
 
 const createProduct = vi.fn(async (_t: string, p: NewProduct) => ({ externalProductId: `item-${p.sellerSku}`, externalSkuId: `sku-${p.sellerSku}`, live: false }));
 const deactivate = vi.fn(async () => {});
-const removeVariants = vi.fn(async () => {});
+const removeVariants = vi.fn(async (..._a: unknown[]): Promise<void> => {});
 registerAdapter(
   'lazada',
   fakeAdapter({
@@ -474,6 +474,27 @@ describe('gỡ listing', () => {
     expect(removeVariants).not.toHaveBeenCalled();
     expect(deactivate).toHaveBeenCalledWith(expect.any(String), item, `sku-${b.sku}`);
     expect((await rowsOf(b.id))[0]).toMatchObject({ status: 'delisted', external_product_id: item });
+  });
+
+  it('bản sao đếm thừa SKU nhưng sàn báo last_variant: tắt SKU, giữ mã sàn như SKU cuối (#295, sửa sau DoD staging)', async () => {
+    const [a, b] = [fresh('CMR-LAST-A'), fresh('CMR-LAST-B')];
+    const item = `item-last-${randomUUID().slice(0, 6)}`;
+    for (const v of [a, b]) {
+      await testPool().query(
+        `insert into channel.listings (company_id, shop_id, variant_id, seller_sku, status, external_product_id, external_sku_id, content_source)
+         values ($1, $2, $3, $4, 'live', $5, $6, 'app')`,
+        [company.companyId, shopId, v.id, v.sku, item, `sku-${v.sku}`],
+      );
+    }
+    removeVariants.mockClear();
+    deactivate.mockClear();
+    removeVariants.mockRejectedValueOnce(new MarketplaceError('rejected', 'last_variant', 'SKU cuối'));
+    const [row] = await rowsOf(a.id);
+    const res = await auth(app().post(`/api/v1/channel/shops/${shopId}/listings/${a.id}/delist`)).send({ version: row.version });
+    expect(res.status).toBe(200);
+    expect(removeVariants).toHaveBeenCalledTimes(1);
+    expect(deactivate).toHaveBeenCalledWith(expect.any(String), item, `sku-${a.sku}`);
+    expect((await rowsOf(a.id))[0]).toMatchObject({ status: 'delisted', external_product_id: item, external_sku_id: `sku-${a.sku}` });
   });
 
   it('listing đang pushing thì gỡ 409 invalid_transition (21 §18.6.4)', async () => {

@@ -1241,8 +1241,16 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
       return { skus, live: data.item_status === 'Active' };
     },
     // Gỡ phân loại (#295): RemoveProduct `sku_id_list` = JSON mảng `SkuId_<item>_<sku>` (đo 21/11/2026, L3); giá trị trục
-    // không còn SKU nào dùng thì sàn tự bỏ. Gỡ hết SKU thì mất cả item: bên gọi không gọi hàm này khi đó.
+    // không còn SKU nào dùng thì sàn tự bỏ. Gỡ hết SKU thì sàn xoá cả item (gọi thật 21/11/2026 trên staging: đọc lại báo
+    // E207, request_id 2141336017952241347675401), nên đọc item trước: không còn SKU nào khác chưa xoá thì `last_variant`
+    // như TikTok, bên gọi tắt SKU thay vì gỡ. Bản sao SKU sàn của app có thể cũ, không dùng để quyết.
     async removeVariants(accessToken, itemId, skuIds) {
+      const data = (await call(config.apiUrl, '/product/item/get', { access_token: accessToken, item_id: itemId }, 'GET')).data as Row | undefined;
+      const gone = new Set(skuIds.map(String));
+      const rest = ((Array.isArray(data?.skus) ? data.skus : []) as Row[]).filter(
+        (x) => !gone.has(String(x.SkuId ?? '')) && String(x.Status ?? '').toLowerCase() !== 'deleted',
+      );
+      if (!rest.length) throw new MarketplaceError('rejected', 'last_variant', 'Không gỡ được SKU cuối cùng của sản phẩm trên sàn; tắt SKU');
       await removeSkus(accessToken, itemId, skuIds);
     },
     // UpdateProduct (open.lazada.com "Update a product", tra 11/11/2026): payload như `/product/create`, `SkuId` bắt buộc
