@@ -1,6 +1,6 @@
 {
-  "id": "c376d111-4675-44f9-ad9d-040b85fc3725",
-  "prevId": "3d7dfa5f-8ed8-4e48-a63b-d1ccf4017d67",
+  "id": "4b946417-677e-4009-aafa-c22207d90138",
+  "prevId": "aca29b7d-585c-45e6-abf2-e8c9ea1135a4",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -14413,6 +14413,179 @@
         "goods_receipts_posted": {
           "name": "goods_receipts_posted",
           "value": "(\"product\".\"goods_receipts\".\"status\" in ('matched', 'short', 'resolved')) = (\"product\".\"goods_receipts\".\"posted_at\" is not null)"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "product.purchase_product_drafts": {
+      "name": "purchase_product_drafts",
+      "schema": "product",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "company_id": {
+          "name": "company_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "request_id": {
+          "name": "request_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "parent_key": {
+          "name": "parent_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "brand": {
+          "name": "brand",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "origin_country": {
+          "name": "origin_country",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "image_file_ids": {
+          "name": "image_file_ids",
+          "type": "uuid[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::uuid[]"
+        },
+        "size_chart_file_id": {
+          "name": "size_chart_file_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "specs": {
+          "name": "specs",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "image_axis": {
+          "name": "image_axis",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "option_images": {
+          "name": "option_images",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "variant_defaults": {
+          "name": "variant_defaults",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "variant_facts": {
+          "name": "variant_facts",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "product_id": {
+          "name": "product_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updated_by": {
+          "name": "updated_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "purchase_product_drafts_request_id_purchase_requests_id_fk": {
+          "name": "purchase_product_drafts_request_id_purchase_requests_id_fk",
+          "tableFrom": "purchase_product_drafts",
+          "tableTo": "purchase_requests",
+          "schemaTo": "product",
+          "columnsFrom": [
+            "request_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "purchase_product_drafts_request_parent_uq": {
+          "name": "purchase_product_drafts_request_parent_uq",
+          "nullsNotDistinct": false,
+          "columns": [
+            "request_id",
+            "parent_key"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "purchase_product_drafts_images": {
+          "name": "purchase_product_drafts_images",
+          "value": "cardinality(\"product\".\"purchase_product_drafts\".\"image_file_ids\") <= 9"
+        },
+        "purchase_product_drafts_brand": {
+          "name": "purchase_product_drafts_brand",
+          "value": "\"product\".\"purchase_product_drafts\".\"brand\" is null or char_length(\"product\".\"purchase_product_drafts\".\"brand\") <= 100"
+        },
+        "purchase_product_drafts_origin": {
+          "name": "purchase_product_drafts_origin",
+          "value": "\"product\".\"purchase_product_drafts\".\"origin_country\" is null or \"product\".\"purchase_product_drafts\".\"origin_country\" ~ '^[A-Z]{2}$'"
         }
       },
       "isRLSEnabled": false
