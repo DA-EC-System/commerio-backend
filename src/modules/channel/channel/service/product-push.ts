@@ -21,7 +21,7 @@ import {
 import type { SyncError } from '../repository/schema.ts';
 import { findShopRow } from '../repository/shops.ts';
 import { currentPrices } from './listing-prices.ts';
-import { CLOCK_SKEW_MS, errorOf, finish, PUSH_ATTEMPTS, refreshPermission, sizeChartRuleOf, uploadAll } from './listing-push.ts';
+import { CLOCK_SKEW_MS, errorOf, finish, PUSH_ATTEMPTS, refreshPermission, sizeChartRuleOf, uploadAll, uploadAxisImages } from './listing-push.ts';
 import { countedOf } from './listing-sync.ts';
 import { updateListing } from './listing-writes.ts';
 import { type CreatedSku, MarketplaceError, type NewProduct, PRECHECK_CODES, type ProductSku } from './marketplaces/index.ts';
@@ -132,7 +132,7 @@ export async function runProductPush(port: ProductPort, job: ProductPushJob): Pr
   }
   if (!ready.length) return;
   const group = groupVariants(
-    ready.map((r) => ({ id: r.v.id, attributes: r.v.attributes })),
+    ready.map((r) => ({ id: r.v.id, attributes: r.v.attributes, image: r.v.image ?? null })),
     map!.row.axisMap,
     map!.attributes,
   );
@@ -145,6 +145,7 @@ export async function runProductPush(port: ProductPort, job: ProductPushJob): Pr
 
   try {
     const imageUrls = await uploadAll(adapter, accessToken, job.imageUrls);
+    const salesAttributes = await uploadAxisImages(adapter, accessToken, group.axes);
     const sizeChartUri =
       job.sizeChartUrl && sizeChartRule !== 'unsupported' ? await adapter.uploadImage(accessToken, job.sizeChartUrl, 'size_chart') : null;
     const product: NewProduct = {
@@ -158,7 +159,7 @@ export async function runProductPush(port: ProductPort, job: ProductPushJob): Pr
       imageUrls,
       ...(sizeChartUri && { sizeChartUri }),
       ...ready[0]!.sku,
-      ...(group.axes.length && { salesAttributes: group.axes }),
+      ...(salesAttributes.length && { salesAttributes }),
       skus: ready.map((r) => r.sku),
       idempotencyKey: `cm-sp-${sp.id}-${new Date(job.pushStartedAt).getTime()}`,
     };
