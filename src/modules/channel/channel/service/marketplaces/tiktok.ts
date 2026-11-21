@@ -32,6 +32,7 @@ import {
 } from './tiktok-client.ts';
 import { tiktokOrderMethods, type TiktokOrderDeps } from './tiktok-orders.ts';
 import { tiktokReturnMethods } from './tiktok-returns.ts';
+import { tiktokDeleteMethods } from './tiktok-delete.ts';
 
 export type { TiktokClient, TiktokConfig } from './tiktok-client.ts';
 
@@ -593,6 +594,8 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
     // cả WEBP, HEIC, BMP; giữ JPG, PNG như Lazada để một luật cho ô ảnh ở FE.
     returnImageTypes: ['image/jpeg', 'image/png'],
     ...tiktokOrderMethods(client, deps),
+    // Xoá sản phẩm sàn cho gom lại dữ liệu cũ (#295).
+    ...tiktokDeleteMethods(client),
   };
 }
 

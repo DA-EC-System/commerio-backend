@@ -23,6 +23,7 @@ import { pullShopOrders } from '../service/order-pull.ts';
 import { RemoteSkusRetryLater } from '../service/remote-skus.ts';
 import { acknowledgeRemoteTitle } from '../service/remote-title.ts';
 import { productPort } from '../service/product-port.ts';
+import { requestRegroup, separateProductsOf } from '../service/product-regroup.ts';
 import * as prices from '../service/pending-prices.ts';
 import * as setup from '../service/setup.ts';
 import { deleteShop } from '../service/shop-delete.ts';
@@ -63,6 +64,7 @@ import {
   CategorySyncBody,
   ProductSpecBody,
   ProductListingsParams,
+  RegroupParams,
   ProductSpecParams,
   ProductSpecQuery,
   ShopParams,
@@ -344,7 +346,13 @@ export function channelRouter(ctx: ModuleContext): Router {
 
   router.get('/products/:productId/listings', view, validate({ params: ProductListingsParams }), async (_req, res) => {
     const { productId } = validated<typeof ProductListingsParams>(res, 'params');
-    res.json(await withCompany(actor(res).companyId, () => listings.listProductListings(productPort(ctx), productId)));
+    // `separateProducts` (#295): gian hàng mà SKU của sản phẩm nằm ở nhiều sản phẩm sàn.
+    res.json(
+      await withCompany(actor(res).companyId, async () => ({
+        ...(await listings.listProductListings(productPort(ctx), productId)),
+        separateProducts: await separateProductsOf(productPort(ctx), productId),
+      })),
+    );
   });
 
   router.get('/shops/:id/listings', view, validate({ params: ShopParams }), async (_req, res) => {
@@ -494,6 +502,18 @@ export function channelRouter(ctx: ModuleContext): Router {
       const { id, listingId } = validated<typeof AcknowledgeTitleParams>(res, 'params');
       const { version } = validated<typeof AcknowledgeTitleBody>(res, 'body');
       res.json(await acknowledgeRemoteTitle(actor(res), id, listingId, version));
+    },
+  );
+
+  // Gom lại dữ liệu cũ (#295, 21 §18.8.4): gọi sàn ở việc nền, request chỉ kiểm và xếp việc.
+  router.post(
+    '/shops/:id/products/:productId/regroup',
+    manage,
+    ceoOnly,
+    validate({ params: RegroupParams }),
+    async (_req, res) => {
+      const { id, productId } = validated<typeof RegroupParams>(res, 'params');
+      res.status(202).json(await requestRegroup(productPort(ctx), actor(res), id, productId));
     },
   );
 
