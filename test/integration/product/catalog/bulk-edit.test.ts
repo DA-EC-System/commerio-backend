@@ -153,7 +153,7 @@ describe('GET /variants/bulk-edit', () => {
     expect(company.status, JSON.stringify(company.body)).toBe(200);
 
     const groups = (await api(owner).get('/groups')).body.items as { id: string; name: string; version: number }[];
-    const electronics = groups.find((g) => g.name.startsWith('Điện tử'))!;
+    const electronics = groups.find((g) => g.name === 'Âm thanh, TV & máy ảnh')!;
     const blank = groups.find((g) => g.name === 'Khác')!;
     const set = await api(owner).put(`/groups/${electronics.id}`, { suggest: { ...NO_SUGGEST, marginCoefficient: 1.2 }, version: electronics.version });
     expect(set.status, JSON.stringify(set.body)).toBe(200);

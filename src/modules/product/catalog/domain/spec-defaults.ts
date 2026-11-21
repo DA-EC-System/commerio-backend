@@ -1,6 +1,7 @@
-// Thư viện thông số và mẫu của 12 nhóm mặc định (Documents/21 mục 5.5 "Seed", 19 §3.2). Nguồn:
+// Thư viện thông số (98) và mẫu của 27 danh mục chuẩn (Documents/21 mục 5.5 "Seed", 5.7; 19 §3.2). Nguồn 76 thông số đầu:
 // `.claude/issues/thong-so-san-pham/research.md` mục 3 (gọi API thật 68 leaf Lazada, TikTok; gộp `market.md`), ngày 21/11/2026.
-// Migration `*_thong-so-du-lieu` sinh từ file này (scripts/db/gen-spec-seed.ts); test `company-defaults.test.ts` giữ hai nơi khớp.
+// 22 thông số mới và 27 mẫu: `.claude/issues/luong-san-pham/du-lieu-chuan.md` mục 2, 3, 4.2 (#531). Dòng nền tảng do migration
+// `*_danh-muc-chuan-du-lieu` ghi (sinh từ file này); test `danh-muc-chuan.test.ts` so DB với hằng.
 //
 // Ba luật của contract áp lên research:
 // - Một thông số mỗi khái niệm: trường cùng tên ở nhiều nhóm là một thông số, lựa chọn là hợp các nhóm (channel ánh xạ
@@ -9,6 +10,7 @@
 //   thông số chỉ một sàn đòi (giấy phép TikTok `102872`…) để tuỳ chọn, sàn đó chặn qua `missing`.
 // - Thuộc tính đã là trục của nhóm không là thông số của cha: Mỹ phẩm bỏ "Dung tích / Khối lượng", Thực phẩm bỏ
 //   "Khối lượng tịnh" (trục `volume`).
+import type { DefaultGroup } from './defaults.ts';
 import type { PlatformKind, SpecInputKind as SpecInput } from './specs.ts';
 
 export interface DefaultSpecField {
@@ -127,109 +129,138 @@ export const DEFAULT_SPEC_FIELDS: readonly DefaultSpecField[] = [
   // Thể thao.
   multi('mon_the_thao', 'Môn thể thao', ['Chạy bộ', 'Gym', 'Yoga', 'Bóng đá', 'Cầu lông', 'Tennis', 'Bơi', 'Đạp xe']),
   num('khoi_luong_san_pham', 'Khối lượng sản phẩm', 'kg'),
+  // Danh mục chuẩn 27 (#531, `du-lieu-chuan.md` mục 3): 22 thông số mới.
+  sel('loai_dam', 'Loại đầm', ['Đầm suông', 'Đầm ôm body', 'Đầm xoè', 'Đầm maxi', 'Đầm sơ mi']),
+  sel('loai_do_lot', 'Loại đồ lót', ['Áo ngực', 'Quần lót', 'Đồ ngủ', 'Đồ giữ nhiệt', 'Bộ đồ lót']),
+  sel('loai_phu_kien', 'Loại phụ kiện', ['Mũ nón', 'Kính mắt', 'Thắt lưng', 'Khăn', 'Găng tay', 'Kẹp tóc']),
+  sel('loai_trang_suc', 'Loại trang sức', ['Nhẫn', 'Dây chuyền', 'Bông tai', 'Vòng tay', 'Lắc chân']),
+  sel('loai_dong_ho', 'Loại đồng hồ', ['Cơ', 'Pin (quartz)', 'Điện tử', 'Thông minh']),
+  num('khoi_luong_kim_loai', 'Khối lượng kim loại quý', 'chỉ'),
+  sel('ram', 'RAM', ['2GB', '3GB', '4GB', '6GB', '8GB', '12GB', '16GB', '32GB']),
+  num('kich_thuoc_man_hinh', 'Kích thước màn hình', 'inch'),
+  sel('he_dieu_hanh', 'Hệ điều hành', ['Android', 'iOS', 'Windows', 'macOS', 'Khác']),
+  sel('cpu', 'Bộ vi xử lý', [
+    'Intel Core i3', 'Intel Core i5', 'Intel Core i7', 'Intel Core i9', 'AMD Ryzen 3', 'AMD Ryzen 5', 'AMD Ryzen 7', 'AMD Ryzen 9', 'Apple M',
+  ]),
+  sel('card_do_hoa', 'Card đồ hoạ', ['Tích hợp', 'NVIDIA GeForce', 'AMD Radeon']),
+  sel('do_phan_giai', 'Độ phân giải', ['HD', 'Full HD', '2K', '4K', '8K']),
+  sel('cong_nghe_man_hinh', 'Công nghệ màn hình', ['LED', 'QLED', 'OLED', 'Mini LED']),
+  sel('loai_ga', 'Loại ga', ['Ga chun', 'Ga phủ', 'Bộ chăn ga gối']),
+  multi('loai_toc', 'Loại tóc', ['Tóc thường', 'Tóc dầu', 'Tóc khô', 'Tóc hư tổn', 'Tóc nhuộm']),
+  multi('doi_tuong_su_dung', 'Đối tượng sử dụng', ['Người lớn', 'Trẻ em', 'Người cao tuổi', 'Phụ nữ mang thai']),
+  sel('loai_thu_cung', 'Loại thú cưng', ['Chó', 'Mèo', 'Cá', 'Chim', 'Thú nhỏ', 'Bò sát']),
+  sel('giai_doan_song', 'Giai đoạn sống', ['Con non', 'Trưởng thành', 'Già']),
+  text('dong_xe_tuong_thich', 'Dòng xe tương thích'),
+  text('isbn', 'ISBN'),
+  text('tac_gia', 'Tác giả'),
+  text('nha_xuat_ban', 'Nhà xuất bản'),
 ];
 
-/** Mẫu một nhóm: trục chuẩn theo `platform_kind` (thuộc tính mang loại đó), thông số `[code, bắt buộc]` theo thứ tự hiện. */
+/**
+ * Mẫu một danh mục: trục chuẩn theo `platform_kind` (biến thể mặc định, tối đa 2), thuộc tính biến thể được phép thêm
+ * (`allowed`, sau trục; 21 mục 5.7), thông số `[code, bắt buộc]` theo thứ tự hiện.
+ */
 export interface DefaultGroupTemplate {
-  readonly group: string;
+  readonly group: DefaultGroup;
   readonly axes: readonly PlatformKind[];
+  readonly allowed: readonly PlatformKind[];
   readonly fields: readonly (readonly [code: string, required: boolean])[];
 }
 
-const B = true;
-const T = false;
-const LICENSE = [['loai_giay_phep', T], ['so_giay_phep', T], ['ngay_cap', T], ['noi_cap', T]] as const;
+/** Bắt buộc trước, tuỳ chọn sau (bảng `du-lieu-chuan.md` mục 2: cột BB, TC). */
+const tpl = (
+  group: DefaultGroup,
+  axes: readonly PlatformKind[],
+  allowed: readonly PlatformKind[],
+  required: readonly string[],
+  optional: readonly string[],
+): DefaultGroupTemplate => ({
+  group,
+  axes,
+  allowed,
+  fields: [...required.map((c) => [c, true] as const), ...optional.map((c) => [c, false] as const)],
+});
 
+// Trục mặc định chỉ dùng kind mà leaf Lazada phổ biến của danh mục có sale prop (Lazada không nhận tên tự đặt); `age`,
+// `weight` (trừ thú cưng), `version`, `style` chỉ nằm trong `allowed` (du-lieu-chuan.md mục 4.2).
 export const DEFAULT_GROUP_TEMPLATES: readonly DefaultGroupTemplate[] = [
-  {
-    group: 'Thời trang nam',
-    axes: ['color', 'size'],
-    // PL I mục 25: thành phần, hướng dẫn sử dụng, bảo quản (giặt, là).
-    fields: [
-      ['chat_lieu', B], ['hoa_tiet', T], ['dang', T], ['co_ao', T], ['do_dai_tay', T], ['kieu_quan', T], ['cap_quan', T],
-      ['phong_cach', T], ['dip_mac', T], ['tinh_nang', T], ['mua', T], ['huong_dan_giat', B],
-    ],
-  },
-  {
-    group: 'Thời trang nữ',
-    axes: ['color', 'size'],
-    fields: [
-      ['chat_lieu', B], ['huong_dan_giat', B], ['hoa_tiet', T], ['dang', T], ['do_dai_vay', T], ['co_ao', T], ['do_dai_tay', T],
-      ['cap_quan', T], ['trang_tri', T], ['phong_cach', T], ['dip_mac', T], ['mua', T],
-    ],
-  },
-  {
-    group: 'Giày dép',
-    axes: ['color', 'size'],
-    fields: [
-      ['chat_lieu', B], ['doi_tuong', T], ['kieu_buoc', T], ['chat_lieu_de', T], ['co_giay', T], ['do_cao_got', T], ['dac_diem', T],
-      ['be_rong', T], ['chat_lieu_lot', T], ['huong_dan_su_dung', T],
-    ],
-  },
-  {
-    group: 'Túi ví',
-    axes: ['color'],
-    fields: [
-      ['chat_lieu', B], ['loai_tui', T], ['kieu_khoa', T], ['loai_da_thuoc', T], ['co_tui', T], ['kich_thuoc', T], ['cach_mang', T],
-      ['dung_tich_lit', T], ['dac_diem', T], ['doi_tuong', T],
-    ],
-  },
-  { group: 'Phụ kiện', axes: ['color'], fields: [['chat_lieu', T], ['doi_tuong', T], ['phong_cach', T]] },
-  {
-    group: 'Mỹ phẩm & làm đẹp',
-    axes: ['color', 'volume'],
-    // TT 06/2011/TT-BYT Điều 18 khoản 1: chức năng, hướng dẫn sử dụng, thành phần INCI, lưu ý an toàn.
-    fields: [
-      ['thanh_phan', B], ['huong_dan_su_dung', B], ['canh_bao', B], ['cong_dung', B], ['loai_da', T], ['han_su_dung', T],
-      ['dang_san_pham', T], ['chi_so_chong_nang', T], ['chi_so_pa', T], ['hoan_thien', T], ...LICENSE,
-    ],
-  },
-  {
-    group: 'Nhà cửa & đời sống',
-    axes: ['color', 'size'],
-    fields: [
-      ['chat_lieu', B], ['kich_thuoc', T], ['dung_tich_ml', T], ['so_mon', T], ['dac_diem', T], ['bep_tuong_thich', T],
-      ['lop_chong_dinh', T], ['so_tu_cong_bo', T], ['huong_dan_su_dung', T], ['loai_bao_hanh', T],
-    ],
-  },
-  {
-    group: 'Điện tử',
-    axes: ['color'],
-    // Lazada `warranty_type` và TikTok `100107` đều bắt buộc ở leaf điện tử (research P7).
-    fields: [
-      ['loai_bao_hanh', B], ['thoi_han_bao_hanh', B], ['model', T], ['tinh_trang', T], ['thiet_bi_tuong_thich', T],
-      ['cong_ket_noi', T], ['dung_luong_pin', T], ['bluetooth', T], ['sac_nhanh', T], ['chua_pin', T], ['dien_ap', T],
-      ['cong_suat', T], ['chuan_chong_nuoc', T], ['hop_quy', T], ['so_hop_quy', T],
-    ],
-  },
-  {
-    group: 'Thực phẩm',
-    axes: ['flavor', 'volume'],
-    // PL I mục 2: thành phần, hướng dẫn sử dụng, bảo quản; loại thực phẩm quyết định giấy phép (NĐ 15/2018).
-    fields: [
-      ['loai_thuc_pham', B], ['thanh_phan', B], ['huong_dan_su_dung', B], ['han_su_dung', T], ['cach_bao_quan', T],
-      ['loai_bao_bi', T], ['huu_co', T], ['di_ung', T], ...LICENSE,
-    ],
-  },
-  {
-    group: 'Mẹ & bé',
-    axes: ['size', 'color'],
-    fields: [
-      ['do_tuoi', B], ['loai_san_pham_be', T], ['chat_lieu', B], ['gioi_tinh_be', T], ['an_toan_vat_lieu', T], ['dung_tich_ml', T],
-      ['so_mieng_ta', T], ['loai_ta', T], ...LICENSE, ['hop_quy', T], ['so_hop_quy', T], ['canh_bao', T],
-    ],
-  },
-  {
-    group: 'Thể thao',
-    axes: ['color', 'size'],
-    fields: [
-      ['chat_lieu', B], ['tinh_nang', T], ['mon_the_thao', T], ['doi_tuong', T], ['kich_thuoc', T], ['khoi_luong_san_pham', T],
-      ['huong_dan_su_dung', T],
-    ],
-  },
-  {
-    group: 'Khác',
-    axes: ['color'],
-    fields: [['chat_lieu', T], ['loai_bao_hanh', T], ['do_tuoi', T], ['huong_dan_su_dung', T], ['canh_bao', T]],
-  },
+  tpl('Thời trang nam', ['color', 'size'], ['style'], ['chat_lieu', 'huong_dan_giat'], [
+    'hoa_tiet', 'dang', 'co_ao', 'do_dai_tay', 'kieu_quan', 'cap_quan', 'phong_cach', 'dip_mac', 'tinh_nang', 'mua',
+  ]),
+  tpl('Thời trang nữ', ['color', 'size'], ['style'], ['chat_lieu', 'huong_dan_giat'], [
+    'hoa_tiet', 'dang', 'do_dai_vay', 'co_ao', 'do_dai_tay', 'cap_quan', 'trang_tri', 'phong_cach', 'dip_mac', 'mua', 'loai_dam',
+  ]),
+  tpl('Đồ lót & đồ ngủ', ['color', 'bra_size'], ['size', 'pack'], ['chat_lieu', 'doi_tuong'], ['loai_do_lot', 'hoa_tiet', 'huong_dan_giat']),
+  tpl('Thời trang trẻ em', ['color', 'size'], ['style'], ['chat_lieu', 'gioi_tinh_be'], ['hoa_tiet', 'mua', 'huong_dan_giat', 'an_toan_vat_lieu']),
+  tpl('Giày dép', ['color', 'shoe_size'], [], ['chat_lieu', 'doi_tuong'], [
+    'kieu_buoc', 'chat_lieu_de', 'co_giay', 'do_cao_got', 'dac_diem', 'be_rong', 'chat_lieu_lot', 'huong_dan_su_dung',
+  ]),
+  tpl('Túi xách & vali', ['color'], ['size', 'style'], ['chat_lieu'], [
+    'loai_tui', 'kieu_khoa', 'loai_da_thuoc', 'co_tui', 'kich_thuoc', 'cach_mang', 'dung_tich_lit', 'doi_tuong',
+  ]),
+  tpl('Phụ kiện thời trang', ['color'], ['size', 'style'], [], ['chat_lieu', 'doi_tuong', 'phong_cach', 'loai_phu_kien']),
+  tpl('Trang sức & đồng hồ', ['color', 'ring_size'], ['style'], ['chat_lieu'], [
+    'loai_trang_suc', 'loai_dong_ho', 'chuan_chong_nuoc', 'doi_tuong', 'khoi_luong_kim_loai',
+  ]),
+  tpl('Điện thoại & máy tính bảng', ['color', 'storage'], ['version'], ['loai_bao_hanh', 'thoi_han_bao_hanh', 'tinh_trang'], [
+    'model', 'ram', 'kich_thuoc_man_hinh', 'he_dieu_hanh', 'dung_luong_pin', 'sac_nhanh', 'hop_quy', 'so_hop_quy',
+  ]),
+  tpl('Máy tính & laptop', ['storage', 'color'], ['version'], ['loai_bao_hanh', 'thoi_han_bao_hanh', 'tinh_trang'], [
+    'model', 'cpu', 'ram', 'kich_thuoc_man_hinh', 'card_do_hoa', 'he_dieu_hanh',
+  ]),
+  tpl('Phụ kiện điện thoại & máy tính', ['color', 'connector'], ['compatible_model', 'length', 'battery_capacity', 'style'], [], [
+    'thiet_bi_tuong_thich', 'cong_ket_noi', 'sac_nhanh', 'dung_luong_pin', 'chua_pin', 'cong_suat', 'loai_bao_hanh',
+  ]),
+  tpl('Âm thanh, TV & máy ảnh', ['color', 'screen_size'], ['version'], ['loai_bao_hanh'], [
+    'model', 'bluetooth', 'chuan_chong_nuoc', 'dung_luong_pin', 'do_phan_giai', 'cong_nghe_man_hinh', 'thoi_han_bao_hanh',
+  ]),
+  tpl('Điện gia dụng', ['color', 'volume'], ['power', 'voltage'], ['loai_bao_hanh', 'dien_ap', 'cong_suat'], [
+    'model', 'thoi_han_bao_hanh', 'dung_tich_lit', 'hop_quy', 'so_hop_quy', 'chat_lieu',
+  ]),
+  tpl('Nhà bếp & phòng ăn', ['color', 'size'], ['volume', 'pack'], ['chat_lieu'], [
+    'so_mon', 'bep_tuong_thich', 'lop_chong_dinh', 'dung_tich_ml', 'kich_thuoc', 'so_tu_cong_bo', 'huong_dan_su_dung',
+  ]),
+  tpl('Nhà cửa & trang trí', ['color', 'bed_size'], ['size', 'style'], ['chat_lieu'], [
+    'kich_thuoc', 'phong_cach', 'cong_suat', 'huong_dan_su_dung', 'loai_ga',
+  ]),
+  tpl('Giặt giũ & vệ sinh nhà cửa', ['volume', 'scent'], ['weight', 'pack'], ['huong_dan_su_dung', 'canh_bao'], [
+    'thanh_phan', 'dang_san_pham', 'cong_dung',
+  ]),
+  tpl(
+    'Mỹ phẩm & chăm sóc da',
+    ['color', 'volume'],
+    ['pack', 'scent'],
+    ['loai_giay_phep', 'so_giay_phep', 'thanh_phan', 'cong_dung', 'huong_dan_su_dung', 'canh_bao'],
+    ['loai_da', 'han_su_dung', 'dang_san_pham', 'chi_so_chong_nang', 'chi_so_pa', 'hoan_thien', 'ngay_cap', 'noi_cap'],
+  ),
+  tpl('Chăm sóc cá nhân', ['volume', 'scent'], ['color', 'pack'], ['thanh_phan', 'huong_dan_su_dung'], [
+    'loai_da', 'loai_toc', 'cong_dung', 'dang_san_pham', 'han_su_dung', 'loai_giay_phep', 'so_giay_phep',
+  ]),
+  tpl(
+    'Sức khoẻ & thực phẩm chức năng',
+    ['pack', 'flavor'],
+    ['weight'],
+    ['loai_giay_phep', 'so_giay_phep', 'thanh_phan', 'huong_dan_su_dung', 'han_su_dung'],
+    ['cong_dung', 'doi_tuong_su_dung', 'dang_san_pham', 'ngay_cap', 'noi_cap', 'canh_bao'],
+  ),
+  tpl('Mẹ & bé', ['diaper_size', 'pack'], ['color', 'age', 'volume', 'flavor'], ['loai_san_pham_be'], [
+    'gioi_tinh_be', 'an_toan_vat_lieu', 'dung_tich_ml', 'loai_ta', 'hop_quy', 'so_hop_quy', 'canh_bao', 'loai_giay_phep', 'so_giay_phep',
+  ]),
+  tpl('Đồ chơi', ['color', 'size'], ['style', 'age'], ['do_tuoi', 'canh_bao'], ['chat_lieu', 'hop_quy', 'so_hop_quy', 'so_mon', 'dung_luong_pin']),
+  tpl(
+    'Thực phẩm & đồ uống',
+    ['flavor', 'pack'],
+    ['weight', 'volume'],
+    ['loai_thuc_pham', 'thanh_phan', 'han_su_dung', 'huong_dan_su_dung', 'loai_giay_phep', 'so_giay_phep'],
+    ['cach_bao_quan', 'loai_bao_bi', 'huu_co', 'di_ung', 'ngay_cap', 'noi_cap'],
+  ),
+  tpl('Thú cưng', ['flavor', 'weight'], ['color', 'size'], ['loai_thu_cung'], ['giai_doan_song', 'thanh_phan', 'han_su_dung', 'chat_lieu', 'kich_thuoc']),
+  tpl('Thể thao & dã ngoại', ['color', 'size'], ['shoe_size', 'weight'], ['chat_lieu'], [
+    'mon_the_thao', 'tinh_nang', 'doi_tuong', 'kich_thuoc', 'khoi_luong_san_pham', 'huong_dan_su_dung',
+  ]),
+  tpl('Ô tô & xe máy', ['color', 'size'], ['style'], ['dong_xe_tuong_thich'], ['chat_lieu', 'loai_bao_hanh', 'kich_thuoc']),
+  tpl('Sách, văn phòng phẩm & dụng cụ', ['color', 'pack'], ['version', 'power'], [], [
+    'isbn', 'tac_gia', 'nha_xuat_ban', 'chat_lieu', 'dien_ap', 'cong_suat', 'loai_bao_hanh',
+  ]),
+  tpl('Khác', ['color', 'size'], ['style', 'pack'], [], ['chat_lieu', 'loai_bao_hanh', 'do_tuoi', 'huong_dan_su_dung', 'canh_bao']),
 ];

@@ -967,6 +967,20 @@
       "when": 1795237867342,
       "tag": "20261121051107_quyen-sao-ke-san-chung",
       "breakpoints": true
+    },
+    {
+      "idx": 138,
+      "version": "7",
+      "when": 1795239747935,
+      "tag": "20261121054227_danh-muc-chuan",
+      "breakpoints": true
+    },
+    {
+      "idx": 139,
+      "version": "7",
+      "when": 1795239791644,
+      "tag": "20261121054311_danh-muc-chuan-du-lieu",
+      "breakpoints": true
     }
   ]
 }
