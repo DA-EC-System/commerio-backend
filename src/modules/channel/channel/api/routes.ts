@@ -16,6 +16,7 @@ import { attributeCatalog, listSpecMappings, putSpecMapping } from '../service/s
 import { pushZeroStock, restoreAfterZeroStock, requestListingSync } from '../service/listing-sync.ts';
 import * as listings from '../service/listings.ts';
 import * as mapping from '../service/mapping.ts';
+import { createVariantFromRemote, matchBulk } from '../service/remote-link.ts';
 import { matchPreview } from '../service/match-preview.ts';
 import { resolveOutsideChange } from '../service/outside-change.ts';
 import { recreateOpeningStocktake } from '../service/opening-stocktake.ts';
@@ -50,6 +51,9 @@ import {
   TakeOverContentBody,
   TakeOverContentParams,
   PushBody,
+  MatchBulkBody,
+  CreateVariantBody,
+  CreateVariantParams,
   RemoteSkusQuery,
   SetupBody,
   DisconnectBody,
@@ -393,14 +397,14 @@ export function channelRouter(ctx: ModuleContext): Router {
   router.get('/shops/:id/remote-skus', match, validate({ params: ShopParams, query: RemoteSkusQuery }), async (_req, res) => {
     const { id } = validated<typeof ShopParams>(res, 'params');
     const { unmatched } = validated<typeof RemoteSkusQuery>(res, 'query');
-    const { items, syncedAt, refresh } = await mapping.remoteSkus(actor(res), id, unmatched ?? false);
+    const { items, syncedAt, refresh } = await mapping.remoteSkus(productPort(ctx), actor(res), id, unmatched ?? false);
     res.json({ items, syncedAt, refresh });
   });
 
   router.post('/shops/:id/remote-skus/refresh', match, validate({ params: ShopParams, query: RemoteSkusQuery }), async (_req, res) => {
     const { id } = validated<typeof ShopParams>(res, 'params');
     const { unmatched } = validated<typeof RemoteSkusQuery>(res, 'query');
-    const { accepted, ...list } = await withRetryAfter(res, () => mapping.remoteSkus(actor(res), id, unmatched ?? false, true));
+    const { accepted, ...list } = await withRetryAfter(res, () => mapping.remoteSkus(productPort(ctx), actor(res), id, unmatched ?? false, true));
     res.status(accepted ? 202 : 200).json(list);
   });
 
@@ -415,6 +419,24 @@ export function channelRouter(ctx: ModuleContext): Router {
     const { listing, pending } = await mapping.matchListing(productPort(ctx), actor(res), id, validated<typeof MatchBody>(res, 'body'));
     res.status(pending ? 202 : 200).json(listing);
   });
+
+  // Liên kết hàng loạt (21 §18.9 R2): 200 kể cả khi có cặp lỗi, kết quả theo cặp.
+  router.post('/shops/:id/listings/match-bulk', match, validate({ params: ShopParams, body: MatchBulkBody }), async (_req, res) => {
+    const { id } = validated<typeof ShopParams>(res, 'params');
+    res.json({ results: await matchBulk(productPort(ctx), actor(res), id, validated<typeof MatchBulkBody>(res, 'body').pairs) });
+  });
+
+  // Tạo SKU kho từ SKU sàn rồi liên kết (21 §18.9 R2): 201 khi tạo mới; trùng SKU kho có sẵn thì 200/202 như `listings/match`.
+  router.post(
+    '/shops/:id/remote-skus/:externalSkuId/create-variant',
+    match,
+    validate({ params: CreateVariantParams, body: CreateVariantBody }),
+    async (_req, res) => {
+      const { id, externalSkuId } = validated<typeof CreateVariantParams>(res, 'params');
+      const result = await createVariantFromRemote(productPort(ctx), actor(res), id, externalSkuId, validated<typeof CreateVariantBody>(res, 'body').groupId);
+      res.status(result.created ? 201 : result.pending ? 202 : 200).json(result);
+    },
+  );
 
   router.post(
     '/shops/:id/listings/:listingId/mapping/:action',
