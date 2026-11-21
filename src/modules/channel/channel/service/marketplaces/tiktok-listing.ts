@@ -160,8 +160,13 @@ const kg = (g: number) => String(Math.max(1, Math.round(g)) / 1000);
 const cm = (mm: number) => String(Math.max(1, Math.ceil(mm / 10)));
 const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-/** `skus[]` của Create Product và phân loại mới của Partial Edit (#295): trục `sales_attributes` theo thứ tự `salesAttributes`. */
-function newSkuBody(sku: ProductSku, attrs: readonly SalesAttribute[] | undefined, warehouseId: string) {
+/**
+ * `skus[]` của Create Product và phân loại mới của Partial Edit (#295): trục `sales_attributes` theo thứ tự `salesAttributes`.
+ * `quantityRequired`: Partial Edit 202509 bắt buộc `quantity` của SKU mới ("Quantity of Inventory[0] is a required field",
+ * 36009004, gọi thật 21/11/2026 request `20261121182632426DA02F582365317A4D`) và nhận `quantity: 0`
+ * (`2026112118280548420235C998D03211DE`), nên luôn gửi, chưa có số thì 0 (SKU mới chưa có tồn trên sàn).
+ */
+function newSkuBody(sku: ProductSku, attrs: readonly SalesAttribute[] | undefined, warehouseId: string, quantityRequired = false) {
   const sales = skuAxes(attrs, sku).map((x) => ({
     ...(x.attr.code ? { id: x.attr.code } : { name: x.attr.name }),
     value_name: x.label,
@@ -171,8 +176,12 @@ function newSkuBody(sku: ProductSku, attrs: readonly SalesAttribute[] | undefine
   return {
     seller_sku: sku.sellerSku,
     price: { amount: sku.price, currency: CURRENCY },
-    // docv2 ghi `quantity` khoảng [1, 99999]: tồn 0 thì bỏ `quantity`, chỉ gán kho.
-    inventory: [{ warehouse_id: warehouseId, ...(sku.quantity !== undefined && sku.quantity > 0 && { quantity: sku.quantity }) }],
+    // Create Product: docv2 ghi `quantity` khoảng [1, 99999], tồn 0 thì bỏ `quantity`, chỉ gán kho.
+    inventory: [
+      quantityRequired
+        ? { warehouse_id: warehouseId, quantity: sku.quantity ?? 0 }
+        : { warehouse_id: warehouseId, ...(sku.quantity !== undefined && sku.quantity > 0 && { quantity: sku.quantity }) },
+    ],
     ...(sales.length && { sales_attributes: sales }),
   };
 }
@@ -546,7 +555,7 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
       if (dup.length) {
         throw new MarketplaceError('rejected', 'sku_exists_on_platform', `Sản phẩm trên sàn đã có SKU ${dup.map((x) => String(x.seller_sku)).join(', ')}`);
       }
-      const skus = [...old, ...input.skus.map((x) => newSkuBody(x, input.salesAttributes, warehouseId))];
+      const skus = [...old, ...input.skus.map((x) => newSkuBody(x, input.salesAttributes, warehouseId, true))];
       const edit = `/product/202509/products/${encodeURIComponent(externalProductId)}/partial_edit`;
       const data = await client.call<{ skus?: Row[] }>('POST', edit, { token, body: { skus } });
       let created = matchSkus(sellerSkus, data?.skus, true);
