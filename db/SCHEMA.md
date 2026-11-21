@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V138** (`20261121051107_quyen-sao-ke-san-chung`): 100 bảng trong 6 schema, 81 khoá ngoại, 81 cột tham chiếu không có khoá ngoại. Lịch sử từng phiên bản: [VERSIONS.md](VERSIONS.md).
+Phiên bản **V141** (`20261121060408_bang-san-fk`): 101 bảng trong 6 schema, 90 khoá ngoại, 81 cột tham chiếu không có khoá ngoại. Lịch sử từng phiên bản: [VERSIONS.md](VERSIONS.md).
 
 Nguồn: snapshot của migration mới nhất, comment trong `src/modules/<lớn>/<con>/repository/schema.ts`, khoá ngoại, trigger, index, EXCLUDE viết tay trong migration. Cột, kiểu, ràng buộc, quan hệ của từng bảng ở `db/schema/<schema>.md`.
 
@@ -118,7 +118,7 @@ Chi tiết: [schema/finance.md](schema/finance.md)
 - `finance.unmatched_receipts` (finance): Tiền về không gán được vào đơn (không có mã, lệch tiền, đơn đã huỷ); gán hoặc hoàn sau (UC-PF-07).
 - `finance.webhook_events` (payment): Webhook cổng đã nhận (sau khi kiểm chữ ký), chống xử lý lặp.
 
-## `channel` · Kênh bán · lớp 5 · 22 bảng
+## `channel` · Kênh bán · lớp 5 · 23 bảng
 
 Chi tiết: [schema/channel.md](schema/channel.md)
 
@@ -128,6 +128,7 @@ Chi tiết: [schema/channel.md](schema/channel.md)
 - `channel.conversation_tags` (inbox)
 - `channel.conversations` (inbox)
 - `channel.listings` (channel): Một SKU trên một gian hàng, đồng thời là bảng ghép SKU sàn → SKU app.
+- `channel.marketplaces` (channel): Danh mục sàn dùng chung cho mọi công ty (Documents/19 mục 3.3, thay enum `channel.marketplace` 21/11/2026).
 - `channel.message_channels` (inbox): Kênh nhắn tin đã kết nối (trang Messenger, hộp thư, Zalo OA, chat sàn).
 - `channel.messages` (inbox): Tin nhắn; tin gửi đi chưa có mã ngoài cho tới khi nền tảng nhận.
 - `channel.platform_categories` (channel): Bản sao cây category của sàn (#400, Documents/19 mục 3.3).

@@ -3,7 +3,40 @@
 <!-- Sinh tự động bởi `npm run db:docs` từ db/migrations. Không sửa tay. -->
 
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
-Mới nhất: **V138**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+Mới nhất: **V141**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+
+## V141 · 21/11/2026 · bang-san-fk
+
+`db/migrations/20261121060408_bang-san-fk.sql` · viết tay
+
+- viết tay: quyền, khoá ngoại, dữ liệu
+- Danh mục sàn channel.marketplaces (Documents/19 mục 3.3, 21/11/2026): chèn các sàn, commerio_app chỉ đọc, khoá ngoại từ mọi cột platform của channel; gắn lại hai khoá ngoại ghép đã gỡ khi đổi kiểu.
+
+## V140 · 21/11/2026 · bang-san
+
+`db/migrations/20261121060344_bang-san.sql` · sinh từ schema
+
+- + bảng `channel.marketplaces`
+- `channel.api_usage`: đổi cột `platform` (kiểu channel.marketplace → text)
+- `channel.axis_mappings`: đổi cột `platform` (kiểu channel.marketplace → text)
+- `channel.platform_categories`: đổi cột `platform` (kiểu channel.marketplace → text)
+- `channel.platform_category_attributes`: đổi cột `platform` (kiểu channel.marketplace → text); − khoá ngoại `platform_category_attributes_category_fk`
+- `channel.product_specs`: đổi cột `platform` (kiểu channel.marketplace → text)
+- `channel.shops`: đổi cột `platform` (kiểu channel.marketplace → text)
+- `channel.spec_field_mappings`: đổi cột `platform` (kiểu channel.marketplace → text)
+- `channel.spec_option_mappings`: đổi cột `platform` (kiểu channel.marketplace → text)
+- `channel.webhook_events`: đổi cột `platform` (kiểu channel.marketplace → text)
+- `order.customer_identities`: + cột `source`, `platform`; − cột `channel_kind`; + unique `customer_identities_uq`; − unique `customer_identities_company_id_channel_kind_external_user_id_unique`; + check `customer_identities_platform`
+- + enum `order.contact_channel`
+- − enum `channel.marketplace`
+- − enum `order.channel_kind`
+
+## V139 · 21/11/2026 · bang-san-go-khoa
+
+`db/migrations/20261121060322_bang-san-go-khoa.sql` · viết tay
+
+- viết tay
+- Gỡ khoá ngoại ghép spec_option_mappings_field_fk (viết tay ở *_anh-xa-hai-tang-du-lieu) trước khi đổi cột platform từ enum sang text (Documents/19 mục 3.3, 21/11/2026): Postgres không đổi kiểu từng bảng được khi khoá ngoại ghép còn.
 
 ## V138 · 21/11/2026 · quyen-sao-ke-san-chung
 

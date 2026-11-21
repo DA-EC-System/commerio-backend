@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { marketplace } from '#src/modules/channel/channel/repository/schema.ts';
-import { getAdapter, registeredPlatforms } from '#src/modules/channel/channel/service/marketplaces/index.ts';
+import { getAdapter, marketplaceMismatches, registeredPlatforms } from '#src/modules/channel/channel/service/marketplaces/index.ts';
 
 describe('registry adapter sàn', () => {
-  it('mọi sàn đăng ký mặc định có trong enum DB channel.marketplace (checklist thêm sàn bước 4)', () => {
+  it('đối chiếu danh mục sàn: adapter thiếu dòng, dòng bật không có adapter là lệch; dòng tắt không adapter thì được', () => {
     expect(registeredPlatforms().length).toBeGreaterThan(0);
-    for (const platform of registeredPlatforms()) expect(marketplace.enumValues).toContain(platform);
+    const all = registeredPlatforms().map((code) => ({ code, enabled: true }));
+    expect(marketplaceMismatches([...all, { code: 'shopee', enabled: false }, { code: 'mock', enabled: false }])).toEqual([]);
+    expect(marketplaceMismatches(all.slice(1))).toEqual([`adapter ${all[0]!.code} chưa có dòng trong channel.marketplaces`]);
+    expect(marketplaceMismatches([...all, { code: 'shopee', enabled: true }])).toEqual(['channel.marketplaces shopee đang bật mà không có adapter']);
   });
 
   it('khoá của Object không phải adapter', () => {
