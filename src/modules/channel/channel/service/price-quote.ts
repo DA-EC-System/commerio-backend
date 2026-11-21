@@ -1,7 +1,8 @@
 // Tính thử giá niêm yết → thực nhận theo từng gian hàng (Documents/21 §18.9 R1, 25 §6.2). Không ghi gì. Gọi trong `withCompany`.
 // Số mặc định (giá bộ lọc lần đăng sẽ gửi) đã có ở `GET` listings; route này cho giá người bán gõ thử, cùng bước 5 với
-// `ListingRow` (`evaluatePrices`) nên số khớp nhau. Không trả giá thấp nhất (suy ra được giá vốn); biên lãi chỉ khi người gọi
-// xem được giá vốn.
+// `ListingRow` (`evaluatePrices`) nên số khớp nhau. Không trả giá thấp nhất. Người gọi thiếu `inventory.cost.view` nhận
+// `belowFloor`, `marginPct` null (luật R4 của 21): route nhận giá tuỳ ý, cờ dưới giá thấp nhất cho mọi giá gõ thử là dò
+// được giá thấp nhất rồi suy ra giá vốn.
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import type { ProductPort } from './product-port.ts';
 import { evaluatePrices, shopPriceConfig } from './price-inputs.ts';
@@ -25,7 +26,8 @@ export interface Quote {
   feeWarning: 'over_50' | null;
   feeConfigId: string | null;
   blocked: { code: 'price_missing' | 'fee_config_invalid' | 'fee_not_configured' } | null;
-  marginPct?: number | null;
+  /** null khi người gọi thiếu `inventory.cost.view`, hoặc chưa có giá vốn. */
+  marginPct: number | null;
 }
 
 const empty = { netReceived: null, belowFloor: null, feeWarning: null } as const;
@@ -53,7 +55,7 @@ export async function quotePrices(port: ProductPort, productId: string, items: r
     const config = await shopPriceConfig(shopId);
     const base = (it: QuoteItem) => ({ shopId, variantId: it.variantId, feeConfigId: config.feeConfigId });
     if (!config.fee) {
-      for (const it of list) out.set(it, { ...base(it), listPrice: it.listPrice ?? null, ...empty, blocked: { code: 'fee_not_configured' } });
+      for (const it of list) out.set(it, { ...base(it), listPrice: it.listPrice ?? null, ...empty, marginPct: null, blocked: { code: 'fee_not_configured' } });
       continue;
     }
     // Thiếu giá gõ thử: giá bộ lọc lần đăng sẽ gửi (cùng hàm với lúc đẩy); không tính được là chưa có giá muốn bán.
@@ -67,15 +69,24 @@ export async function quotePrices(port: ProductPort, productId: string, items: r
     for (const it of list) {
       const price = priceOf(it);
       if (price === undefined) {
-        out.set(it, { ...base(it), listPrice: null, ...empty, blocked: { code: 'price_missing' } });
+        out.set(it, { ...base(it), listPrice: null, ...empty, marginPct: null, blocked: { code: 'price_missing' } });
         continue;
       }
       const r = results.get(it.variantId)!;
-      const quote: Quote = r.ok
-        ? { ...base(it), listPrice: Number(price), netReceived: Number(r.net), belowFloor: r.belowFloor, feeWarning: r.feeWarning, blocked: null }
-        : { ...base(it), listPrice: Number(price), ...empty, blocked: { code: 'fee_config_invalid' } };
-      if (canSeeCost) quote.marginPct = r.ok && r.marginPct !== null ? Number(r.marginPct) : null;
-      out.set(it, quote);
+      out.set(
+        it,
+        r.ok
+          ? {
+              ...base(it),
+              listPrice: Number(price),
+              netReceived: Number(r.net),
+              belowFloor: canSeeCost ? r.belowFloor : null,
+              feeWarning: r.feeWarning,
+              marginPct: canSeeCost && r.marginPct !== null ? Number(r.marginPct) : null,
+              blocked: null,
+            }
+          : { ...base(it), listPrice: Number(price), ...empty, marginPct: null, blocked: { code: 'fee_config_invalid' } },
+      );
     }
   }
   return items.map((it) => out.get(it)!);
