@@ -5,7 +5,9 @@ import {
   addDays,
   configLabel,
   configMachine,
+  feePctOf,
   feeRoundingOf,
+  fixedPctFor,
   outputVatPctOf,
   type DatedVersion,
   parsePayload,
@@ -214,5 +216,33 @@ describe('nhãn nhật ký của phiên bản cấu hình (#352)', () => {
   it('thiếu tên gian hàng hay ngày hiệu lực thì bỏ phần đó', () => {
     expect(configLabel('fee', null, '2026-11-01')).toBe('Phí sàn từ 01/11/2026');
     expect(configLabel('min_margin', null, null)).toBe('Lãi tối thiểu trên giá vốn');
+  });
+});
+
+describe('hoa hồng theo category sàn (Documents/21 §21.4)', () => {
+  const base = { fixedPct: 14, transactionPct: 6, servicePct: 0, optionalPct: 0, returnFee: 0 };
+  const rates = [
+    { externalCategoryId: '100', path: 'Làm đẹp', fixedPct: 10 },
+    { externalCategoryId: '120', path: 'Làm đẹp > Son môi', fixedPct: 8.5 },
+  ];
+
+  it('categoryRates hợp lệ; trùng category, quá hai chữ số thập phân, thiếu path thì lỗi theo ô', () => {
+    expect(parsePayload('fee', { ...base, categoryRates: rates }).success).toBe(true);
+    const dup = parsePayload('fee', { ...base, categoryRates: [rates[0], { ...rates[0], fixedPct: 9 }] });
+    expect(dup.success).toBe(false);
+    expect(dup.error?.issues.map((i) => i.path.join('.'))).toContain('categoryRates.1.externalCategoryId');
+    const bad = parsePayload('fee', { ...base, categoryRates: [{ externalCategoryId: '1', path: '', fixedPct: 1.234 }] });
+    expect(bad.error?.issues.map((i) => i.path.join('.')).sort()).toEqual(['categoryRates.0.fixedPct', 'categoryRates.0.path']);
+  });
+
+  it('dòng của tổ tiên sâu nhất thắng; không khớp hay không có category thì hoa hồng mặc định', () => {
+    const p = { ...base, categoryRates: rates };
+    expect(fixedPctFor(p, ['100', '120', '121'])).toBe(8.5);
+    expect(fixedPctFor(p, ['100', '130'])).toBe(10);
+    expect(fixedPctFor(p, ['200', '210'])).toBe(14);
+    expect(fixedPctFor(p, undefined)).toBe(14);
+    expect(fixedPctFor(base, ['100'])).toBe(14);
+    expect(feePctOf(p, ['100', '120'])).toBe(14.5);
+    expect(feePctOf(p)).toBe(20);
   });
 });
