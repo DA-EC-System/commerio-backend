@@ -135,3 +135,18 @@ export function registerAdapter(platform: string, adapter: MarketplaceAdapter): 
 export function resetAdapters(): void {
   adapters = { ...defaults };
 }
+
+/**
+ * Lệch giữa registry adapter (sàn đăng ký mặc định) và `channel.marketplaces` (Documents/19 mục 3.3), rỗng là khớp:
+ * adapter thiếu dòng thì không gắn được gian hàng (khoá ngoại); dòng `enabled` không có adapter thì người dùng thấy sàn
+ * không nối được. Hàm thuần để test; worker gọi qua `verifyMarketplaces`.
+ */
+export function marketplaceMismatches(rows: readonly { code: string; enabled: boolean }[]): string[] {
+  const codes = new Set(rows.map((r) => r.code));
+  const missing = registeredPlatforms().filter((p) => !codes.has(p)).map((p) => `adapter ${p} chưa có dòng trong channel.marketplaces`);
+  const orphan = rows
+    .filter((r) => r.enabled && !Object.hasOwn(defaults, r.code))
+    .map((r) => `channel.marketplaces ${r.code} đang bật mà không có adapter`);
+  return [...missing, ...orphan];
+}
+

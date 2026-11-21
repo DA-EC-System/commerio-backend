@@ -7,7 +7,6 @@ import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { logger } from '../../../../shared/logger.ts';
 import { CategoryTreeShrunkError, oldestActiveShopOn, syncTree } from '../repository/platform-categories.ts';
-import { isMarketplace } from '../repository/schema.ts';
 import { appOnly, getAdapter, type PlatformCategoryNode, registeredPlatforms } from './marketplaces/index.ts';
 import { platformOf, shopSession } from './shops.ts';
 
@@ -48,7 +47,7 @@ export async function requestCategorySync(
   }
   const { platform, adapter } = platformOf(raw);
   if (!adapter.categoryTree) throw new AppError(422, 'marketplace_unsupported', 'Sàn này chưa hỗ trợ đọc category từ app');
-  const job = opts.allowShrink ? { platform, allowShrink: true } : { platform };
+  const job: CategorySyncJob = opts.allowShrink ? { platform, allowShrink: true } : { platform };
   return { queued: (await sendJob(categorySyncQueue, job, { key: opts.allowShrink ? `${platform}:allow-shrink` : platform })) !== null };
 }
 
@@ -72,7 +71,7 @@ export async function runCategorySync(
 ): Promise<void> {
   const { now = () => new Date(), borrowShop = oldestActiveShopOn } = opts;
   const adapter = getAdapter(job.platform);
-  if (!adapter?.categoryTree || !isMarketplace(job.platform)) return;
+  if (!adapter?.categoryTree) return;
   const platform = job.platform;
   const startedAt = now();
   let nodes: PlatformCategoryNode[];

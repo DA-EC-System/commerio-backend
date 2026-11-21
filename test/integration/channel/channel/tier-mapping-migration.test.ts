@@ -43,6 +43,9 @@ beforeAll(async () => {
 describe('chuyển ánh xạ sang hai tầng', () => {
   it('bản sao bỏ, lựa chọn riêng theo thông số chuẩn; spec đổi khoá trục; thông số riêng giữ mã riêng, nhường mã chuẩn', async () => {
     await inRollback(async (c) => {
+      // File migration viết lúc mã sàn còn là enum `channel.marketplace`; `*_bang-san` (be#539) bỏ enum, cột `platform` thành text
+      // trỏ `channel.marketplaces`. Dựng lại tên kiểu bằng domain text trong giao dịch để câu ép kiểu cũ chạy được.
+      await c.query(`create domain channel.marketplace as text`);
       await c.query(`create table product.tier_merge_remap (kind text not null, old_id uuid not null, new_id uuid not null, primary key (kind, old_id))`);
       // Thông số chuẩn (dòng nền tảng sau be#521) với ánh xạ nền tảng; bản sao cũ của công ty đã bị xoá khỏi catalog.
       const std = await one(c, `insert into product.spec_fields (company_id, code, name, input, allow_custom) values (null, $1, $1, 'select', false)`, [`tmm_${tag}`]);

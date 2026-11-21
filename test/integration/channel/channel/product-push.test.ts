@@ -17,7 +17,7 @@ import { type ListingVariant, setProductPort } from '#src/modules/channel/channe
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
-import { fakeAdapter, seedSpecs } from './helpers.ts';
+import { activateShop, fakeAdapter, seedSpecs } from './helpers.ts';
 
 const variants: ListingVariant[] = [];
 const noPrice = new Set<string>();
@@ -174,6 +174,51 @@ describe('việc nền channel.product_push', () => {
     expect(addVariants.mock.calls[0]![1]).toBe('item-cu');
     expect(addVariants.mock.calls[0]![2].skus.map((s) => s.sellerSku)).toEqual([vs[0]!.sku]);
     expect(await listings(ids)).toMatchObject([{ status: 'under_review', external_product_id: 'item-cu', shop_product_id: spId }]);
+  });
+
+  it('KB3: biến thể mới của sản phẩm đã ghép từ sàn (dòng match) thì thêm phân loại vào sản phẩm sàn đó, không tạo sản phẩm mới', async () => {
+    await activateShop(shopId);
+    const { productId, vs } = await product(['Đỏ', 'Hồng đất']);
+    const [red, pink] = vs as [ListingVariant, ListingVariant];
+    const ext = `item-nb-${randomUUID().slice(0, 8)}`;
+    // Đỏ đã liên kết với SKU của sản phẩm người bán có sẵn trên sàn: trigger gắn dòng `match` cùng mã.
+    await testPool().query(
+      `insert into channel.listings (company_id, shop_id, variant_id, external_product_id, external_sku_id, seller_sku, status, stock_sync, price_sync)
+       values ($1, $2, $3, $4, $5, $6, 'live', 'synced', 'synced')`,
+      [company.companyId, shopId, red.id, ext, `sku-${red.sku}`, red.sku],
+    );
+    const images = port.productImageUrls;
+    port.productImageUrls = async () => new Map([[productId, ['https://img.test/a.png']]]);
+    try {
+      const res = await request(testApp())
+        .post(`/api/v1/channel/shops/${shopId}/listings/push`)
+        .set('Authorization', `Bearer ${company.ceo.token}`)
+        .send({ variantIds: [pink.id] });
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+      expect(res.body.results).toMatchObject([{ variantId: pink.id, status: 'pushing', code: null }]);
+    } finally {
+      port.productImageUrls = images;
+    }
+    const { rows } = await testPool().query<{ id: string; origin: string; push_started_at: Date }>(
+      `select sp.id, sp.origin, sp.push_started_at from channel.listings l join channel.shop_products sp on sp.id = l.shop_product_id
+       where l.shop_id = $1 and l.variant_id = $2`,
+      [shopId, pink.id],
+    );
+    expect(rows[0]!.origin).toBe('match');
+    const appRows = await testPool().query("select 1 from channel.shop_products where shop_id = $1 and product_id = $2 and origin = 'app'", [shopId, productId]);
+    expect(appRows.rowCount).toBe(0);
+    await runProductPush(port, {
+      companyId: company.companyId,
+      shopId,
+      shopProductId: rows[0]!.id,
+      productId,
+      pushStartedAt: rows[0]!.push_started_at.toISOString(),
+      imageUrls: ['https://img.test/a.png'],
+    });
+    expect(createProduct).not.toHaveBeenCalled();
+    expect(addVariants).toHaveBeenCalledTimes(1);
+    expect(addVariants.mock.calls[0]![1]).toBe(ext);
+    expect(addVariants.mock.calls[0]![2].skus.map((x) => x.sellerSku)).toEqual([pink.sku]);
   });
 
   it('ảnh theo màu (#295): mọi màu có ảnh thì tải lên sàn (sale_attribute) và gửi imageUri theo giá trị, kể cả khi thêm phân loại', async () => {

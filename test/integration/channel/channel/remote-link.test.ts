@@ -4,7 +4,9 @@ import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { CreateVariantResult, MatchBulkResult, RemoteSkuList } from '#src/modules/channel/channel/api/schemas.ts';
-import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
+import { getAdapter, registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
+import type { RemoteProductCategory } from '#src/modules/channel/channel/service/marketplaces/common.ts';
+import { clearFillBackCache } from '#src/modules/channel/channel/service/fill-back.ts';
 import { setProductPort } from '#src/modules/channel/channel/service/product-port.ts';
 import { stopJobs } from '#src/modules/core/platform/service/jobs/boss.ts';
 import { createVariant } from '../../helpers/catalog.ts';
@@ -145,5 +147,142 @@ describe('POST remote-skus/:externalSkuId/create-variant', () => {
     expect(forbidden.status).toBe(403);
     const { rowCount } = await db().query('select 1 from product.product_variants where company_id = $1 and sku = $2', [company.companyId, sellerSku]);
     expect(rowCount).toBe(0);
+  });
+
+  // KB3 3.4: SKU anh em của một sản phẩm sàn đã liên kết vào sản phẩm app thì thành biến thể của sản phẩm đó.
+  async function siblings(title: string, skus: { sellerSku: string; label: string }[]) {
+    const product = `item-${randomUUID().slice(0, 10)}`;
+    const ids: string[] = [];
+    for (const k of skus) {
+      const ext = `sku-${randomUUID().slice(0, 10)}`;
+      await db().query(
+        `insert into channel.remote_skus (company_id, shop_id, external_product_id, external_sku_id, seller_sku, title, state, quantity, price)
+         values ($1, $2, $3, $4, $5, $6, 'live', 3, 99000)`,
+        [company.companyId, shopId, product, ext, k.sellerSku, `${title} - ${k.label}`],
+      );
+      ids.push(ext);
+    }
+    return ids;
+  }
+
+  /** Sản phẩm app "Son lì …" một thuộc tính Màu son {Đỏ}, hai SKU sàn Đỏ (liên kết sẵn) và một SKU mới. */
+  async function lipstick(camTitleTail: string) {
+    const groups = await ceo(app().get('/api/v1/catalog/groups'));
+    const groupId = groups.body.items[0].id as string;
+    const made = await ceo(app().post('/api/v1/catalog/products')).send({
+      name: `Son lì ${randomUUID().slice(0, 6)}`,
+      groupId,
+      description: '',
+      imageFileIds: [],
+      axes: [{ name: 'Màu son', values: [{ value: 'Đỏ' }] }],
+      variants: [{ options: ['Đỏ'] }],
+    });
+    expect(made.status, JSON.stringify(made.body)).toBe(201);
+    const red = made.body.variants[0] as { id: string; sku: string };
+    const cam = `SON-CAM-${randomUUID().slice(0, 6)}`;
+    const [redExt, camExt] = await siblings('Son lì bản thử', [
+      { sellerSku: red.sku, label: 'Đỏ' },
+      { sellerSku: cam, label: camTitleTail },
+    ]);
+    expect((await ceo(app().post(`/api/v1/channel/shops/${shopId}/listings/match`)).send({ externalSkuId: redExt, variantId: red.id })).status).toBe(200);
+    const { rows } = await db().query<{ external_product_id: string }>('select external_product_id from channel.remote_skus where external_sku_id = $1', [camExt]);
+    return { groupId, productId: made.body.id as string, red, cam, camExt: camExt!, externalProductId: rows[0]!.external_product_id };
+  }
+  const valuesOf = async (productId: string) =>
+    ((await ceo(app().get(`/api/v1/catalog/products/${productId}`))).body.variants as { sku: string; attributes: { value: string }[] }[]).map((v) => [
+      v.sku,
+      v.attributes.map((a) => a.value),
+    ]);
+  function withSaleValues(externalProductId: string, bySku: Record<string, string[]>) {
+    const lazada = getAdapter('lazada') as { productCategory?: (t: string, id: string) => Promise<RemoteProductCategory | null> };
+    clearFillBackCache();
+    lazada.productCategory = async (_t, id) => ({
+      externalCategoryId: '1',
+      attributes: [],
+      facts: {
+        brand: null,
+        description: null,
+        imageUrls: [],
+        sizeChartUrl: null,
+        skus: id === externalProductId ? Object.entries(bySku).map(([externalSkuId, saleValues]) => ({ externalSkuId, saleValues, weightG: null, lengthMm: null, widthMm: null, heightMm: null })) : [],
+      },
+    });
+    return () => {
+      delete lazada.productCategory;
+      clearFillBackCache();
+    };
+  }
+
+  it('KB3: giá trị phân loại lấy từ sàn (Get Product), không đoán từ tên', async () => {
+    const p = await lipstick('Cam đất tên dài khác');
+    const restore = withSaleValues(p.externalProductId, { [p.camExt]: ['Cam đất'] });
+    try {
+      expect((await create(p.camExt, p.groupId)).status).toBe(201);
+    } finally {
+      restore();
+    }
+    expect(await valuesOf(p.productId)).toEqual([
+      [p.red.sku, ['Đỏ']],
+      [p.cam, ['Cam đất']],
+    ]);
+  });
+
+  it('KB3: sàn có hai giá trị phân loại mà sản phẩm app một thuộc tính: tạo sản phẩm riêng như trước', async () => {
+    const p = await lipstick('Cam, M');
+    const restore = withSaleValues(p.externalProductId, { [p.camExt]: ['Cam', 'M'] });
+    try {
+      expect((await create(p.camExt, p.groupId)).status).toBe(201);
+    } finally {
+      restore();
+    }
+    expect((await valuesOf(p.productId)).map((v) => v[0])).toEqual([p.red.sku]);
+  });
+
+  it('KB3: SKU anh em của sản phẩm sàn đã liên kết vào sản phẩm app (một thuộc tính biến thể), sàn không trả giá trị phân loại: tách nhãn từ tên', async () => {
+    const groups = await ceo(app().get('/api/v1/catalog/groups'));
+    const groupId = groups.body.items[0].id as string;
+    const name = `Son lì ${randomUUID().slice(0, 6)}`;
+    const made = await ceo(app().post('/api/v1/catalog/products')).send({
+      name,
+      groupId,
+      description: '',
+      imageFileIds: [],
+      axes: [{ name: 'Màu son', values: [{ value: 'Đỏ' }] }],
+      variants: [{ options: ['Đỏ'] }],
+    });
+    expect(made.status, JSON.stringify(made.body)).toBe(201);
+    const red = made.body.variants[0] as { id: string; sku: string };
+    const cam = `SON-CAM-${randomUUID().slice(0, 6)}`;
+    const [redExt, camExt] = await siblings('Son lì mềm mịn lâu trôi - bản thử', [
+      { sellerSku: red.sku, label: 'Đỏ' },
+      { sellerSku: cam, label: 'Cam' },
+    ]);
+    expect((await ceo(app().post(`/api/v1/channel/shops/${shopId}/listings/match`)).send({ externalSkuId: redExt, variantId: red.id })).status).toBe(200);
+
+    const res = await create(camExt!, groupId);
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const body = CreateVariantResult.parse(res.body);
+    expect(body).toMatchObject({ created: true, listing: { status: 'live' } });
+    const detail = await ceo(app().get(`/api/v1/catalog/products/${made.body.id}`));
+    expect(detail.body.variants.map((v: { sku: string; attributes: { value: string }[] }) => [v.sku, v.attributes.map((a) => a.value)])).toEqual([
+      [red.sku, ['Đỏ']],
+      [cam, ['Cam']],
+    ]);
+    const { rowCount } = await db().query('select 1 from product.products where company_id = $1 and code = $2', [company.companyId, cam]);
+    expect(rowCount).toBe(0);
+  });
+
+  it('KB3: SKU anh em đã liên kết vào sản phẩm không có thuộc tính biến thể: vẫn tạo sản phẩm riêng như trước', async () => {
+    const v = await createVariant(company.companyId);
+    const other = `SON-X-${randomUUID().slice(0, 6)}`;
+    const [aExt, bExt] = await siblings('Cốc gốm thử', [
+      { sellerSku: v.sku, label: 'Trắng' },
+      { sellerSku: other, label: 'Đen' },
+    ]);
+    expect((await ceo(app().post(`/api/v1/channel/shops/${shopId}/listings/match`)).send({ externalSkuId: aExt, variantId: v.variantId })).status).toBe(200);
+    const res = await create(bExt!, v.groupId);
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const { rows } = await db().query<{ product_id: string }>('select product_id from product.product_variants where id = $1', [res.body.variantId]);
+    expect(rows[0]!.product_id).not.toBe(v.productId);
   });
 });

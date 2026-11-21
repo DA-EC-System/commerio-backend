@@ -230,11 +230,11 @@ describe('request đẩy: chặn size_chart_missing trước khi xếp việc', 
       ['pushing', null],
     ]);
     expect(await jobsOf(results[0]!.listingId!)).toEqual([
-      { companyId: company.companyId, shopId, shopProductId: expect.any(String), pushStartedAt: expect.any(String), imageUrls: IMAGES, sizeChartUrl: CHART_URL },
+      { companyId: company.companyId, shopId, shopProductId: expect.any(String), productId: expect.any(String), pushStartedAt: expect.any(String), imageUrls: IMAGES, sizeChartUrl: CHART_URL },
     ]);
     // Không có ảnh bảng kích cỡ thì việc không mang `sizeChartUrl` (dạng cũ).
     expect(await jobsOf(results[1]!.listingId!)).toEqual([
-      { companyId: company.companyId, shopId, shopProductId: expect.any(String), pushStartedAt: expect.any(String), imageUrls: IMAGES },
+      { companyId: company.companyId, shopId, shopProductId: expect.any(String), productId: expect.any(String), pushStartedAt: expect.any(String), imageUrls: IMAGES },
     ]);
   });
 });

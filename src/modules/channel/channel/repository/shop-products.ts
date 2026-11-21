@@ -1,11 +1,30 @@
 // Sản phẩm sàn theo gian hàng (#295, Documents/19 câu chốt Q1, 21 §18.8.4). Chạy trong `withCompany` của bên gọi. Dòng
 // `match` do trigger `listings_attach_shop_product` tạo khi listing có mã sản phẩm sàn (migration `*_san-pham-san-du-lieu`).
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
 import type { SyncError } from './schema.ts';
-import { shopProducts } from './schema.ts';
+import { listings, shopProducts } from './schema.ts';
 
 export type ShopProductRow = typeof shopProducts.$inferSelect;
+
+/**
+ * Dòng `match` đang `active` mà listing chưa gỡ của các biến thể `variantIds` (anh em cùng sản phẩm cha) trên gian hàng trỏ
+ * tới: sản phẩm người bán đã có trên sàn, ghép vào app (KB3). Dòng `match` không có `product_id` (CHECK
+ * `shop_products_origin`), nên tìm qua listing. Khoá `FOR UPDATE` khi `lock`.
+ */
+export async function matchShopProductsOf(shopId: string, variantIds: readonly string[], opts: { lock?: boolean } = {}): Promise<ShopProductRow[]> {
+  if (!variantIds.length) return [];
+  const ids = getDb()
+    .selectDistinct({ id: listings.shopProductId })
+    .from(listings)
+    .where(and(eq(listings.shopId, shopId), inArray(listings.variantId, [...variantIds]), isNotNull(listings.shopProductId), ne(listings.status, 'delisted')));
+  const query = getDb()
+    .select()
+    .from(shopProducts)
+    .where(and(inArray(shopProducts.id, ids), eq(shopProducts.origin, 'match'), eq(shopProducts.status, 'active'), isNotNull(shopProducts.externalProductId)))
+    .orderBy(shopProducts.id);
+  return opts.lock ? query.for('update') : query;
+}
 
 /** Dòng `app` đang `active` của sản phẩm cha trên gian hàng (một cha một sản phẩm sàn), khoá `FOR UPDATE` khi `lock`. */
 export async function findAppShopProduct(shopId: string, productId: string, opts: { lock?: boolean } = {}): Promise<ShopProductRow | undefined> {
