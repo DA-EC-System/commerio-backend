@@ -17,15 +17,11 @@ import { money, timestamps, version } from '../../../../shared/db/columns.ts';
 // Mọi bảng của module `sales` khai báo trong schema này.
 export const salesSchema = pgSchema('order');
 
-export const channelKind = salesSchema.enum('channel_kind', [
-  'tiktok',
-  'shopee',
-  'lazada',
-  'mock',
-  'messenger',
-  'email',
-  'zalo_oa',
-]);
+/**
+ * Kênh liên lạc với người mua (Documents/19 mục 3.3, đổi 21/11/2026): sàn là một kênh, mã sàn ở cột `platform` riêng
+ * nên danh sách sàn chỉ nằm ở `channel.marketplaces`. Thay enum `channel_kind` cũ trộn sàn với hộp thư.
+ */
+export const contactChannel = salesSchema.enum('contact_channel', ['marketplace', 'messenger', 'email', 'zalo_oa']);
 export const orderSource = salesSchema.enum('order_source', ['marketplace', 'inbox', 'manual']);
 export const paymentMethod = salesSchema.enum('payment_method', ['prepaid', 'cod']);
 /** Đơn bán chỉ lưu phần của khách (25 §8.2, Documents/21 mục 19.1); tiến độ giao suy ra từ kiện. */
@@ -59,13 +55,22 @@ export const customerIdentities = salesSchema.table(
     customerId: uuid('customer_id')
       .notNull()
       .references(() => customers.id),
-    channelKind: channelKind('channel_kind').notNull(),
+    source: contactChannel('source').notNull(),
+    /**
+     * Mã sàn (`channel.marketplaces.code`) khi `source = 'marketplace'`, null với kênh khác. Không có khoá ngoại vì khác
+     * module lớn (Documents/17); bên ghi lấy mã từ gian hàng của đơn.
+     */
+    platform: text('platform'),
     externalUserId: text('external_user_id').notNull(),
     displayName: text('display_name'),
     ...timestamps,
     ...version,
   },
-  (t) => [unique().on(t.companyId, t.channelKind, t.externalUserId), index().on(t.customerId)],
+  (t) => [
+    unique('customer_identities_uq').on(t.companyId, t.source, t.platform, t.externalUserId).nullsNotDistinct(),
+    index().on(t.customerId),
+    check('customer_identities_platform', sql`(${t.source} = 'marketplace') = (${t.platform} IS NOT NULL)`),
+  ],
 );
 
 /**

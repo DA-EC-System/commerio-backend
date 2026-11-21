@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V143**, 11 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
+Phiên bản **V146**, 11 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
 **Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
 
@@ -17,7 +17,9 @@ Cột:
 - `id` uuid · khoá chính · mặc định `gen_random_uuid()`
 - `company_id` uuid · not null → `core.companies` (theo công ty)
 - `customer_id` uuid · not null → `order.customers.id` (khoá ngoại)
-- `channel_kind` enum `order.channel_kind` · not null: `tiktok` | `shopee` | `lazada` | `mock` | `messenger` | `email` | `zalo_oa`
+- `source` enum `order.contact_channel` · not null: `marketplace` | `messenger` | `email` | `zalo_oa`
+- `platform` text · null
+  Mã sàn (`channel.marketplaces.code`) khi `source = 'marketplace'`, null với kênh khác. Không có khoá ngoại vì khác module lớn (Documents/17); bên ghi lấy mã từ gian hàng của đơn.
 - `external_user_id` text · not null: mã bên ngoài (sàn, cổng thanh toán)
 - `display_name` text · null
 - `created_at` timestamptz · not null · mặc định `now()`
@@ -26,8 +28,9 @@ Cột:
 
 Ràng buộc và index:
 
-- unique (`company_id`, `channel_kind`, `external_user_id`) `customer_identities_company_id_channel_kind_external_user_id_unique`
+- unique (`company_id`, `source`, `platform`, `external_user_id`) NULLS NOT DISTINCT `customer_identities_uq`
 - index (`customer_id`) `customer_identities_customer_id_index`
+- check `customer_identities_platform`: `(source = 'marketplace') = (platform IS NOT NULL)`
 
 Trỏ vào bảng này:
 

@@ -8,11 +8,12 @@ import { axisCodesOf, replaceAxisCodes } from '../repository/axis-mappings.ts';
 import { salesLabelsOf } from '../repository/platform-categories.ts';
 import type { Marketplace } from '../repository/schema.ts';
 import { type DataScope, productPort } from './product-port.ts';
+import type { PlatformKind } from '../domain/product-spec.ts';
 import { platformOf } from './shops.ts';
 
 export interface AxisMappingItem {
   attributeId: string;
-  platformKind: 'color' | 'size' | 'volume' | 'flavor' | null;
+  platformKind: PlatformKind | null;
   /** `platform`: thuộc tính chuẩn, ánh xạ do nền tảng giữ, chỉ đọc với công ty (dữ liệu chung, chốt 3). */
   scope: DataScope;
   editable: boolean;
