@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V138**, 26 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
+Phiên bản **V139**, 26 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
 **Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
 
@@ -145,7 +145,7 @@ Ràng buộc và index:
 
 ## `product.goods_receipt_lines`
 
-Dòng phiếu nhận: số NCC báo giao, số đạt (vào tồn thực), số lỗi giữ lại (vào chờ xử lý), số trả tại chỗ. `shortage_qty` tự tính. `đạt + lỗi ≤ còn chờ` của dòng đề nghị do service kiểm (khác bảng, `over_outstanding`).
+Dòng phiếu nhận: số NCC báo giao, số đạt (vào tồn thực), số lỗi giữ lại (vào chờ xử lý), số trả tại chỗ. `shortage_qty` tự tính. `đạt + lỗi ≤ còn chờ` của dòng đề nghị do service kiểm (khác bảng, `over_outstanding`). `variant_id` trống khi dòng đề nghị là sản phẩm mới chưa có SKU; ghi sổ điền SKU vừa tạo. Service ép phiếu đã ghi sổ không còn dòng trống mà có đạt hoặc lỗi giữ > 0 (Documents/19, 21 mục 16.3).
 
 Khai ở `src/modules/product/purchasing/repository/schema.ts` · module con `purchasing` · theo công ty (`company_id`)
 
@@ -155,7 +155,7 @@ Cột:
 - `company_id` uuid · not null → `core.companies` (theo công ty)
 - `receipt_id` uuid · not null → `product.goods_receipts.id` (khoá ngoại)
 - `request_line_id` uuid · not null → `product.purchase_request_lines.id` (khoá ngoại)
-- `variant_id` uuid · not null → `product.product_variants.id` (tham chiếu, không có khoá ngoại)
+- `variant_id` uuid · null → `product.product_variants.id` (tham chiếu, không có khoá ngoại)
 - `declared_qty` integer · not null · mặc định `0`
 - `accepted_qty` integer · not null · mặc định `0`
 - `defective_qty` integer · not null · mặc định `0`
@@ -463,7 +463,7 @@ Trỏ vào bảng này:
 
 ## `product.purchase_request_lines`
 
-Dòng đề nghị. Dòng sản phẩm mới chưa có `variant_id`; khi duyệt, hệ thống tạo SKU rồi điền vào. `còn chờ = ordered − received − defective − closed_short` (25 §3.1), luôn ≥ 0. `excluded`: CEO loại dòng khi duyệt.
+Dòng đề nghị. Dòng sản phẩm mới chưa có `variant_id` tới lần ghi sổ phiếu nhận đầu tiên có đạt hoặc lỗi giữ > 0; lúc đó hệ thống tạo SKU rồi điền vào (Documents/21 mục 16.3, đổi 22/11/2026; trước đây điền khi duyệt). `còn chờ = ordered − received − defective − closed_short` (25 §3.1), luôn ≥ 0. `excluded`: CEO loại dòng khi duyệt.
 
 Khai ở `src/modules/product/purchasing/repository/schema.ts` · module con `purchasing` · theo công ty (`company_id`)
 

@@ -376,10 +376,11 @@ export const GoodsReceiptSummary = z.object(receiptSummaryShape).strict().meta({
 export const GoodsReceiptLine = z
   .object({
     lineId: z.uuid().meta({ description: 'Id dòng đề nghị nhập' }),
-    variantId: z.uuid(),
-    sku: z.string(),
-    productName: z.string(),
-    attributesLabel: z.string(),
+    variantId: z.uuid().nullable().meta({ description: 'null khi dòng sản phẩm mới chưa ghi sổ (SKU sinh lúc ghi sổ, Documents/21 mục 16.3)' }),
+    sku: z.string().nullable(),
+    isNew: z.boolean().meta({ description: 'Dòng đề nghị là sản phẩm mới' }),
+    productName: z.string().meta({ description: 'Tên sản phẩm; dòng sản phẩm mới là tên cha (mới hoặc có sẵn)' }),
+    attributesLabel: z.string().meta({ description: 'Dòng sản phẩm mới chưa có SKU: giá trị phân loại dự kiến' }),
     outstanding: z.number().int().meta({ description: 'Còn chờ của dòng đề nghị lúc này' }),
     announced: z.number().int(),
     accepted: z.number().int(),
