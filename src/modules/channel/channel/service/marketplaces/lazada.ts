@@ -10,6 +10,8 @@ import {
   existingFromSkus,
   existingSku,
   INVALID_AMOUNT,
+  logPlatformWrite,
+  platformRequestId,
   type MarketplaceAdapter,
   MarketplaceError,
   type NewProduct,
@@ -220,9 +222,10 @@ function lazadaMessage(res: LazadaResponse): string | null {
 export function lazadaError(res: LazadaResponse): MarketplaceError {
   const code = String(res.code ?? 'unknown');
   const message = lazadaMessage(res);
-  if (AUTH_CODES.has(code)) return new MarketplaceError('unauthorized', code, message);
-  if (res.type === 'SYSTEM' || TRANSIENT_CODES.has(code)) return new MarketplaceError('unavailable', code, message);
-  return new MarketplaceError('rejected', code, message);
+  const kind = AUTH_CODES.has(code) ? 'unauthorized' : res.type === 'SYSTEM' || TRANSIENT_CODES.has(code) ? 'unavailable' : 'rejected';
+  const err = new MarketplaceError(kind, code, message);
+  err.requestId = platformRequestId(res);
+  return err;
 }
 
 /** Đọc `data` của GetProductItem thành category và attribute (#400 lát 12): giá trị chuỗi, số; mảng thì từng phần tử. */
@@ -683,6 +686,8 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
     } catch {
       throw new MarketplaceError('unavailable', `http_${res.status}`);
     }
+    // Lazada đọc bằng GET, ghi bằng POST (form hay query) (#504).
+    if (method !== 'GET') logPlatformWrite('lazada', apiPath, platformRequestId(body), body.code);
     return body;
   }
 
