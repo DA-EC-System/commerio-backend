@@ -32,6 +32,18 @@ export {
   parentProducts,
   validateNewProducts,
 } from './service/purchase-products.ts';
+// Bản soạn trước của sản phẩm mới trên đề nghị nhập (Documents/21 mục 16.3): purchasing giữ bảng, catalog giữ luật.
+export {
+  applyDraftVariantFacts,
+  applyPurchaseDraft,
+  checkPurchaseDraft,
+  type DraftContent,
+  type DraftFacts,
+  type DraftShape,
+  type DraftSource,
+  draftReadiness,
+  factsFor,
+} from './service/purchase-drafts.ts';
 // Giá chuẩn và giá muốn bán là cột của SKU (Documents/19 D9); channel đọc giá muốn bán cho bộ lọc giá (#225).
 export { standardPricesOf, targetNetPricesOf } from './service/standard-price.ts';
 // `ctx` của catalog: nguồn lý do chặn lưu trữ SKU do `product/index.ts` và `src/wiring.ts` nối (#204).

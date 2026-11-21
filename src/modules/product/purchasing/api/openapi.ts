@@ -11,6 +11,10 @@ import {
   GoodsReceiptUpdateInput,
   IdParams,
   LineParams,
+  ProductDraft,
+  ProductDraftListQuery,
+  ProductDraftPage,
+  ProductDraftUpdateInput,
   PurchaseRequest,
   PurchaseRequestInput,
   PurchaseRequestPage,
@@ -150,6 +154,33 @@ export function registerPurchasingOpenApi(registry: OpenAPIRegistry): void {
         `${versionConflict}; \`invalid_transition\`, \`second_person_required\`, \`empty_document\`, \`all_lines_excluded\`, \`has_receipts\`, \`receipt_counting\``,
       ),
       422: problemResponse('`validation_failed` (giá nhập 0, tên sản phẩm mới đã có), `reason_required`, `supplier_inactive`'),
+    },
+  });
+
+  path({
+    method: 'get',
+    path: '/product-drafts',
+    summary: 'Hàng mới sắp về cần soạn: bản soạn trước của sản phẩm mới, không có giá nhập (một quyền xem đề nghị hoặc `catalog.product.manage`)',
+    request: { query: ProductDraftListQuery },
+    responses: { 200: json('Một trang bản soạn, mới sửa trước', ProductDraftPage), ...invalid },
+  });
+  path({
+    method: 'get',
+    path: '/product-drafts/:id',
+    summary: 'Chi tiết bản soạn trước của một sản phẩm mới (một quyền xem đề nghị hoặc `catalog.product.manage`)',
+    request: { params: IdParams },
+    responses: { 200: json('Bản soạn', ProductDraft), ...missing('bản soạn') },
+  });
+  path({
+    method: 'put',
+    path: '/product-drafts/:id',
+    summary: 'Sửa bản soạn trước khi đề nghị chưa kết thúc; không cần duyệt lại (quyền `purchasing.request.manage` hoặc `catalog.product.manage`)',
+    request: { params: IdParams, body: body(ProductDraftUpdateInput) },
+    responses: {
+      200: json('Bản soạn sau khi sửa', ProductDraft),
+      ...missing('bản soạn'),
+      ...conflict(`${versionConflict}; \`draft_closed\` khi đề nghị đã kết thúc hoặc sửa phần sản phẩm khi sản phẩm đã tạo (kèm \`productId\`)`),
+      422: problemResponse('Dữ liệu không hợp lệ (`validation_failed`, `errors` theo ô); `variant_created` khi sửa số của biến thể đã có SKU'),
     },
   });
 

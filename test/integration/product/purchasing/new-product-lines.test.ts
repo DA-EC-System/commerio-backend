@@ -131,6 +131,7 @@ describe('cha mới', () => {
       optionValues: { 'Màu sắc': 'Đen', 'Kích cỡ': 'M' },
       name,
       groupName: expect.any(String),
+      draftId: draft.productDrafts[0]!.id,
     });
     expect(draft.lines[0]).toMatchObject({ productName: name, attributesLabel: 'Đen / M' });
 
