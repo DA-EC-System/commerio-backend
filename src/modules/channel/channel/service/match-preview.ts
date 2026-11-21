@@ -3,6 +3,7 @@
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { holdsStock } from '../domain/shop.ts';
+import { type StockHeldReason, stockToPushOf } from '../domain/stock-to-push.ts';
 import { findListingByExternalSku } from '../repository/listings.ts';
 import { findRemoteSkuRow } from '../repository/remote-skus.ts';
 import { currentPrices } from './listing-prices.ts';
@@ -14,7 +15,7 @@ export interface MatchPreview {
   app: { stock: number | null; price: string | null };
   stockWillPush: boolean;
   /** Lý do không đẩy tồn: gian hàng chờ kiểm kê lần đầu thắng SKU chưa có số. */
-  stockHeldReason: 'shop_waiting_opening' | 'not_counted' | null;
+  stockHeldReason: StockHeldReason | null;
   priceWillPush: boolean;
 }
 
@@ -44,7 +45,7 @@ export async function matchPreview(
     const price = (await currentPrices([id], rows, await port.standardPrices([id]))).get(id)?.price ?? null;
     const counted = port.countedOf ? (await port.countedOf([id])).has(id) : true;
     const available = (await port.availableOf([id])).get(id) ?? 0;
-    const stockHeldReason = holdsStock(shop) ? 'shop_waiting_opening' : counted ? null : 'not_counted';
+    const { stockHeldReason } = stockToPushOf({ zeroHidden: false, holdStock: holdsStock(shop), counted, available });
     return {
       platform: { stock: remote.quantity, price: remote.price, syncedAt: remote.seenAt },
       app: { stock: counted ? available : null, price: price === null ? null : String(price) },

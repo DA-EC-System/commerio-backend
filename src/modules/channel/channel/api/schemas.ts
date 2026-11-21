@@ -627,6 +627,12 @@ export const ListingRow = z
         'Đường dẫn của `externalCategoryId` của listing trong cây category đã đồng bộ (21 §18.5, commerio-backend#467); null khi chưa có listing, listing chưa có category hoặc category chưa có trong cây',
     }),
     categoryChange: categoryChange.meta({ description: 'Bằng `listing.categoryChange`; null khi chưa có listing (21 §18.5)' }),
+    stockToPush: z.number().int().nullable().meta({
+      description: 'Số tồn lần đẩy tồn tới sẽ gửi cho SKU ở gian hàng này, cùng hàm với việc đẩy tồn, không gọi sàn; null khi chưa đẩy được tồn (21 §18.9 R3)',
+    }),
+    stockHeldReason: z.enum(['shop_waiting_opening', 'not_counted']).nullable().meta({
+      description: 'Lý do chưa đẩy tồn, cùng nghĩa và thứ tự xét với `listings/match-preview`; khác null thì `stockToPush` null (21 §18.9 R3)',
+    }),
   })
   .strict()
   .meta({ id: 'ListingRow' });
