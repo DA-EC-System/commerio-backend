@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V135**, 22 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
+Phiên bản **V137**, 22 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
 **Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
 
@@ -32,7 +32,8 @@ Khai ở `src/modules/channel/channel/repository/schema.ts` · module con `chann
 Cột:
 
 - `id` uuid · khoá chính · mặc định `gen_random_uuid()`
-- `company_id` uuid · not null → `core.companies` (theo công ty)
+- `company_id` uuid · null → `core.companies` (theo công ty)
+  NULL: ánh xạ nền tảng của thuộc tính chuẩn, dùng chung mọi công ty, chỉ migration ghi; có giá trị: của công ty.
 - `attribute_id` uuid · not null → `product.attributes.id` (tham chiếu, không có khoá ngoại)
 - `platform` enum `channel.marketplace` · not null: `lazada` | `shopee` | `tiktok` | `mock`
 - `attribute_code` text · not null
@@ -45,6 +46,8 @@ Ràng buộc và index:
 
 - unique (`company_id`, `attribute_id`, `platform`, `attribute_code`) `axis_mappings_code_uq`
 - unique (`company_id`, `attribute_id`, `platform`, `priority`) `axis_mappings_priority_uq`
+- unique index (`attribute_id`, `platform`, `attribute_code`) `axis_mappings_platform_code_uq` where `company_id IS NULL`
+- unique index (`attribute_id`, `platform`, `priority`) `axis_mappings_platform_priority_uq` where `company_id IS NULL`
 - check `axis_mappings_priority`: `priority >= 1`
 
 ## `channel.conversation_notes`
@@ -698,7 +701,8 @@ Khai ở `src/modules/channel/channel/repository/schema.ts` · module con `chann
 Cột:
 
 - `id` uuid · khoá chính · mặc định `gen_random_uuid()`
-- `company_id` uuid · not null → `core.companies` (theo công ty)
+- `company_id` uuid · null → `core.companies` (theo công ty)
+  NULL: ánh xạ nền tảng của thông số chuẩn, dùng chung mọi công ty, chỉ migration ghi; có giá trị: của công ty.
 - `field_id` uuid · not null → `product.spec_fields.id` (tham chiếu, không có khoá ngoại)
 - `platform` enum `channel.marketplace` · not null: `lazada` | `shopee` | `tiktok` | `mock`
 - `attribute_code` text · not null
@@ -712,33 +716,37 @@ Ràng buộc và index:
 - unique (`company_id`, `field_id`, `platform`, `attribute_code`) `spec_field_mappings_code_uq`
 - unique (`company_id`, `field_id`, `platform`, `priority`) `spec_field_mappings_priority_uq`
 - unique (`company_id`, `platform`, `attribute_code`) `spec_field_mappings_attribute_uq`
+- unique (`field_id`, `platform`, `attribute_code`) `spec_field_mappings_field_code_uq`
+- unique index (`field_id`, `platform`, `priority`) `spec_field_mappings_platform_priority_uq` where `company_id IS NULL`
+- unique index (`platform`, `attribute_code`) `spec_field_mappings_platform_attribute_uq` where `company_id IS NULL`
 - check `spec_field_mappings_priority`: `priority >= 1`
 
 Trỏ vào bảng này:
 
-- `channel.spec_option_mappings.company_id, field_id, platform, attribute_code` (khoá ngoại)
+- `channel.spec_option_mappings.field_id, platform, attribute_code` (khoá ngoại viết tay)
 
 ## `channel.spec_option_mappings`
 
-Ánh xạ một lựa chọn của thông số sang lựa chọn chuẩn của sàn, theo đúng mã attribute (#509). Khoá ngoại ghép về `spec_field_mappings` `ON DELETE CASCADE`: bỏ mã của thông số thì bỏ luôn ánh xạ lựa chọn của mã đó. RLS.
+Ánh xạ một lựa chọn của thông số sang lựa chọn chuẩn của sàn, theo đúng mã attribute (#509). `company_id` là tầng của lựa chọn: NULL là lựa chọn chuẩn (nền tảng, chỉ migration ghi); công ty là lựa chọn riêng, kể cả lựa chọn riêng thêm vào thông số chuẩn (dòng mã là dòng nền tảng). Khoá ngoại `spec_option_mappings_field_fk` `(field_id, platform, attribute_code)` → `spec_field_mappings_field_code_uq` `ON DELETE CASCADE` (bỏ mã thì bỏ luôn ánh xạ lựa chọn của mã đó) không kèm `company_id`, vì lựa chọn riêng trỏ dòng mã nền tảng. Khoá ngoại đặt ở migration viết tay `*_anh-xa-hai-tang-du-lieu`, không khai ở đây: drizzle sinh câu thêm khoá ngoại trước câu tạo unique nó trỏ tới. RLS.
 
 Khai ở `src/modules/channel/channel/repository/schema.ts` · module con `channel` · theo công ty (`company_id`)
 
 Cột:
 
 - `id` uuid · khoá chính · mặc định `gen_random_uuid()`
-- `company_id` uuid · not null → `core.companies` (theo công ty)
-- `field_id` uuid · not null → `channel.spec_field_mappings.field_id` (khoá ngoại, ON DELETE cascade)
+- `company_id` uuid · null → `core.companies` (theo công ty)
+- `field_id` uuid · not null → `channel.spec_field_mappings.field_id` (khoá ngoại viết tay, ON DELETE cascade)
 - `option_id` uuid · not null → `product.spec_field_options.id` (tham chiếu, không có khoá ngoại)
-- `platform` enum `channel.marketplace` · not null → `channel.spec_field_mappings.platform` (khoá ngoại, ON DELETE cascade): `lazada` | `shopee` | `tiktok` | `mock`
-- `attribute_code` text · not null → `channel.spec_field_mappings.attribute_code` (khoá ngoại, ON DELETE cascade)
+- `platform` enum `channel.marketplace` · not null → `channel.spec_field_mappings.platform` (khoá ngoại viết tay, ON DELETE cascade): `lazada` | `shopee` | `tiktok` | `mock`
+- `attribute_code` text · not null → `channel.spec_field_mappings.attribute_code` (khoá ngoại viết tay, ON DELETE cascade)
 - `platform_option_id` text · not null
 - `created_at` timestamptz · not null · mặc định `now()`
 - `updated_at` timestamptz · not null · mặc định `now()`
 
 Ràng buộc và index:
 
-- unique (`company_id`, `option_id`, `platform`, `attribute_code`) `spec_option_mappings_uq`
+- unique (`option_id`, `platform`, `attribute_code`) `spec_option_mappings_option_uq`
+- khoá ngoại viết tay (`field_id`, `platform`, `attribute_code`) → `channel.spec_field_mappings` (`field_id`, `platform`, `attribute_code`), ON DELETE cascade, ở `db/migrations/20261121042909_anh-xa-hai-tang-du-lieu.sql`
 
 ## `channel.tags`
 

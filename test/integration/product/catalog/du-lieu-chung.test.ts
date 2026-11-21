@@ -406,6 +406,10 @@ describe('migration gộp bản sao vào dòng nền tảng (#521)', () => {
     const client = await db.connect();
     try {
       await lockMigrationTables(client);
+      // Bảng gộp do migration tạo, migration channel `*_anh-xa-hai-tang-du-lieu` (#522) đã xoá: dựng lại trong giao dịch.
+      await client.query(
+        `create table if not exists product.tier_merge_remap (kind text not null, old_id uuid not null, new_id uuid not null, primary key (kind, old_id))`,
+      );
       await client.query('alter table product.attributes drop constraint attributes_platform_kind_tier');
       await client.query(`update product.attributes set platform_kind = 'color' where id = $1`, [a.id]);
       for (const s of statements) await client.query(s);

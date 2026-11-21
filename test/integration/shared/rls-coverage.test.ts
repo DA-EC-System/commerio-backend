@@ -20,6 +20,9 @@ const TIER_TABLES = [
   'product.spec_fields',
   'product.spec_field_options',
   'product.group_spec_fields',
+  'channel.spec_field_mappings',
+  'channel.spec_option_mappings',
+  'channel.axis_mappings',
 ];
 const TIER_POLICIES = ['tier_delete', 'tier_insert', 'tier_read', 'tier_update'];
 
@@ -58,8 +61,6 @@ const EXPECTED_PRIVILEGES: Record<string, readonly Privilege[]> = {
   // Hàng việc nền (#102): request chỉ gửi việc trong giao dịch; mọi bảng khác của pgboss chỉ worker (role chủ bảng) chạm.
   'pgboss.queue': ['SELECT'],
   'pgboss.job_common': ['INSERT'],
-  // Bảng tạm của migration hai tầng (#521): migration channel đọc rồi xoá; app không đụng.
-  'product.tier_merge_remap': [],
 };
 
 /** Quyền mặc định của bảng không có trong EXPECTED_PRIVILEGES: bảng của pg-boss thì không quyền nào. */

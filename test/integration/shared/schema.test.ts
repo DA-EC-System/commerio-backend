@@ -49,7 +49,6 @@ const EXPECTED_TABLES: Record<string, readonly string[]> = {
     'supplier_returns',
     'suppliers',
     // Bảng tạm của migration hai tầng (#521); migration channel đọc rồi xoá.
-    'tier_merge_remap',
     'variant_attribute_values',
   ],
   order: [

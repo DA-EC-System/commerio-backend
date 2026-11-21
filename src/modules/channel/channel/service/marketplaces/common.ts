@@ -808,7 +808,8 @@ export interface MarketplaceAdapter {
   readonly defaultBrand?: string;
   /**
    * Ánh xạ mặc định thông số của công ty → mã attribute của sàn theo `priority` (#509, Documents/21 §18.8.1): khoá là `code`
-   * của thông số mặc định (catalog `spec-defaults.ts`). `seedSpecMappings` ghi khi tạo công ty. Một mã chỉ thuộc một thông số.
+   * của thông số chuẩn (catalog `spec-defaults.ts`). Là dòng nền tảng (`company_id` NULL) dùng chung mọi công ty, ghi bằng
+   * migration; sửa ở đây thì thêm migration (test `spec-mappings-platform.test.ts` so DB với hằng này). Một mã chỉ thuộc một thông số.
    */
   readonly defaultSpecMappings?: Readonly<Record<string, readonly string[]>>;
   /**

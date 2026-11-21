@@ -1,4 +1,5 @@
-// Ánh xạ trục phân loại sang sales attribute của sàn theo công ty (#448, Documents/21 §18.8.1, §18.8.3 nguồn 2).
+// Ánh xạ trục phân loại sang sales attribute của sàn (#448, Documents/21 §18.8.1, §18.8.3 nguồn 2). Hai tầng: thuộc tính chuẩn
+// có ánh xạ nền tảng (`company_id` NULL, chỉ migration ghi), thuộc tính riêng có ánh xạ của công ty.
 import { recordAudit } from '../../../core/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
@@ -6,12 +7,15 @@ import type { ModuleContext } from '../../../../shared/module.ts';
 import { axisCodesOf, replaceAxisCodes } from '../repository/axis-mappings.ts';
 import { salesLabelsOf } from '../repository/platform-categories.ts';
 import type { Marketplace } from '../repository/schema.ts';
-import { productPort } from './product-port.ts';
+import { type DataScope, productPort } from './product-port.ts';
 import { platformOf } from './shops.ts';
 
 export interface AxisMappingItem {
   attributeId: string;
   platformKind: 'color' | 'size' | 'volume' | 'flavor' | null;
+  /** `platform`: thuộc tính chuẩn, ánh xạ do nền tảng giữ, chỉ đọc với công ty (dữ liệu chung, chốt 3). */
+  scope: DataScope;
+  editable: boolean;
   codes: { attributeCode: string; attributeLabel: string | null; priority: number }[];
   defaultCodes: string[];
 }
@@ -21,7 +25,7 @@ async function companyAttributes(ctx: ModuleContext) {
 }
 
 function itemOf(
-  attr: { id: string; platformKind: AxisMappingItem['platformKind'] },
+  attr: { id: string; platformKind: AxisMappingItem['platformKind']; scope?: DataScope },
   codes: readonly string[],
   labels: ReadonlyMap<string, string>,
   standard: Partial<Record<NonNullable<AxisMappingItem['platformKind']>, readonly string[]>>,
@@ -29,6 +33,8 @@ function itemOf(
   return {
     attributeId: attr.id,
     platformKind: attr.platformKind,
+    scope: attr.scope ?? 'company',
+    editable: (attr.scope ?? 'company') === 'company',
     codes: codes.map((attributeCode, i) => ({ attributeCode, attributeLabel: labels.get(attributeCode) ?? null, priority: i + 1 })),
     defaultCodes: attr.platformKind ? [...(standard[attr.platformKind] ?? [])] : [],
   };
@@ -57,6 +63,9 @@ export async function putAxisMapping(
   return withCompany(actor.companyId, async () => {
     const attr = isUuid(attributeId) ? (await companyAttributes(ctx)).find((a) => a.id === attributeId) : undefined;
     if (!attr) throw new AppError(404, 'not_found', 'Không tìm thấy thuộc tính');
+    if (attr.scope === 'platform') {
+      throw new AppError(403, 'platform_managed', 'Ánh xạ của thuộc tính chuẩn do nền tảng quản lý, công ty chỉ ánh xạ thuộc tính riêng');
+    }
     const labels = await salesLabelsOf(platform);
     const errors: Record<string, string> = {};
     const seen = new Set<string>();

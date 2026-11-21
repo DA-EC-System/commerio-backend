@@ -3,7 +3,22 @@
 <!-- Sinh tự động bởi `npm run db:docs` từ db/migrations. Không sửa tay. -->
 
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
-Mới nhất: **V135**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+Mới nhất: **V137**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+
+## V137 · 21/11/2026 · anh-xa-hai-tang-du-lieu
+
+`db/migrations/20261121042909_anh-xa-hai-tang-du-lieu.sql` · viết tay
+
+- viết tay: RLS, khoá ngoại, dữ liệu
+- Ánh xạ sang sàn hai tầng (dữ liệu chung, Documents/19 §3.3, 21 §18.8.1, §5.6, be#522).
+
+## V136 · 21/11/2026 · anh-xa-hai-tang
+
+`db/migrations/20261121042905_anh-xa-hai-tang.sql` · sinh từ schema
+
+- `channel.axis_mappings`: đổi cột `company_id` (thành null); + index `axis_mappings_platform_code_uq`, `axis_mappings_platform_priority_uq`
+- `channel.spec_field_mappings`: đổi cột `company_id` (thành null); + unique `spec_field_mappings_field_code_uq`; + index `spec_field_mappings_platform_priority_uq`, `spec_field_mappings_platform_attribute_uq`
+- `channel.spec_option_mappings`: đổi cột `company_id` (thành null); − khoá ngoại `spec_option_mappings_field_fk`; + unique `spec_option_mappings_option_uq`; − unique `spec_option_mappings_uq`
 
 ## V135 · 21/11/2026 · du-lieu-chung-chuyen
 
