@@ -5,18 +5,20 @@
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
 Mới nhất: **V141**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
 
-## V141 · 21/11/2026 · can-nang-kich-thuoc-tran
+## V141 · 21/11/2026 · danh-muc-chuan-du-lieu
 
-`db/migrations/20261121060224_can-nang-kich-thuoc-tran.sql` · sinh từ schema
+`db/migrations/20261121060918_danh-muc-chuan-du-lieu.sql` · viết tay
 
-- `product.product_variants`: đổi check `product_variants_dimensions`
+- viết tay: RLS, dữ liệu
+- Danh mục chuẩn 27 (#531, Documents/21 mục 5.7, 19 §3.2; `.claude/issues/luong-san-pham/du-lieu-chuan.md`).
 
-## V140 · 21/11/2026 · can-nang-kich-thuoc-du-lieu
+## V140 · 21/11/2026 · danh-muc-chuan
 
-`db/migrations/20261121060221_can-nang-kich-thuoc-du-lieu.sql` · viết tay
+`db/migrations/20261121060914_danh-muc-chuan.sql` · sinh từ schema
 
-- viết tay: dữ liệu
-- #434 (viết tay, chỉ dữ liệu, chạy lại được): cân nặng trên 50.000 g, cạnh trên 2.000 mm (Documents/21 §17.5) chỉ có trong dữ liệu thử trên staging (PATCH SKU trước #434 không chặn).
+- + bảng `product.group_allowed_attributes`
+- `product.attributes`: đổi check `attributes_platform_kind`
+- `product.product_groups`: + cột `renamed_from`, `split_into`; + check `product_groups_merge_platform`
 
 ## V139 · 21/11/2026 · dong-phieu-nhan-chua-co-sku
 

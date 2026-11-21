@@ -20,6 +20,7 @@ const TIER_TABLES = [
   'product.spec_fields',
   'product.spec_field_options',
   'product.group_spec_fields',
+  'product.group_allowed_attributes',
   'channel.spec_field_mappings',
   'channel.spec_option_mappings',
   'channel.axis_mappings',

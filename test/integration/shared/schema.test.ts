@@ -30,6 +30,7 @@ const EXPECTED_TABLES: Record<string, readonly string[]> = {
     'doc_counters',
     'goods_receipt_lines',
     'goods_receipts',
+    'group_allowed_attributes',
     'group_spec_fields',
     'product_attribute_value_images',
     'product_groups',

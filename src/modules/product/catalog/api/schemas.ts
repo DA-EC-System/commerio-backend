@@ -217,6 +217,21 @@ export const GroupTemplateBody = z
           seen.add(f.fieldId);
         });
       }),
+    allowedAttributeIds: z
+      .array(z.string())
+      .max(50, 'Tối đa 50 thuộc tính')
+      .superRefine((ids, ctx) => {
+        const seen = new Set<string>();
+        ids.forEach((id, i) => {
+          if (seen.has(id)) ctx.addIssue({ code: 'custom', path: [i], message: 'Thuộc tính bị trùng' });
+          seen.add(id);
+        });
+      })
+      .optional()
+      .meta({
+        description:
+          'Thuộc tính biến thể được phép (Documents/21 mục 5.7); bỏ trường là giữ. Nhóm nền tảng: chỉ phần của công ty. Nhóm của công ty: cả danh sách, trục chưa có thì tự thêm vào đầu',
+      }),
     version: settingsVersion.meta({ description: 'Nhóm nền tảng: chỉ gửi phần của công ty; `version` của cài đặt công ty' }),
   })
   .meta({ id: 'GroupTemplateRequest' });
@@ -490,11 +505,20 @@ export const ProductListQuery = z.object({
   businessStatus: blankAsMissing(
     z.enum(['selling', 'paused', 'discontinued'], 'Trạng thái kinh doanh là selling, paused hoặc discontinued').optional(),
   ),
+  /**
+   * `incomplete`: có ít nhất một SKU chưa lưu trữ đang `incomplete` (`incompleteCount > 0`); `ready`: mọi SKU chưa lưu trữ
+   * đều `ready` (Documents/21 §17.2, lọc "Chờ hoàn thiện").
+   */
+  readiness: blankAsMissing(z.enum(['incomplete', 'ready'], 'Độ hoàn thiện là incomplete hoặc ready').optional()),
   page: blankAsMissing(z.coerce.number().int().min(1, 'Trang từ 1').default(1)),
   pageSize: blankAsMissing(z.coerce.number().int().min(1, 'Từ 1 đến 100 dòng').max(100, 'Từ 1 đến 100 dòng').default(20)),
 });
 
 // ---------- Schema trả về, chỉ dùng cho Swagger ----------
+
+export const AttributesQuery = z.object({
+  groupId: z.string().optional().meta({ description: 'Chỉ thuộc tính biến thể được phép của danh mục (21 mục 5.7)' }),
+});
 
 export const ProductGroup = z
   .object({
@@ -508,6 +532,10 @@ export const ProductGroup = z
       .meta({ description: 'Trục phân loại chuẩn của nhóm (0–2, theo thứ tự; #510)' }),
     specFieldCount: z.number().int().meta({ description: 'Số thông số trong mẫu nhóm' }),
     requiredCount: z.number().int().meta({ description: 'Số thông số bắt buộc trong mẫu nhóm' }),
+    renamedFrom: z.string().nullable().meta({ description: 'Tên cũ của danh mục nền tảng đã đổi tên khi gộp 27 danh mục (21 mục 5.7)' }),
+    splitInto: z
+      .array(z.object({ id: z.uuid(), name: z.string() }))
+      .meta({ description: 'Danh mục hẹp hơn tách từ danh mục này; rỗng là không tách (21 mục 5.7)' }),
     suggest: SuggestConfig,
     updatedAt: z.string(),
     version: z.number().int(),
@@ -559,6 +587,17 @@ export const GroupTemplate = z
         options: z.array(SpecOptionRef),
       }),
     ),
+    allowedAttributes: z
+      .array(
+        z.object({
+          attributeId: z.uuid(),
+          name: z.string(),
+          platformKind: z.enum(PLATFORM_KINDS).nullable(),
+          scope: Scope.meta({ description: 'Tầng của dòng trong danh sách (dòng nền tảng hay công ty thêm)' }),
+          isAxis: z.boolean(),
+        }),
+      )
+      .meta({ description: 'Thuộc tính biến thể được phép (21 mục 5.7): trục chuẩn, rồi dòng nền tảng, rồi dòng công ty' }),
     version: z.number().int().meta({ description: '`version` của nhóm; nhóm nền tảng: của cài đặt công ty' }),
   })
   .meta({ id: 'GroupTemplate' });

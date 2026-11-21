@@ -120,7 +120,7 @@ Ràng buộc và index:
 
 Trỏ vào bảng này:
 
-- 92 bảng có `company_id`
+- 93 bảng có `company_id`
 
 ## `core.company_modules`
 

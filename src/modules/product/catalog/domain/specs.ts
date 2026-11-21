@@ -2,10 +2,16 @@
 import { Decimal } from 'decimal.js';
 
 /**
- * Loại thuộc tính chuẩn sàn (21 mục 5.2, 18.8.3): bước Variants của trang đẩy ghép sang sales attribute chuẩn của sàn.
- * `volume` (dung tích, khối lượng, quy cách) và `flavor` (hương vị) cho mỹ phẩm, thực phẩm (research P4, 21/11/2026).
+ * Loại thuộc tính biến thể chuẩn (21 mục 5.2, 5.7, 18.8.3): adapter tra sale prop của leaf theo kind. 23 kind từ #531
+ * (`du-lieu-chuan.md` mục 4.1); channel giữ union riêng cùng chữ, test bất biến so hai bên. CHECK `attributes_platform_kind`
+ * sinh từ hằng này.
  */
-export const PLATFORM_KINDS = ['color', 'size', 'volume', 'flavor'] as const;
+export const PLATFORM_KINDS = [
+  'color', 'size', 'shoe_size', 'bra_size', 'age', 'ring_size',
+  'storage', 'version', 'screen_size', 'connector', 'length', 'battery_capacity',
+  'voltage', 'power', 'volume', 'weight', 'flavor', 'scent',
+  'pack', 'diaper_size', 'bed_size', 'style', 'compatible_model',
+] as const;
 export type PlatformKind = (typeof PLATFORM_KINDS)[number];
 
 /** Kiểu nhập của thông số (Documents/19 §3.2): `date` lưu `YYYY-MM-DD` (ngày cấp giấy phép, research P6). */
