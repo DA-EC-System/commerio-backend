@@ -590,7 +590,8 @@ export const axisMappings = channelSchema.table(
   'axis_mappings',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    companyId: uuid('company_id').notNull(),
+    /** NULL: ánh xạ nền tảng của thuộc tính chuẩn, dùng chung mọi công ty, chỉ migration ghi; có giá trị: của công ty. */
+    companyId: uuid('company_id'),
     attributeId: uuid('attribute_id').notNull(),
     platform: marketplace('platform').notNull(),
     /** Mã sales attribute của sàn (`platform_category_attributes.code`, `kind = 'sales'`). */
@@ -601,6 +602,9 @@ export const axisMappings = channelSchema.table(
   (t) => [
     unique('axis_mappings_code_uq').on(t.companyId, t.attributeId, t.platform, t.attributeCode),
     unique('axis_mappings_priority_uq').on(t.companyId, t.attributeId, t.platform, t.priority),
+    // Hai unique trên chỉ giữ tầng công ty (NULL khác nhau); tầng nền tảng dùng partial index riêng.
+    uniqueIndex('axis_mappings_platform_code_uq').on(t.attributeId, t.platform, t.attributeCode).where(sql`${t.companyId} IS NULL`),
+    uniqueIndex('axis_mappings_platform_priority_uq').on(t.attributeId, t.platform, t.priority).where(sql`${t.companyId} IS NULL`),
     check('axis_mappings_priority', sql`${t.priority} >= 1`),
   ],
 );
@@ -614,7 +618,8 @@ export const specFieldMappings = channelSchema.table(
   'spec_field_mappings',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    companyId: uuid('company_id').notNull(),
+    /** NULL: ánh xạ nền tảng của thông số chuẩn, dùng chung mọi công ty, chỉ migration ghi; có giá trị: của công ty. */
+    companyId: uuid('company_id'),
     fieldId: uuid('field_id').notNull(),
     platform: marketplace('platform').notNull(),
     /** Mã attribute của sàn: TikTok `attribute_id`, Lazada `name`. */
@@ -626,19 +631,30 @@ export const specFieldMappings = channelSchema.table(
     unique('spec_field_mappings_code_uq').on(t.companyId, t.fieldId, t.platform, t.attributeCode),
     unique('spec_field_mappings_priority_uq').on(t.companyId, t.fieldId, t.platform, t.priority),
     unique('spec_field_mappings_attribute_uq').on(t.companyId, t.platform, t.attributeCode),
+    // `code_uq`, `priority_uq`, `attribute_uq` chỉ giữ tầng công ty (NULL khác nhau). `field_code_uq` giữ cả hai tầng (mỗi
+    // thông số thuộc đúng một tầng) và là đích khoá ngoại của `spec_option_mappings`; `code_uq` thừa so với nó nhưng giữ lại vì
+    // khoá ngoại cũ trỏ vào và drizzle bỏ unique trước khi bỏ khoá ngoại. Chéo tầng (thông số riêng lấy mã của thông số chuẩn)
+    // do service kiểm, vì công ty đọc được cả hai tầng.
+    unique('spec_field_mappings_field_code_uq').on(t.fieldId, t.platform, t.attributeCode),
+    uniqueIndex('spec_field_mappings_platform_priority_uq').on(t.fieldId, t.platform, t.priority).where(sql`${t.companyId} IS NULL`),
+    uniqueIndex('spec_field_mappings_platform_attribute_uq').on(t.platform, t.attributeCode).where(sql`${t.companyId} IS NULL`),
     check('spec_field_mappings_priority', sql`${t.priority} >= 1`),
   ],
 );
 
 /**
- * Ánh xạ một lựa chọn của thông số sang lựa chọn chuẩn của sàn, theo đúng mã attribute (#509). Khoá ngoại ghép về
- * `spec_field_mappings` `ON DELETE CASCADE`: bỏ mã của thông số thì bỏ luôn ánh xạ lựa chọn của mã đó. RLS.
+ * Ánh xạ một lựa chọn của thông số sang lựa chọn chuẩn của sàn, theo đúng mã attribute (#509). `company_id` là tầng của lựa
+ * chọn: NULL là lựa chọn chuẩn (nền tảng, chỉ migration ghi); công ty là lựa chọn riêng, kể cả lựa chọn riêng thêm vào thông số
+ * chuẩn (dòng mã là dòng nền tảng). Khoá ngoại `spec_option_mappings_field_fk` `(field_id, platform, attribute_code)` →
+ * `spec_field_mappings_field_code_uq` `ON DELETE CASCADE` (bỏ mã thì bỏ luôn ánh xạ lựa chọn của mã đó) không kèm
+ * `company_id`, vì lựa chọn riêng trỏ dòng mã nền tảng. Khoá ngoại đặt ở migration viết tay `*_anh-xa-hai-tang-du-lieu`, không
+ * khai ở đây: drizzle sinh câu thêm khoá ngoại trước câu tạo unique nó trỏ tới. RLS.
  */
 export const specOptionMappings = channelSchema.table(
   'spec_option_mappings',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    companyId: uuid('company_id').notNull(),
+    companyId: uuid('company_id'),
     fieldId: uuid('field_id').notNull(),
     optionId: uuid('option_id').notNull(),
     platform: marketplace('platform').notNull(),
@@ -646,14 +662,8 @@ export const specOptionMappings = channelSchema.table(
     platformOptionId: text('platform_option_id').notNull(),
     ...timestamps,
   },
-  (t) => [
-    unique('spec_option_mappings_uq').on(t.companyId, t.optionId, t.platform, t.attributeCode),
-    foreignKey({
-      name: 'spec_option_mappings_field_fk',
-      columns: [t.companyId, t.fieldId, t.platform, t.attributeCode],
-      foreignColumns: [specFieldMappings.companyId, specFieldMappings.fieldId, specFieldMappings.platform, specFieldMappings.attributeCode],
-    }).onDelete('cascade'),
-  ],
+  // Mỗi lựa chọn thuộc đúng một tầng nên không kèm company_id.
+  (t) => [unique('spec_option_mappings_option_uq').on(t.optionId, t.platform, t.attributeCode)],
 );
 
 export type PriceCalcTrigger = 'push' | 'target_changed' | 'config_activated' | 'cost';

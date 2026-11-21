@@ -1098,10 +1098,13 @@ export const AxisMappingBody = z
   .strict()
   .meta({ id: 'AxisMappingInput' });
 const AXIS_KIND = z.enum(['color', 'size', 'volume', 'flavor']).nullable();
+const DATA_SCOPE = z.enum(['platform', 'company']).meta({ description: '`platform`: dữ liệu chuẩn dùng chung, ánh xạ do nền tảng giữ' });
 export const AxisMappingItemSchema = z
   .object({
     attributeId: z.uuid(),
     platformKind: AXIS_KIND,
+    scope: DATA_SCOPE,
+    editable: z.boolean().meta({ description: '`scope = company`; thuộc tính chuẩn thì PUT trả 403 `platform_managed`' }),
     codes: z.array(
       z.object({ attributeCode: z.string(), attributeLabel: z.string().nullable(), priority: z.number().int().min(1) }).strict(),
     ),
@@ -1129,11 +1132,21 @@ export const SpecMappingBody = z
   .strict()
   .meta({ id: 'SpecMappingInput' });
 const mappingOption = z
-  .object({ optionId: z.uuid(), platformOptionId: z.string().nullable(), platformLabel: z.string().nullable() })
+  .object({
+    optionId: z.uuid(),
+    platformOptionId: z.string().nullable(),
+    platformLabel: z.string().nullable(),
+    scope: DATA_SCOPE,
+    editable: z.boolean().meta({ description: 'Lựa chọn riêng của công ty (kể cả trên thông số chuẩn) thì sửa được' }),
+  })
   .strict();
 export const SpecMappingSchema = z
   .object({
     fieldId: z.uuid(),
+    scope: DATA_SCOPE,
+    editable: z.boolean().meta({
+      description: 'Đổi được tập mã. Thông số chuẩn: PUT giữ đúng tập mã để ánh xạ lựa chọn riêng, đổi mã thì 403 `platform_managed`',
+    }),
     codes: z.array(z.object({ attributeCode: z.string(), attributeLabel: z.string(), priority: z.number().int(), options: z.array(mappingOption) }).strict()),
     suggestions: z
       .array(z.object({ attributeCode: z.string(), attributeLabel: z.string(), options: z.array(mappingOption) }).strict())

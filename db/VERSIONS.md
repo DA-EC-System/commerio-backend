@@ -5,18 +5,20 @@
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
 Mới nhất: **V137**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
 
-## V137 · 21/11/2026 · can-nang-kich-thuoc-tran
+## V137 · 21/11/2026 · anh-xa-hai-tang-du-lieu
 
-`db/migrations/20261121042915_can-nang-kich-thuoc-tran.sql` · sinh từ schema
+`db/migrations/20261121042909_anh-xa-hai-tang-du-lieu.sql` · viết tay
 
-- `product.product_variants`: đổi check `product_variants_dimensions`
+- viết tay: RLS, khoá ngoại, dữ liệu
+- Ánh xạ sang sàn hai tầng (dữ liệu chung, Documents/19 §3.3, 21 §18.8.1, §5.6, be#522).
 
-## V136 · 21/11/2026 · can-nang-kich-thuoc-du-lieu
+## V136 · 21/11/2026 · anh-xa-hai-tang
 
-`db/migrations/20261121042913_can-nang-kich-thuoc-du-lieu.sql` · viết tay
+`db/migrations/20261121042905_anh-xa-hai-tang.sql` · sinh từ schema
 
-- viết tay: dữ liệu
-- #434 (viết tay, chỉ dữ liệu, chạy lại được): cân nặng trên 50.000 g, cạnh trên 2.000 mm (Documents/21 §17.5) chỉ có trong dữ liệu thử trên staging (PATCH SKU trước #434 không chặn).
+- `channel.axis_mappings`: đổi cột `company_id` (thành null); + index `axis_mappings_platform_code_uq`, `axis_mappings_platform_priority_uq`
+- `channel.spec_field_mappings`: đổi cột `company_id` (thành null); + unique `spec_field_mappings_field_code_uq`; + index `spec_field_mappings_platform_priority_uq`, `spec_field_mappings_platform_attribute_uq`
+- `channel.spec_option_mappings`: đổi cột `company_id` (thành null); − khoá ngoại `spec_option_mappings_field_fk`; + unique `spec_option_mappings_option_uq`; − unique `spec_option_mappings_uq`
 
 ## V135 · 21/11/2026 · du-lieu-chung-chuyen
 

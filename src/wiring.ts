@@ -23,7 +23,6 @@ import {
   marketplaceSplitLevel,
   marketplaceSplitOrder,
   returnPoliciesOf,
-  seedSpecMappings,
   settlementPayouts,
   settlementTransactions,
   shopsToSettle,
@@ -45,10 +44,9 @@ export type AppContext = ModuleContext &
   Required<Pick<IdentityContext, 'seedCompanyDefaults'>> & { soldQtyOf: typeof soldQtyOf } &
   Required<Pick<CatalogContext, 'orderArchiveBlockers' | 'listingArchiveBlockers' | 'listingPresenceOf' | 'orderInUse' | 'listingInUse'>>;
 
-/** Dữ liệu có sẵn của công ty mới: catalog trước, rồi ánh xạ của channel (đọc thông số catalog vừa seed). Dùng cả ở seed demo. */
+/** Dữ liệu có sẵn của công ty mới. Ánh xạ sang sàn của dữ liệu chuẩn là dòng nền tảng dùng chung, không chép. Dùng cả ở seed demo. */
 export async function seedNewCompany(companyId: string): Promise<void> {
   await seedCompanyDefaults(companyId);
-  await seedSpecMappings(companyId);
 }
 
 export function createModuleContext(): AppContext {
