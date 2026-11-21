@@ -8,8 +8,9 @@ import { findRemoteSkuRow } from '../repository/remote-skus.ts';
 import { currentPrices } from './listing-prices.ts';
 import type { ProductPort } from './product-port.ts';
 import { type Actor, ownShop } from './shops.ts';
+import { type FillBack, fillBackOf } from './fill-back.ts';
 
-export interface MatchPreview {
+export interface MatchPreview extends FillBack {
   platform: { stock: number; price: string | null; syncedAt: Date };
   app: { stock: number | null; price: string | null };
   stockWillPush: boolean;
@@ -32,7 +33,7 @@ export async function matchPreview(
   shopId: string,
   input: { externalSkuId: string; variantId: string },
 ): Promise<MatchPreview> {
-  return withCompany(actor.companyId, async () => {
+  const base = await withCompany(actor.companyId, async () => {
     const shop = await ownShop(shopId);
     const remote = await findRemoteSkuRow(shop.id, input.externalSkuId);
     if (!remote) throw invalid('externalSkuId', 'SKU sàn chưa có trong lần đồng bộ gần nhất, bấm Tải lại rồi liên kết');
@@ -44,13 +45,19 @@ export async function matchPreview(
     const price = (await currentPrices([id], rows, await port.standardPrices([id]))).get(id)?.price ?? null;
     const counted = port.countedOf ? (await port.countedOf([id])).has(id) : true;
     const available = (await port.availableOf([id])).get(id) ?? 0;
-    const stockHeldReason = holdsStock(shop) ? 'shop_waiting_opening' : counted ? null : 'not_counted';
+    const stockHeldReason: MatchPreview['stockHeldReason'] = holdsStock(shop) ? 'shop_waiting_opening' : counted ? null : 'not_counted';
     return {
       platform: { stock: remote.quantity, price: remote.price, syncedAt: remote.seenAt },
       app: { stock: counted ? available : null, price: price === null ? null : String(price) },
       stockWillPush: stockHeldReason === null,
       stockHeldReason,
       priceWillPush: price !== null,
+      shop,
+      variant,
+      remote,
     };
   });
+  // Gọi sàn ngoài giao dịch (21 §18.9 R4); lỗi sàn không làm hỏng preview.
+  const { shop, variant, remote, ...preview } = base;
+  return { ...preview, ...(await fillBackOf(actor.companyId, shop, variant, remote)) };
 }
