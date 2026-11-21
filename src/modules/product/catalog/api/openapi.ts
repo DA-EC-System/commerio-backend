@@ -35,6 +35,7 @@ import {
   GroupBody,
   GroupTemplate,
   GroupTemplateBody,
+  TemplateFieldBody,
   SpecField,
   SpecFieldBody,
   UpdateSpecFieldBody,
@@ -132,6 +133,18 @@ export function registerCatalogOpenApi(registry: OpenAPIRegistry): void {
       409: problemResponse('`version_conflict` (kèm `current` là mẫu mới nhất)'),
       ...missing('nhóm hàng'),
       422: problemResponse('`errors.axisAttributeIds` (gửi cho nhóm nền tảng), `errors["fields.<i>.fieldId"]` (không có, đã có trong mẫu chuẩn)'),
+    },
+  });
+  path({
+    method: 'post',
+    path: '/groups/:id/template/fields',
+    summary: 'Tạo thông số mới hoặc chọn thông số có sẵn rồi gắn vào cuối mẫu của nhóm, một giao dịch; tăng `version` như PUT',
+    request: { params: IdParams, body: body(TemplateFieldBody) },
+    responses: {
+      200: json('Mẫu sau khi thêm', GroupTemplate),
+      409: problemResponse('`version_conflict` (kèm `current`), `name_taken` (thông số mới trùng tên)'),
+      ...missing('nhóm hàng'),
+      422: problemResponse('`errors["field.fieldId"]` (không có, đã có trong mẫu), `errors["field.<ô>"]` theo luật của `POST /spec-fields`'),
     },
   });
   path({

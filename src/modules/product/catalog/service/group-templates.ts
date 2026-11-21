@@ -1,6 +1,8 @@
 // Mẫu thông số và trục chuẩn của nhóm hàng (Documents/21 mục 5.5 `GroupTemplate`, 5.6 hai tầng; 19 §3.2). Nhóm nền tảng:
 // trục và dòng chuẩn do nền tảng đặt, công ty chỉ thêm dòng của mình sau dòng chuẩn; `version` là của `company_group_settings`.
 import { withCompany } from '../../../../shared/db/client.ts';
+import { AppError } from '../../../../shared/errors/app-error.ts';
+import type { SpecInputKind } from '../domain/specs.ts';
 import { recordAudit } from '../../../core/index.ts';
 import { findGroups, upsertGroupSettingsIfVersion } from '../repository/groups.ts';
 import {
@@ -16,6 +18,7 @@ import {
 } from '../repository/specs.ts';
 import { findAttributes } from '../repository/attributes.ts';
 import { auditOf, type Caller, invalid, isUuid, notFound, scopeOf, versionConflict } from './errors.ts';
+import { createSpecField } from './spec-fields.ts';
 
 export interface TemplateInput {
   /** Nhóm của công ty: bỏ trống là giữ trục đang có. Nhóm nền tảng: gửi thì 422. */
@@ -172,5 +175,63 @@ export async function putGroupTemplate(caller: Caller, groupId: string, input: T
       }),
     });
     return templateOf(group.id, current.version);
+  });
+}
+
+export interface TemplateFieldInput {
+  /** `fieldId` chọn thông số có sẵn; không có thì các trường còn lại tạo thông số mới của công ty (Zod đã ép đủ). */
+  field: {
+    fieldId?: string | undefined;
+    name?: string | undefined;
+    input?: SpecInputKind | undefined;
+    unit?: string | null | undefined;
+    allowCustom?: boolean | undefined;
+    options?: { value: string }[] | undefined;
+  };
+  required: boolean;
+  version: number;
+}
+
+/** Lỗi theo ô của `createSpecField` đổi khoá sang `field.<ô>` cho khớp đường dẫn Zod của body. */
+function underField(err: unknown): never {
+  const errors = err instanceof AppError ? (err.extensions?.errors as Record<string, string> | undefined) : undefined;
+  if (!errors || !(err instanceof AppError)) throw err;
+  throw new AppError(err.status, err.code, err.message, {
+    ...err.extensions,
+    errors: Object.fromEntries(Object.entries(errors).map(([k, v]) => [`field.${k}`, v])),
+  });
+}
+
+/**
+ * Thêm một thông số vào cuối mẫu của nhóm (Documents/21 mục 5.6 `POST /groups/:id/template/fields`): chọn thông số có
+ * sẵn hoặc tạo thông số mới (luật như `POST /spec-fields`) rồi gắn, **một giao dịch**: tạo xong mà gắn lỗi (sai `version`)
+ * thì thông số mới cũng không còn. Nhóm nền tảng: dòng thêm là dòng của công ty. Ghi qua `putGroupTemplate` nên luật
+ * `version`, nhật ký `template` giống `PUT`.
+ */
+export async function addTemplateField(caller: Caller, groupId: string, input: TemplateFieldInput): Promise<GroupTemplate> {
+  return withCompany(caller.companyId, async () => {
+    const group = await findGroup(groupId);
+    const current = await findTemplateFields([group.id]);
+    const { fieldId: chosen, ...spec } = input.field;
+    let fieldId: string;
+    if (chosen !== undefined) {
+      // Khoá ngoại bỏ qua RLS: thông số phải đọc được trong công ty (dòng nền tảng hoặc của công ty).
+      const [known] = isUuid(chosen) ? await findSpecFields(chosen) : [];
+      if (!known) throw invalid({ 'field.fieldId': 'Không tìm thấy thông số' });
+      if (current.some((f) => f.fieldId === chosen)) throw invalid({ 'field.fieldId': 'Đã có trong mẫu' });
+      fieldId = chosen;
+    } else {
+      const created = await createSpecField(caller, {
+        name: spec.name!,
+        input: spec.input!,
+        unit: spec.unit,
+        allowCustom: spec.allowCustom!,
+        options: spec.options,
+      }).catch(underField);
+      fieldId = created.id;
+    }
+    // Dòng của công ty theo thứ tự đang có (RLS chỉ cho thấy dòng công ty đang chọn), thêm dòng mới ở cuối.
+    const own = current.filter((f) => f.companyId !== null).map((f) => ({ fieldId: f.fieldId, required: f.required }));
+    return putGroupTemplate(caller, group.id, { fields: [...own, { fieldId, required: input.required }], version: input.version });
   });
 }
