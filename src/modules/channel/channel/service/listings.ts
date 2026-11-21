@@ -19,7 +19,8 @@ import {
   TAKE_OVER_FROM,
 } from '../domain/listing.ts';
 import { type RemoteTitleChanged, remoteTitleChanged, sentBaseline } from '../domain/remote-title.ts';
-import { awaitingAllocation } from '../domain/shop.ts';
+import { awaitingAllocation, holdsStock } from '../domain/shop.ts';
+import { type StockHeldReason, stockToPushOf } from '../domain/stock-to-push.ts';
 import {
   currentListingRows,
   deleteListing,
@@ -120,6 +121,9 @@ export interface ListingRowView extends ListingPrice {
   externalCategoryPath: string | null;
   /** Bằng `listing.categoryChange` (21 §18.5 ghi trên cả `ListingRow`), null khi chưa có listing. */
   categoryChange: CategoryChangeView | null;
+  /** Số tồn lần đẩy tới sẽ gửi (21 §18.9 R3, `domain/stock-to-push.ts`); null khi chưa đẩy được tồn. */
+  stockToPush: number | null;
+  stockHeldReason: StockHeldReason | null;
 }
 
 /**
@@ -252,6 +256,11 @@ async function shopListingRows(port: ProductPort, shop: ShopRow, catalog: readon
   );
   // Category trên sàn của listing (#467): một câu cho mọi listing, tra cây đã đồng bộ, không gọi sàn.
   const categoryPaths = await syncedPathsOf(shop.platform, rows.flatMap((l) => (l.externalCategoryId ? [l.externalCategoryId] : [])));
+  // Tồn sẽ đẩy (R3): cùng nguồn với việc đẩy tồn, một lần cho cả bảng, không gọi sàn.
+  const variantIds = variants.map((v) => v.id);
+  const available = await port.availableOf(variantIds);
+  const counted = port.countedOf ? await port.countedOf(variantIds) : new Set(variantIds);
+  const holdStock = holdsStock(shop);
   return variants.map((v) => {
     const listing = byVariant.get(v.id);
     const price = shopPrices.get(v.id)!;
@@ -269,8 +278,22 @@ async function shopListingRows(port: ProductPort, shop: ShopRow, catalog: readon
       externalCategoryId: listing?.externalCategoryId ?? null,
       externalCategoryPath: listing?.externalCategoryId ? (categoryPaths.get(listing.externalCategoryId) ?? null) : null,
       categoryChange: listing ? toCategoryChange(listing.categoryChange) : null,
+      ...stockToPushView(listing, { holdStock, counted: counted.has(v.id), available: available.get(v.id) }),
     };
   });
+}
+
+/**
+ * Cột "Tồn sẽ đẩy" (21 §18.9 R3). Listing "không quản tồn", hoặc sàn đổi ngoài app chờ CEO quyết (trừ ẩn bằng tồn 0)
+ * thì không đẩy tồn và không có lý do giữ của hợp đồng: `null`, `null`. Chưa có listing: số lần đăng đầu sẽ đẩy.
+ */
+function stockToPushView(
+  listing: ListingRow | undefined,
+  input: { holdStock: boolean; counted: boolean; available: number | undefined },
+): { stockToPush: number | null; stockHeldReason: StockHeldReason | null } {
+  const zeroHidden = listing?.status === 'hidden' && listing.hiddenBy === 'zero_stock';
+  if (listing && (listing.mode !== 'mapped' || (listing.outsideChangeKind && !zeroHidden))) return { stockToPush: null, stockHeldReason: null };
+  return stockToPushOf({ zeroHidden, ...input });
 }
 
 /**
