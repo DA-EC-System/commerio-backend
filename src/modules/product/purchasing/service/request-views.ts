@@ -4,7 +4,9 @@ import { findAccountById, getStatusHistory } from '../../../core/index.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { groupNames, getVariants, parentProducts, type VariantSummary } from '../../catalog/index.ts';
 import { canSeeCost, outstanding, toDong } from '../domain/request.ts';
+import { draftsOfRequests } from '../repository/drafts.ts';
 import { findLines, type LineRow, receiptsOf, type RequestRow } from '../repository/requests.ts';
+import { draftSummaries, parentKeyOf } from './drafts.ts';
 import { findReturn } from '../repository/returns.ts';
 import { findSupplier } from '../repository/suppliers.ts';
 
@@ -126,6 +128,11 @@ export async function toDetail(row: RequestRow, actor: Actor) {
   const parents = await parentProducts(lines.flatMap((l) => (l.newParentProductId ? [l.newParentProductId] : [])));
   const receipts = look.receipts.get(row.id) ?? [];
   const history = await getStatusHistory('purchase_requests', row.id);
+  // Bản soạn trước (21 mục 16.3): một bản mỗi tên cha mới; dòng đã chuyển sang cha vừa tạo thì theo `product_id`.
+  const drafts = await draftsOfRequests([row.id]);
+  const draftIdOf = (l: LineRow) =>
+    (l.newParentName ? drafts.find((d) => d.parentKey === parentKeyOf(l.newParentName!)) : drafts.find((d) => d.productId !== null && d.productId === l.newParentProductId))?.id ??
+    null;
   return {
     ...summaryOf(row, { id: supplier?.id ?? '', name: supplier?.name ?? '' }, look),
     lines: lines.map((l) => {
@@ -137,7 +144,7 @@ export async function toDetail(row: RequestRow, actor: Actor) {
         sku: v?.sku ?? null,
         productName: v?.productName ?? np?.name ?? '',
         attributesLabel: v ? attributesLabel(v) : (l.newOptionValues ?? []).map((o) => o.value).join(' / '),
-        newProduct: np,
+        newProduct: np ? { ...np, draftId: draftIdOf(l) } : null,
         quantity: l.orderedQty,
         unitCost: look.showCost ? toDong(l.unitPrice) : null,
         excluded: l.excluded,
@@ -149,6 +156,7 @@ export async function toDetail(row: RequestRow, actor: Actor) {
       };
     }),
     receipts: receipts.map((r) => ({ type: 'goods_receipt' as const, id: r.id, number: r.number, status: r.status })),
+    productDrafts: await draftSummaries(drafts, lines),
     sourceReturn: row.sourceReturnId ? await sourceReturnRef(row.sourceReturnId) : null,
     countingReceipts: receipts.filter((r) => r.status === 'counting').length,
     statusHistory: history.map((h) => ({ ...h, at: h.at.toISOString() })),

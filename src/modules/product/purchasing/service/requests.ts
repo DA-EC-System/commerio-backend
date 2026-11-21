@@ -22,6 +22,7 @@ import {
 } from '../repository/requests.ts';
 import { findSupplier } from '../repository/suppliers.ts';
 import { type Actor, invalid, notFound, type PurchaseRequestView, toDetail, toSummaries } from './request-views.ts';
+import { syncDrafts } from './drafts.ts';
 import { checkReplacementSource, linkReplacement } from './supplier-returns.ts';
 
 export interface RequestLineInput {
@@ -162,6 +163,7 @@ export async function createRequest(actor: Actor, input: RequestInput): Promise<
       createdBy: actor.accountId,
     });
     await insertLines(actor.companyId, id, lines);
+    await syncDrafts(actor.companyId, id);
     if (input.sourceReturnId) await linkReplacement(input.sourceReturnId, id);
     await recordTransition({ entityType: ENTITY, entityId: id, from: null, to: 'draft', action: 'create', actorId: actor.accountId });
     await recordAudit({
@@ -191,6 +193,7 @@ export async function updateRequestDraft(actor: Actor, id: string, input: Reques
     const note = input.note || null;
     await deleteLines(id);
     await insertLines(actor.companyId, id, lines);
+    await syncDrafts(actor.companyId, id);
     await updateRequest(id, { supplierId: input.supplierId, note });
     await recordAudit({
       companyId: actor.companyId,
