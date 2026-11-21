@@ -25,7 +25,15 @@ import { updateListing } from './listing-writes.ts';
 import { currentPrices } from './listing-prices.ts';
 import { activateOnMarketplace, countedOf, remoteSkuOf, type Session } from './listing-sync.ts';
 import { moveListing, pushFailureOf } from './listings.ts';
-import { type MarketplaceAdapter, MarketplaceError, type NewProduct, PRECHECK_CODES, type SizeChartRule } from './marketplaces/index.ts';
+import type { GroupAxis } from '../domain/variant-group.ts';
+import {
+  type MarketplaceAdapter,
+  MarketplaceError,
+  type NewProduct,
+  PRECHECK_CODES,
+  type SalesAttribute,
+  type SizeChartRule,
+} from './marketplaces/index.ts';
 import { evaluatePrices } from './price-inputs.ts';
 import type { ListingVariant, ProductPort } from './product-port.ts';
 import { ensureLeaf } from './platform-categories.ts';
@@ -300,6 +308,24 @@ async function reactivate(session: Session, row: ListingRow): Promise<ListingAct
 export async function uploadAll(adapter: MarketplaceAdapter, accessToken: string, urls: readonly string[]): Promise<string[]> {
   const out: string[] = [];
   for (const url of urls) out.push(await adapter.uploadImage(accessToken, url));
+  return out;
+}
+
+/**
+ * Trục bán hàng gửi adapter (#295): ảnh của giá trị (`imageUrl`, link catalog) tải lên sàn bằng `uploadImage(...,
+ * 'sale_attribute')`, điền `imageUri` (TikTok `sku_img.uri`, Lazada `Sku.Images`). Cùng link chỉ tải một lần.
+ */
+export async function uploadAxisImages(adapter: MarketplaceAdapter, accessToken: string, axes: readonly GroupAxis[]): Promise<SalesAttribute[]> {
+  const uploaded = new Map<string, string>();
+  const out: SalesAttribute[] = [];
+  for (const axis of axes) {
+    const values: SalesAttribute['values'] = [];
+    for (const { imageUrl, ...value } of axis.values) {
+      if (imageUrl && !uploaded.has(imageUrl)) uploaded.set(imageUrl, await adapter.uploadImage(accessToken, imageUrl, 'sale_attribute'));
+      values.push({ ...value, ...(imageUrl && { imageUri: uploaded.get(imageUrl)! }) });
+    }
+    out.push({ code: axis.code, name: axis.name, values });
+  }
   return out;
 }
 

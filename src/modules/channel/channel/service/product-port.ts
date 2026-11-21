@@ -75,6 +75,11 @@ export interface ListingVariant {
   /** Xuất xứ (ISO alpha-2), thương hiệu của sản phẩm cha ở catalog (#340); adapter đổi sang giá trị sàn (#400 A1). */
   originCountry?: string | null;
   brand?: string | null;
+  /**
+   * Ảnh phân loại theo giá trị ở thuộc tính gắn ảnh của catalog (#340); đẩy lên sàn làm ảnh của giá trị trục (#295). `url`
+   * rỗng (máy chủ chưa cấu hình link ảnh) coi như không có.
+   */
+  image?: { attributeValueId: string; url: string } | null;
 }
 
 export interface ProductPort {
@@ -155,6 +160,7 @@ function toListingVariant(v: Extended): ListingVariant {
     heightMm: v.heightMm ?? null,
     originCountry: v.originCountry,
     brand: v.brand,
+    image: v.image ? { attributeValueId: v.image.attributeValueId, url: v.image.url } : null,
   };
 }
 
