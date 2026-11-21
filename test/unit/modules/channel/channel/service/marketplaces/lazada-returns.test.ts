@@ -5,6 +5,7 @@ import {
   lazadaReturnMethods,
   toLazadaReturn,
 } from '#src/modules/channel/channel/service/marketplaces/lazada-returns.ts';
+import { lazadaAmount } from '#src/modules/channel/channel/service/marketplaces/lazada.ts';
 
 /** Dạng một phần tử `result.items` gặp khi gọi thật 12/11/2026 (số liệu giả). */
 const line = (n: number, patch: Record<string, unknown> = {}) => ({
@@ -22,6 +23,7 @@ const line = (n: number, patch: Record<string, unknown> = {}) => ({
   return_order_line_gmt_modified: 1794195270 + n,
   ...patch,
 });
+const toReturn = (i: object) => toLazadaReturn(i as Record<string, unknown>, lazadaAmount);
 const item = (lines: object[], patch: Record<string, unknown> = {}) => ({
   reverse_order_id: 7000,
   request_type: 'RETURN',
@@ -42,6 +44,14 @@ describe('lazadaReturnLineStatus', () => {
     ['REFUND_PENDING', null, 'refund', 'requested'],
     ['REFUND_SUCCESS', 'RETURN_CANCELED', 'return', 'refund_only'],
     ['REFUND_SUCCESS', 'INFO_ST_RETURN_RTM_DELIVERED', 'return', 'received'],
+    ['REFUND_SUCCESS', null, 'return', 'refund_only'],
+    ['REFUND_PENDING', 'INFO_ST_DRIVER_ASSIGNED', 'return', 'awaiting_return'],
+    ['REQUEST_CANCEL', null, 'return', 'closed'],
+    // #436: ba giá trị gặp thật mà trước đây trả null
+    ['SELLER_AGREE_RETURN', null, 'return', 'awaiting_return'],
+    ['SELLER_REJECT_RETURN', null, 'return', 'rejected'],
+    ['BUYER_RETURN_ITEM', 'INFO_ST_DRIVER_ASSIGNED', 'return', 'awaiting_return'],
+    ['BUYER_RETURN_ITEM', 'INFO_ST_RETURN_RTM_DELIVERED', 'return', 'received'],
   ] as const)('%s + %s (%s) → %s', (reverse, ofc, kind, status) => {
     expect(lazadaReturnLineStatus(reverse, ofc, kind)?.status).toBe(status);
   });
@@ -49,12 +59,14 @@ describe('lazadaReturnLineStatus', () => {
   it('khách huỷ thì kèm `buyer_cancelled`; giá trị lạ là null', () => {
     expect(lazadaReturnLineStatus('REQUEST_CANCEL', null, 'return')).toEqual({ status: 'closed', closeResult: 'buyer_cancelled' });
     expect(lazadaReturnLineStatus('SOMETHING_NEW', null, 'return')).toBeNull();
+    // #436: chiều về bị huỷ sau khi khách gửi, chưa rõ ai huỷ → chưa ánh xạ
+    expect(lazadaReturnLineStatus('BUYER_RETURN_ITEM', 'RETURN_CANCELED', 'return')).toBeNull();
   });
 });
 
 describe('toLazadaReturn', () => {
   it('đổi mã, món, tiền, thời điểm; trả về người bán khi `is_rtm`', () => {
-    const r = toLazadaReturn(item([line(1, { tracking_number: 'JNT-1' }), line(2)]));
+    const r = toReturn(item([line(1, { tracking_number: 'JNT-1' }), line(2)]));
     expect(r).toMatchObject({
       externalId: '7000',
       externalOrderId: '5000',
@@ -76,15 +88,38 @@ describe('toLazadaReturn', () => {
   });
 
   it('món lệch trạng thái lấy món còn phải làm; có món trạng thái lạ thì không đổi trạng thái', () => {
-    const mixed = toLazadaReturn(item([line(1, { reverse_status: 'REFUND_SUCCESS', ofc_status: 'RETURN_CANCELED' }), line(2)]));
+    const mixed = toReturn(item([line(1, { reverse_status: 'REFUND_SUCCESS', ofc_status: 'RETURN_CANCELED' }), line(2)]));
     expect(mixed.status).toBe('requested');
     expect(mixed.rawStatus).toBe('REFUND_SUCCESS,REQUEST_INITIATE');
-    expect(toLazadaReturn(item([line(1), line(2, { reverse_status: 'LA' })])).status).toBeNull();
+    expect(toReturn(item([line(1), line(2, { reverse_status: 'LA' })])).status).toBeNull();
+  });
+
+  it('hạn trả lời là `sla` sớm nhất khi còn chờ người bán; đã đồng ý hay từ chối thì không có hạn', () => {
+    const lines = [line(1, { sla: '1794200000000' }), line(2, { sla: '1794100000000' })];
+    expect(toReturn(item(lines)).respondBy).toEqual(new Date(1794100000000));
+    expect(toReturn(item([line(1)])).respondBy).toBeNull();
+    const agreed = lines.map((l) => ({ ...l, reverse_status: 'SELLER_AGREE_RETURN' }));
+    expect(toReturn(item(agreed)).respondBy).toBeNull();
+  });
+
+  it('số tiền hoàn đọc bằng `lazadaAmount` (dấu phẩy nghìn); có dòng không đọc được thì tổng null kèm chuỗi gốc, không ghi 0', () => {
+    expect(toReturn(item([line(1, { refund_amount: '1,600.02' }), line(2, { refund_amount: '400' })]))).toMatchObject({
+      refundAmount: '2000.02',
+      refundAmountUnreadable: null,
+    });
+    expect(toReturn(item([line(1, { refund_amount: 32000 })])).lines[0]!.refundAmount).toBe('32000');
+    expect(toReturn(item([line(1, { refund_amount: null })]))).toMatchObject({ refundAmount: null, refundAmountUnreadable: null });
+    // Hậu tố " VND" (payout staging, #349): bộ đọc trên main chưa nhận nên coi là không đọc được; #349 nhận thì đọc ra số.
+    for (const raw of ['0.00 VND', '1,600.02 VND']) {
+      const r = toReturn(item([line(1, { refund_amount: raw }), line(2, { refund_amount: '400' })]));
+      expect(r).toMatchObject({ refundAmount: null, refundAmountUnreadable: raw });
+      expect(r.lines.map((l) => l.refundAmount)).toEqual([null, '400']);
+    }
   });
 
   it('`ONLY_REFUND` là chỉ hoàn tiền; `return_to_type` RTW là kho sàn', () => {
-    expect(toLazadaReturn(item([line(1)], { request_type: 'ONLY_REFUND' })).kind).toBe('refund');
-    expect(toLazadaReturn(item([line(1)], { return_to_type: 'RTW' })).returnTo).toBe('warehouse');
+    expect(toReturn(item([line(1)], { request_type: 'ONLY_REFUND' })).kind).toBe('refund');
+    expect(toReturn(item([line(1)], { return_to_type: 'RTW' })).returnTo).toBe('warehouse');
   });
 });
 
@@ -94,7 +129,7 @@ function fakeCall(responses: Record<string, unknown>) {
     calls.push([path, params]);
     return (responses[path] ?? { code: '0' }) as Record<string, unknown>;
   };
-  return { calls, methods: lazadaReturnMethods(call) };
+  return { calls, methods: lazadaReturnMethods(call, lazadaAmount) };
 }
 
 describe('lazadaReturnMethods', () => {
@@ -140,6 +175,25 @@ describe('lazadaReturnMethods', () => {
       ['/order/reverse/onlyrefund/seller/decide', 'startDispute', '[7001]', 'Hàng còn nguyên'],
     ]);
     await expect(methods.decideReturn('tok', '7000', ['7001'], 'accept', { kind: 'refund' })).rejects.toMatchObject({ platformCode: 'refund_only_request' });
+  });
+
+  it('ảnh minh chứng (#437): refuseReturn gửi `image_info` [{name,url}], startDispute gửi `image_info_list` [{file_url,file_name}] theo mẫu tài liệu', async () => {
+    const images = [
+      { name: 'vet-xuoc.jpg', url: 'https://vn-live.slatic.net/p/a.jpg' },
+      { name: 'hop.png', url: 'https://vn-live.slatic.net/p/b.png' },
+    ];
+    const { calls, methods } = fakeCall({});
+    await methods.decideReturn('tok', '7000', ['7001'], 'reject', { reasonId: '100000046', images });
+    await methods.decideReturn('tok', '7000', ['7001'], 'reject', { kind: 'refund', comment: 'Hàng còn nguyên', images });
+    await methods.decideReturn('tok', '7000', ['7001'], 'reject', { reasonId: '100000046' });
+    expect(JSON.parse(calls[0]![1].image_info!)).toEqual(images);
+    expect(calls[0]![1].image_info_list).toBeUndefined();
+    expect(JSON.parse(calls[1]![1].image_info_list!)).toEqual([
+      { file_url: 'https://vn-live.slatic.net/p/a.jpg', file_name: 'vet-xuoc.jpg' },
+      { file_url: 'https://vn-live.slatic.net/p/b.png', file_name: 'hop.png' },
+    ]);
+    expect(calls[1]![1].image_info).toBeUndefined();
+    expect('image_info' in calls[2]![1]).toBe(false);
   });
 
   it('hoàn tiền là instantRefund, báo đã nhận là confirmDelivery', async () => {

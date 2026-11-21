@@ -1,12 +1,13 @@
 import { and, asc, desc, eq, ilike, inArray, isNull, or, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
-import { categories, productVariants, products } from './schema.ts';
+import { companyGroupSettings, productGroups, productVariants, products } from './schema.ts';
+import { effectiveSuggest, settingsJoin } from './groups.ts';
 
 // Mọi hàm chạy trong `withCompany` của service.
 
 export interface BulkFilter {
   search?: string | undefined;
-  categoryId?: string | undefined;
+  groupId?: string | undefined;
   /** Chỉ SKU còn ít nhất một ô trong giá muốn bán, cân nặng, ba cạnh bỏ trống. */
   incomplete: boolean;
   page: number;
@@ -20,7 +21,7 @@ const likePattern = (s: string) => `%${s.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
 export async function findBulkVariants(filter: BulkFilter) {
   const where = and(
     isNull(productVariants.archivedAt),
-    filter.categoryId ? eq(products.categoryId, filter.categoryId) : undefined,
+    filter.groupId ? eq(products.groupId, filter.groupId) : undefined,
     filter.search
       ? or(ilike(productVariants.sku, likePattern(filter.search)), ilike(products.name, likePattern(filter.search)))
       : undefined,
@@ -45,17 +46,14 @@ export async function findBulkVariants(filter: BulkFilter) {
       productId: productVariants.productId,
       sku: productVariants.sku,
       productName: products.name,
-      categoryId: categories.id,
-      categoryName: categories.name,
-      marginCoefficient: categories.marginCoefficient,
-      priceRounding: categories.priceRounding,
-      reorderLeadDays: categories.reorderLeadDays,
-      reorderSafetyQty: categories.reorderSafetyQty,
-      reorderDefaultQty: categories.reorderDefaultQty,
+      groupId: productGroups.id,
+      groupName: productGroups.name,
+      ...effectiveSuggest,
     })
     .from(productVariants)
     .innerJoin(products, eq(products.id, productVariants.productId))
-    .innerJoin(categories, eq(categories.id, products.categoryId))
+    .innerJoin(productGroups, eq(productGroups.id, products.groupId))
+    .leftJoin(companyGroupSettings, settingsJoin)
     .where(where)
     .orderBy(asc(products.name), asc(productVariants.createdAt), asc(productVariants.sku))
     .limit(filter.pageSize)

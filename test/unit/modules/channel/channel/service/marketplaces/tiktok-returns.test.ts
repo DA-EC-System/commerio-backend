@@ -150,6 +150,7 @@ describe('listReturns, listCancellations', () => {
         disputeInProgress: false,
         returnTrackingCode: null,
         respondBy: null,
+        sellerHandledReceipt: true,
         createdAt: new Date(1793634765 * 1000),
         updatedAt: new Date(1793634867 * 1000),
       },
@@ -240,7 +241,7 @@ const ELIGIBILITY = `GET /return_refund/202602/orders/${ORDER}/aftersale_eligibi
 const eligible = (lines: string[], reasons: string[]) => ({ request_type: 'CANCEL', eligible: true, order_line_items_ids: lines, available_reason_names: reasons });
 
 describe('cancelReasons, cancelOrder', () => {
-  it('cancelReasons: hỏi người bán + CANCEL; lý do chung của các món, bỏ trùng, kèm tên tiếng Việt', async () => {
+  it('US-DH-13 AC1: cancelReasons hỏi người bán + CANCEL; lý do chung của các món, bỏ trùng, kèm tên tiếng Việt', async () => {
     const { adapter, calls } = fakeSan({
       [ELIGIBILITY]: () =>
         ok({
@@ -255,7 +256,7 @@ describe('cancelReasons, cancelOrder', () => {
     expect(calls[0]!.query.get('request_types')).toBe('CANCEL');
   });
 
-  it('cancelReasons: sàn chặn món được hỏi → rejected kèm mã, câu của sàn (gọi thật 07/11/2026)', async () => {
+  it('US-DH-13 AC4: cancelReasons sàn chặn món được hỏi → rejected kèm mã, câu của sàn (gọi thật 07/11/2026)', async () => {
     const { adapter } = fakeSan({
       [ELIGIBILITY]: () =>
         ok({
@@ -282,7 +283,7 @@ describe('cancelReasons, cancelOrder', () => {
     await expect(adapter.cancelReasons!(TOKEN, ORDER, [])).rejects.toMatchObject({ kind: 'rejected', platformCode: 'not_cancellable' });
   });
 
-  it('cancelOrder: huỷ cả đơn bằng Cancel Order 202602 (order_id, cancel_reason)', async () => {
+  it('D1-09 US-DH-13 AC2: cancelOrder huỷ cả đơn bằng Cancel Order 202602 (order_id, cancel_reason)', async () => {
     const { adapter, calls } = fakeSan({
       [ELIGIBILITY]: () => ok({ sku_eligibility: [{ line_item_eligibility: [eligible(['L1', 'L2'], ['seller_cancel_reason_out_of_stock'])] }] }),
       'POST /return_refund/202602/cancellations': () => ok({ cancel_id: '9', cancel_status: 'CANCELLATION_REQUEST_SUCCESS' }),
@@ -381,7 +382,7 @@ describe('decideCancelRequest, cancelRequestRejectReasons', () => {
 });
 
 // Approve Return, Reject Return, Get Reject Reasons 202309 (OAS cục bộ của skill tts-openapi-guide, tra 19/11/2026; #364).
-describe('returnReasons, decideReturn, confirmReturnReceived, returnHistory', () => {
+describe('returnReasons, decideReturn, approveReturnRefund, returnHistory', () => {
   const RET = '4035318504086604999';
   const approve = `POST /return_refund/202309/returns/${RET}/approve`;
   const reject = `POST /return_refund/202606/returns/${RET}/reject`;
@@ -389,10 +390,10 @@ describe('returnReasons, decideReturn, confirmReturnReceived, returnHistory', ()
   const records = `GET /return_refund/202309/returns/${RET}/records`;
 
   it.each([
-    ['accept', 'return', { decision: 'APPROVE_RETURN' }],
-    ['refund', 'return', { decision: 'APPROVE_RETURN', buyer_keep_item: true }],
-    ['refund', 'refund', { decision: 'APPROVE_REFUND' }],
-  ] as const)('%s yêu cầu loại %s → approve %j, có idempotency_key', async (decision, kind, body) => {
+    ['D3-01', 'accept', 'return', { decision: 'APPROVE_RETURN' }],
+    ['D3-03', 'refund', 'return', { decision: 'APPROVE_RETURN', buyer_keep_item: true }],
+    ['D3-03', 'refund', 'refund', { decision: 'APPROVE_REFUND' }],
+  ] as const)('%s: %s yêu cầu loại %s → approve %j, có idempotency_key', async (_ca, decision, kind, body) => {
     const { adapter, calls } = fakeSan({ [approve]: () => ok({}) });
     await adapter.decideReturn!(TOKEN, RET, ['L1'], decision, { kind });
     expect(calls).toHaveLength(1);
@@ -410,7 +411,7 @@ describe('returnReasons, decideReturn, confirmReturnReceived, returnHistory', ()
   it.each([
     ['return', 'REJECT_RETURN', 'Người bán từ chối yêu cầu trả'],
     ['refund', 'REJECT_REFUND', 'Người bán không đồng ý hoàn tiền'],
-  ] as const)('từ chối yêu cầu loại %s → reject %s kèm lý do, câu mặc định khi trống', async (kind, decision, fallback) => {
+  ] as const)('D3-02: từ chối yêu cầu loại %s → reject %s kèm lý do, câu mặc định khi trống', async (kind, decision, fallback) => {
     const { adapter, calls } = fakeSan({ [reject]: () => ok({}) });
     await adapter.decideReturn!(TOKEN, RET, ['L1'], 'reject', { kind, reasonId: 'seller_reject_r1' });
     expect(calls[0]!.path).toBe(`/return_refund/202606/returns/${RET}/reject`);
@@ -418,6 +419,27 @@ describe('returnReasons, decideReturn, confirmReturnReceived, returnHistory', ()
     expect(calls[0]!.query.get('idempotency_key')).toBe(`commerio-ret-${RET}-${decision}-seller_reject_r1`);
     await adapter.decideReturn!(TOKEN, RET, ['L1'], 'reject', { kind, reasonId: 'seller_reject_r1', comment: 'Hàng còn nguyên tem' });
     expect((calls[1]!.body as { comment: string }).comment).toBe('Hàng còn nguyên tem');
+  });
+
+  it('D3-02: từ chối kèm ảnh minh chứng: images[].image_id là uri đã tải lên sàn (#476)', async () => {
+    const { adapter, calls } = fakeSan({ [reject]: () => ok({}) });
+    const images = [
+      { name: 'tem.jpg', url: 'tos-alisg/tem' },
+      { name: 'hop.png', url: 'tos-alisg/hop' },
+    ];
+    await adapter.decideReturn!(TOKEN, RET, ['L1'], 'reject', { kind: 'return', reasonId: 'seller_reject_r1', images });
+    expect(calls[0]!.body).toEqual({
+      decision: 'REJECT_RETURN',
+      reject_reason: 'seller_reject_r1',
+      comment: 'Người bán từ chối yêu cầu trả',
+      images: [{ image_id: 'tos-alisg/tem' }, { image_id: 'tos-alisg/hop' }],
+    });
+    await adapter.decideReturn!(TOKEN, RET, ['L1'], 'reject', { kind: 'return', reasonId: 'seller_reject_r1', images: [] });
+    expect(calls[1]!.body).not.toHaveProperty('images');
+  });
+
+  it('TikTok khai kiểu ảnh minh chứng JPG, PNG như Lazada (#476)', () => {
+    expect(createTiktokAdapter(config).returnImageTypes).toEqual(['image/jpeg', 'image/png']);
   });
 
   it('từ chối thiếu lý do → reject_reason_required, không gọi sàn', async () => {
@@ -441,11 +463,51 @@ describe('returnReasons, decideReturn, confirmReturnReceived, returnHistory', ()
     });
   });
 
-  it('confirmReturnReceived → approve APPROVE_RECEIVED_PACKAGE', async () => {
+  it('không báo sàn lúc quét: APPROVE_RECEIVED_PACKAGE là đồng ý hoàn tiền (#392)', () => {
+    const { adapter } = fakeSan({});
+    expect(adapter.confirmReturnReceived).toBeUndefined();
+  });
+
+  it('D3-08: approveReturnRefund → approve APPROVE_RECEIVED_PACKAGE, có idempotency_key', async () => {
     const { adapter, calls } = fakeSan({ [approve]: () => ok({}) });
-    await adapter.confirmReturnReceived!(TOKEN, RET, ['L1']);
+    await adapter.approveReturnRefund!(TOKEN, RET);
     expect(calls[0]!.body).toEqual({ decision: 'APPROVE_RECEIVED_PACKAGE' });
     expect(calls[0]!.query.get('idempotency_key')).toBe(`commerio-ret-${RET}-APPROVE_RECEIVED_PACKAGE`);
+  });
+
+  const search = 'POST /return_refund/202602/returns/search';
+  it.each(['RETURN_OR_REFUND_REQUEST_SUCCESS', 'RETURN_OR_REFUND_REQUEST_COMPLETE', 'REJECT_RECEIVE_PACKAGE', 'RETURN_OR_REFUND_REQUEST_CANCEL'])(
+    'sàn từ chối vì yêu cầu đã ở %s → coi là xong',
+    async (status) => {
+      const { adapter, calls } = fakeSan({
+        [approve]: () => json({ code: 25011011, message: 'reverse status cannot approve' }),
+        [search]: () => ok({ return_orders: [{ return_id: RET, return_status: status }] }),
+      });
+      await expect(adapter.approveReturnRefund!(TOKEN, RET)).resolves.toBeUndefined();
+      expect(calls[1]!.body).toEqual({ return_ids: [RET] });
+    },
+  );
+
+  it('sàn từ chối mà yêu cầu vẫn chờ người bán → ném lỗi của lệnh', async () => {
+    const { adapter } = fakeSan({
+      [approve]: () => json({ code: 25011011, message: 'reverse status cannot approve' }),
+      [search]: () => ok({ return_orders: [{ return_id: RET, return_status: 'BUYER_SHIPPED_ITEM' }] }),
+    });
+    await expect(adapter.approveReturnRefund!(TOKEN, RET)).rejects.toMatchObject({ kind: 'rejected', platformCode: '25011011' });
+  });
+
+  it('sàn từ chối, đọc lại cũng lỗi → ném lỗi của lệnh', async () => {
+    const { adapter } = fakeSan({
+      [approve]: () => json({ code: 25011011, message: 'reverse status cannot approve' }),
+      [search]: () => json({ code: 36009003, message: 'busy' }),
+    });
+    await expect(adapter.approveReturnRefund!(TOKEN, RET)).rejects.toMatchObject({ platformCode: '25011011' });
+  });
+
+  it('lỗi tạm của lệnh không đọc lại, ném luôn', async () => {
+    const { adapter, calls } = fakeSan({ [approve]: () => new Response('', { status: 503 }) });
+    await expect(adapter.approveReturnRefund!(TOKEN, RET)).rejects.toMatchObject({ kind: 'unavailable' });
+    expect(calls.every((c) => c.path.endsWith('/approve'))).toBe(true);
   });
 
   it.each([

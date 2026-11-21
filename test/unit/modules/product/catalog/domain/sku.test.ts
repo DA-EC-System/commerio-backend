@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { renderSku, skuPatternError, valueCode } from '#src/modules/product/catalog/domain/sku.ts';
+import { renderSku, skuPatternError, uniqueValueCode, valueCode } from '#src/modules/product/catalog/domain/sku.ts';
 
 // Bộ ví dụ dùng chung với FE (Documents/21 mục 9). Sai một ký tự là SKU thật khác bản xem trước.
 describe('renderSku theo bảng 9.1', () => {
@@ -61,5 +61,25 @@ describe('skuPatternError theo bảng 9.3', () => {
   it('quy tắc hợp lệ không có lỗi', () => {
     expect(skuPatternError('AO-{SEQ:4}-{VAL}')).toBeNull();
     expect(skuPatternError(` ${'A'.repeat(35)}{SEQ} `)).toBeNull();
+  });
+});
+
+describe('uniqueValueCode (#447: mã giá trị cấp tự động, không trả 422)', () => {
+  it('chưa trùng thì giữ mã gốc', () => {
+    expect(uniqueValueCode('Xanh dương', new Set())).toBe('XANHDU');
+  });
+
+  it('trùng thì cắt còn 5 ký tự + số 2', () => {
+    expect(uniqueValueCode('Xanh dương', new Set(['XANHDU']))).toBe('XANHD2');
+  });
+
+  it('trùng cả 2–9 thì 4 ký tự + số từ 10', () => {
+    const taken = new Set(['XANHDU', ...[2, 3, 4, 5, 6, 7, 8, 9].map((n) => `XANHD${n}`)]);
+    expect(uniqueValueCode('Xanh dương', taken)).toBe('XANH10');
+  });
+
+  it('giá trị không có chữ, số thì V1; V1 đã có thì V2', () => {
+    expect(uniqueValueCode('★', new Set())).toBe('V1');
+    expect(uniqueValueCode('★', new Set(['V1']))).toBe('V2');
   });
 });

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { testPool } from '../helpers/db.ts';
 
-/** Bảng của từng schema module lớn (Documents/19 mục 3, 79 bảng). Thêm bảng thì thêm vào đây. */
+/** Bảng của từng schema module lớn (Documents/19 mục 3; #510 thêm 4 bảng thông số ở `product`). Thêm bảng thì thêm vào đây. */
 const EXPECTED_TABLES: Record<string, readonly string[]> = {
   core: [
     'accounts',
@@ -17,6 +17,7 @@ const EXPECTED_TABLES: Record<string, readonly string[]> = {
     'permissions',
     'processed_events',
     'refresh_tokens',
+    'registrations',
     'role_permissions',
     'roles',
     'state_transitions',
@@ -24,16 +25,23 @@ const EXPECTED_TABLES: Record<string, readonly string[]> = {
   product: [
     'attribute_values',
     'attributes',
-    'categories',
+    'company_group_settings',
+    'company_product_settings',
     'doc_counters',
     'goods_receipt_lines',
     'goods_receipts',
+    'group_allowed_attributes',
+    'group_spec_fields',
     'product_attribute_value_images',
+    'product_groups',
     'product_images',
+    'product_spec_values',
     'product_variants',
     'products',
     'purchase_request_lines',
     'purchase_requests',
+    'spec_field_options',
+    'spec_fields',
     'stock_document_lines',
     'stock_documents',
     'stock_levels',
@@ -41,6 +49,7 @@ const EXPECTED_TABLES: Record<string, readonly string[]> = {
     'supplier_return_lines',
     'supplier_returns',
     'suppliers',
+    // Bảng tạm của migration hai tầng (#521); migration channel đọc rồi xoá.
     'variant_attribute_values',
   ],
   order: [
@@ -81,6 +90,7 @@ const EXPECTED_TABLES: Record<string, readonly string[]> = {
   ],
   channel: [
     'api_usage',
+    'axis_mappings',
     'conversation_notes',
     'conversation_tags',
     'conversations',
@@ -94,13 +104,15 @@ const EXPECTED_TABLES: Record<string, readonly string[]> = {
     'raw_orders',
     'remote_skus',
     'shop_category_permissions',
+    'shop_products',
     'shop_reauth_mails',
     'shops',
+    'spec_field_mappings',
+    'spec_option_mappings',
     'tags',
     'webhook_events',
   ],
   insight: [
-    'daily_channel_summary',
     'document_chunks',
     'document_roles',
     'documents',
@@ -137,21 +149,6 @@ describe('schema sau migration', () => {
     expect(res.rows.length).toBeGreaterThan(0);
     const odd = res.rows.filter((r) => r.p !== 18 || r.s !== 2).map((r) => r.col);
     expect(odd.sort()).toEqual([...PERCENT_COLUMNS].sort());
-  });
-
-  it.each([
-    ['"order".order_source', 'insight.order_source'],
-  ])('enum %s và %s cùng giá trị, cùng thứ tự (A5)', async (a, b) => {
-    const labels = async (name: string) => {
-      const res = await testPool().query<{ label: string }>(
-        'select enumlabel as label from pg_enum where enumtypid = $1::regtype order by enumsortorder',
-        [name],
-      );
-      return res.rows.map((r) => r.label);
-    };
-    const left = await labels(a);
-    expect(left.length).toBeGreaterThan(0);
-    expect(await labels(b)).toEqual(left);
   });
 
   it('không có khoá ngoại chéo schema (19-D1)', async () => {

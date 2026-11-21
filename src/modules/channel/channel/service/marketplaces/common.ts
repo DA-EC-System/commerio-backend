@@ -2,7 +2,7 @@
 // nghiệp vụ nhận kiểu đã chuẩn hoá và `MarketplaceError`. #104–#106 thêm năng lực của mình vào `MarketplaceAdapter`.
 import type { LedgerKind } from '../../../../finance/index.ts';
 import type { RemoteState } from '../../domain/listing.ts';
-import type { PlatformAttribute } from '../../domain/product-spec.ts';
+import type { PlatformAttribute, PlatformKind, VariantCapabilities } from '../../domain/product-spec.ts';
 import type { ShopCapabilities } from '../../domain/shop.ts';
 import type { ResponsibleOrg } from '../../../../core/index.ts';
 
@@ -75,6 +75,82 @@ export type Responsible = ResponsibleOrg;
 export interface RemoteProductCategory {
   externalCategoryId: string;
   attributes: { code: string; values: { id: string | null; name: string }[] }[];
+  /** Trường dùng chung của sản phẩm trên sàn (#497): ghép SKU điền vào catalog khi đang trống, lưu làm "sàn đang ghi". */
+  facts: RemoteProductFacts;
+}
+
+/**
+ * Trường dùng chung đọc từ sản phẩm trên sàn (#497, Documents/21 §18.5). Xuất xứ không ở đây: service đọc từ `attributes` theo
+ * `productFields` của adapter. `brand` là chuỗi sàn ghi (cả thương hiệu mặc định như "No Brand", service bỏ). `description`
+ * đã bỏ HTML, tối đa 5000 ký tự (`plainDescription`). Ảnh, ảnh bảng size là URL của sàn, chưa tải (#498). Cân nặng (g), kích
+ * thước (mm) theo từng SKU sàn: sàn chỉ có số theo sản phẩm (TikTok) thì mọi SKU cùng số; null khi sàn không ghi.
+ */
+export interface RemoteProductFacts {
+  brand: string | null;
+  description: string | null;
+  imageUrls: string[];
+  sizeChartUrl: string | null;
+  skus: RemoteSkuMeasures[];
+}
+
+export interface RemoteSkuMeasures {
+  externalSkuId: string;
+  weightG: number | null;
+  lengthMm: number | null;
+  widthMm: number | null;
+  heightMm: number | null;
+}
+
+/** Trần mô tả của catalog (`PUT /catalog/products`, 5000 ký tự). */
+export const DESCRIPTION_MAX = 5000;
+
+const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
+
+/**
+ * Mô tả HTML của sàn thành chữ trơn (#497): thẻ khối, `<br>` thành xuống dòng, bỏ mọi thẻ khác, giải mã thực thể thường gặp và
+ * mã số, gộp khoảng trắng, cắt 5000 ký tự. Rỗng thì null.
+ */
+export function plainDescription(html: unknown): string | null {
+  if (typeof html !== 'string') return null;
+  const text = html
+    .replace(/<(script|style)[^>]*>[\s\S]*?<\/\1>/gi, '')
+    .replace(/<br\s*\/?>|<\/(p|div|li|h[1-6]|tr)>/gi, '\n')
+    .replace(/<[^>]*>/g, '')
+    .replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e: string) => {
+      if (e[0] === '#') {
+        const code = e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : Number(e.slice(1));
+        return Number.isInteger(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : m;
+      }
+      return ENTITIES[e.toLowerCase()] ?? m;
+    })
+    .split('\n')
+    .map((line) => line.replace(/[ \t\u00a0]+/g, ' ').trim())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  return text ? text.slice(0, DESCRIPTION_MAX).trimEnd() : null;
+}
+
+const POSITIVE_INT_MAX = 2_147_483_647;
+
+/** Số sàn ghi (chuỗi hoặc số) nhân hệ số, làm tròn ra số nguyên dương; không đọc được, ≤ 0 hay vượt `integer` thì null. */
+function scaled(value: unknown, factor: number): number | null {
+  const n = typeof value === 'number' ? value : typeof value === 'string' && value.trim() !== '' ? Number(value) : NaN;
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const out = Math.round(n * factor);
+  return out > 0 && out <= POSITIVE_INT_MAX ? out : null;
+}
+
+/** Cân nặng ra gam: `KILOGRAM` (mặc định), `GRAM`, `POUND`. Đơn vị lạ thì null. */
+export function toGrams(value: unknown, unit = 'KILOGRAM'): number | null {
+  const factor = { KILOGRAM: 1000, GRAM: 1, POUND: 453.59237 }[unit.toUpperCase()];
+  return factor === undefined ? null : scaled(value, factor);
+}
+
+/** Độ dài ra mm: `CENTIMETER` (mặc định), `MILLIMETER`, `INCH`. Đơn vị lạ thì null. */
+export function toMillimeters(value: unknown, unit = 'CENTIMETER'): number | null {
+  const factor = { CENTIMETER: 10, MILLIMETER: 1, INCH: 25.4 }[unit.toUpperCase()];
+  return factor === undefined ? null : scaled(value, factor);
 }
 
 /** Một gợi ý category của sàn (#400 lát 9): `path` là đường dẫn sàn trả (Lazada tiếng Anh), service thay bằng cây khi có. */
@@ -92,7 +168,8 @@ export interface CascadeLevel {
 
 /** Một sản phẩm một SKU (#104 A1). Tiền là chuỗi thập phân; kích thước theo đơn vị của Commerio. */
 /** Mục đích ảnh khi đưa lên sàn. */
-export type ImagePurpose = 'main' | 'size_chart';
+/** `evidence`: ảnh minh chứng khi từ chối yêu cầu trả (#476), không phải ảnh sản phẩm; sàn không dùng thì coi như `main`. */
+export type ImagePurpose = 'main' | 'size_chart' | 'evidence';
 
 /**
  * Bảng kích cỡ của danh mục sàn: `required` bắt buộc (thiếu thì sàn từ chối), `optional` gửi được, `unsupported` danh mục
@@ -116,7 +193,11 @@ export interface NewProduct {
   sizeChartUri?: string;
   sellerSku: string;
   price: string;
-  quantity: number;
+  /**
+   * Tồn gửi kèm. Thiếu là không gửi: đẩy lại sản phẩm đã có trên sàn mà SKU chưa có số hay chưa tin được (#460, #223)
+   * thì giữ tồn trên sàn, lượt đẩy tồn quyết sau. Tạo mới luôn có.
+   */
+  quantity?: number;
   weightG: number;
   lengthMm: number;
   widthMm: number;
@@ -133,7 +214,65 @@ export interface NewProduct {
    * A1): adapter tra mã theo tên, không thấy hay lỗi thì không gửi. Sàn để thương hiệu trong attribute (Lazada) bỏ qua.
    */
   brand?: string | null;
+  /**
+   * Trục bán hàng (#295, Documents/21 §18.8.4): có thì adapter tạo một sản phẩm nhiều phân loại, mỗi phần tử `skus` một
+   * phân loại; trục theo `axisMap`, ảnh chỉ trên một trục. Thiếu hay rỗng là sản phẩm một SKU như trước.
+   */
+  salesAttributes?: SalesAttribute[];
+  /**
+   * Các SKU của sản phẩm (#295). Có thì các trường SKU ở gốc (`sellerSku`, `price`, `quantity`, kích thước) bỏ qua; đọc
+   * bằng `productSkus(p)`. Tiêu đề là tên sản phẩm cha.
+   */
+  skus?: ProductSku[];
+  /** Bỏ bước chống trùng SellerSku của `createProduct` (gom lại dữ liệu cũ, #295): sản phẩm lẻ cũ vẫn mang các SKU này. */
+  skipExistingSkuCheck?: boolean;
 }
+
+/** Một trục bán hàng (#295): mã sale prop của leaf (null là trục tự đặt tên), tên, giá trị (ảnh đã nằm trên sàn). */
+export interface SalesAttribute {
+  code: string | null;
+  name: string;
+  values: { optionId: string | null; label: string; imageUri?: string }[];
+}
+
+/** Một phân loại (#295): `values` là nhãn giá trị theo đúng thứ tự `salesAttributes`. */
+export interface ProductSku {
+  sellerSku: string;
+  price: string;
+  /** Như `NewProduct.quantity`: thiếu là không gửi tồn. */
+  quantity?: number;
+  values: string[];
+  weightG: number;
+  lengthMm: number;
+  widthMm: number;
+  heightMm: number;
+}
+
+/** Các SKU của `p`: `skus` khi có, không thì một SKU dựng từ các trường ở gốc (#295). */
+export function productSkus(p: NewProduct): ProductSku[] {
+  if (p.skus?.length) return p.skus;
+  return [
+    {
+      sellerSku: p.sellerSku,
+      price: p.price,
+      ...(p.quantity !== undefined && { quantity: p.quantity }),
+      values: [],
+      weightG: p.weightG,
+      lengthMm: p.lengthMm,
+      widthMm: p.widthMm,
+      heightMm: p.heightMm,
+    },
+  ];
+}
+
+/** SKU sàn sinh cho một phân loại, ghép theo `sellerSku` (không theo vị trí: Lazada đổi thứ tự `sku_list`). */
+export interface CreatedSku {
+  sellerSku: string;
+  externalSkuId: string;
+}
+
+/** Thêm phân loại vào sản phẩm sàn sẵn có (#295): trục và nội dung như lúc tạo, `skus` chỉ gồm SKU mới. */
+export type NewVariants = Omit<NewProduct, 'skus'> & { skus: ProductSku[] };
 
 /** Nội dung đưa lên sản phẩm đang bán (#293): dựng từ catalog như lúc đẩy, không gồm ảnh, SKU, giá, tồn. */
 export interface ContentUpdate {
@@ -142,6 +281,40 @@ export interface ContentUpdate {
   description: string;
   attributes: Record<string, string | string[]>;
   responsible?: Responsible;
+  /**
+   * Sản phẩm sàn app tạo theo cha (#295, `shop_products.origin = 'app'`): mọi SKU là biến thể của cùng một sản phẩm Commerio,
+   * nên sửa tên, mô tả, thuộc tính áp cho cả sản phẩm. Không có thì adapter chặn sản phẩm nhiều SKU (`shared_remote_product`).
+   */
+  wholeProduct?: boolean;
+}
+
+/**
+ * Đổi category của sản phẩm đang có trên sàn (`apply-category`, commerio-backend#467): chỉ category và attribute; tên, mô tả,
+ * ảnh, SKU, giá, tồn giữ như trên sàn. `sizeChartUrl` (ảnh của app) chỉ được đưa lên khi sản phẩm trên sàn chưa có bảng size.
+ */
+export interface CategoryChangeInput {
+  externalCategoryId: string;
+  /** Như `NewProduct.attributes` (nhãn lựa chọn hoặc chuỗi tự nhập). */
+  attributes: Record<string, string | string[]>;
+  responsible?: Responsible;
+  /** Ảnh bảng size của app: adapter đưa lên sàn chỉ khi sản phẩm trên sàn chưa có bảng size. */
+  sizeChartUrl?: string;
+  /** App đã ẩn listing (`hidden`): sau khi sửa phải tắt lại dù lần đọc này thấy sản phẩm đang bật (lượt thử lại). */
+  keepDeactivated?: boolean;
+}
+
+/**
+ * Kết quả đổi category: `underReview` sàn ngừng bán bản cũ để duyệt; `mismatch` các chỗ lệch khi đọc lại so với lúc đọc trước
+ * (số SKU, SKU người bán, giá, số ảnh), mỗi chỗ một cụm tiếng Việt viết thường đầu câu; rỗng là khớp.
+ */
+export interface CategoryChangeResult {
+  underReview: boolean;
+  mismatch: string[];
+  /**
+   * Category đọc lại trên sàn ngay sau khi đổi, khi sàn áp ngay (Lazada). Việc nền ghi vào `listings.external_category_id`;
+   * không có (TikTok: bản mới qua duyệt mới áp) thì lượt đồng bộ category ghi sau.
+   */
+  externalCategoryId?: string;
 }
 
 /** Bản sửa nội dung trên sàn: đang duyệt, đã qua (hoặc không còn bản đang duyệt), hay trượt kèm lý do sàn ghi. */
@@ -163,6 +336,11 @@ export interface CreatedProduct {
    */
   createdAt?: Date;
   title?: string;
+  /**
+   * Mọi SKU của sản phẩm sàn ứng với các phân loại đã gửi (#295), ghép theo `sellerSku`. `externalSkuId` ở gốc là SKU của
+   * phân loại đầu (sản phẩm một SKU: chính SKU đó). Phân loại gửi lên mà không có ở đây là sàn không nhận.
+   */
+  skus?: CreatedSku[];
 }
 
 /** Mốc mili giây hợp lệ (dương) thành `Date`; không thì `undefined`. */
@@ -188,6 +366,42 @@ export function existingSku<T extends Pick<RemoteSku, 'sellerSku' | 'state'>>(sk
     throw new MarketplaceError('rejected', 'duplicate_seller_sku', `Sàn có ${found.length} SKU cùng SKU người bán ${sellerSku}, liên kết tay SKU đúng`);
   }
   return found[0] ?? null;
+}
+
+/**
+ * Chống tạo trùng cho sản phẩm nhiều SKU (#295). `found[i]` là SKU sàn của `sellerSkus[i]` (null là chưa có). Không thấy cái
+ * nào: null (đi tạo). Một SKU: như `existingProduct`. Nhiều SKU: thấy mọi SKU và cùng một sản phẩm sàn thì `existing: true`
+ * kèm `skus` đủ (`createdAt`, `title` của SKU đầu); thấy một phần hay lẫn nhiều sản phẩm thì ném `rejected`
+ * `sku_exists_on_platform`, vì tạo tiếp sẽ trùng seller sku, còn gộp bừa thì ghép nhầm.
+ */
+export function existingFromSkus(sellerSkus: readonly string[], found: readonly (RemoteSku | null)[]): CreatedProduct | null {
+  const hits = found.filter((s): s is RemoteSku => s !== null);
+  if (!hits.length) return null;
+  if (sellerSkus.length === 1) return existingProduct(hits[0]!);
+  const missing = sellerSkus.filter((_, i) => found[i] === null);
+  const products = new Set(hits.map((h) => h.externalProductId));
+  if (missing.length || products.size > 1) {
+    const have = hits.map((h) => `${h.sellerSku} (sản phẩm ${h.externalProductId})`).join(', ');
+    throw new MarketplaceError(
+      'rejected',
+      'sku_exists_on_platform',
+      missing.length
+        ? `Sàn đã có SKU ${have} nhưng chưa có ${missing.join(', ')}; xử lý tay trên sàn trước khi đẩy`
+        : `Các SKU ${have} thuộc nhiều sản phẩm khác nhau trên sàn; xử lý tay trên sàn trước khi đẩy`,
+    );
+  }
+  return { ...existingProduct(hits[0]!), skus: hits.map((h) => ({ sellerSku: h.sellerSku, externalSkuId: h.externalSkuId })) };
+}
+
+/** Giá trị từng trục của một phân loại (#295): nhãn theo `sku.values[i]`, kèm phần tử giá trị trên trục (ảnh, mã) nếu có. */
+export function skuAxes(
+  attrs: readonly SalesAttribute[] | undefined,
+  sku: ProductSku,
+): { attr: SalesAttribute; label: string; value: SalesAttribute['values'][number] | undefined }[] {
+  return (attrs ?? []).map((attr, i) => {
+    const label = sku.values[i] ?? '';
+    return { attr, label, value: attr.values.find((v) => v.label === label) };
+  });
 }
 
 /**
@@ -593,6 +807,18 @@ export interface MarketplaceAdapter {
   /** Thương hiệu gửi khi catalog để trống (Lazada "No Brand"); có thì attribute thương hiệu không bao giờ thiếu. */
   readonly defaultBrand?: string;
   /**
+   * Ánh xạ mặc định thông số của công ty → mã attribute của sàn theo `priority` (#509, Documents/21 §18.8.1): khoá là `code`
+   * của thông số chuẩn (catalog `spec-defaults.ts`). Là dòng nền tảng (`company_id` NULL) dùng chung mọi công ty, ghi bằng
+   * migration; sửa ở đây thì thêm migration (test `spec-mappings-platform.test.ts` so DB với hằng này). Một mã chỉ thuộc một thông số.
+   */
+  readonly defaultSpecMappings?: Readonly<Record<string, readonly string[]>>;
+  /**
+   * Nhãn của các mã trong `defaultSpecMappings` (mã của sàn là toàn cục). Trang ánh xạ dùng khi `platform_category_attributes`
+   * chưa có leaf nào chứa mã, để không hiện mã thay nhãn và vẫn lưu lại được ánh xạ mặc định. Bắt buộc khi khai
+   * `defaultSpecMappings` (test bất biến `spec-mappings-data.test.ts`).
+   */
+  readonly defaultAttributeLabels?: Readonly<Record<string, string>>;
+  /**
    * Giá trị cấp kế của attribute `input = 'cascade'` (#400, Lazada GetNextCascadeProp, cần token gian hàng). `cascadeId` là id
    * attribute của sàn (trong `raw`), `path` các cấp đã chọn theo định dạng của sàn. Sàn không có thì không khai.
    */
@@ -601,11 +827,21 @@ export interface MarketplaceAdapter {
    * Gợi ý category của sàn theo tên và ảnh đầu của sản phẩm (#400, Documents/21 §18.5), đúng thứ tự sàn trả. Sàn không đoán
    * được thì rỗng, không ném. `permissionStatuses`: quyền của gian hàng mang token với leaf đó (TikTok), sàn không có thì null.
    */
-  suggestCategories?(accessToken: string, input: { name: string; imageUrl: string | null }): Promise<CategorySuggestion[]>;
+  suggestCategories?(
+    accessToken: string,
+    input: { name: string; imageUrl: string | null; description?: string | null },
+  ): Promise<CategorySuggestion[]>;
   /** Category lá và attribute của sản phẩm `externalProductId` trên sàn (#400 lát 12); sàn không trả category thì null. */
   productCategory?(accessToken: string, externalProductId: string): Promise<RemoteProductCategory | null>;
   /** Điều kiện sàn đặt cho lời gọi gợi ý, app kiểm trước khi gọi: cần ảnh (Lazada), độ dài tên tối thiểu (TikTok 25). */
   readonly suggestionRules?: { needsImage?: true; minNameLength?: number };
+  /**
+   * Mã sales attribute mặc định của sàn cho từng loại thuộc tính phân loại của catalog (`platform_kind`), theo ưu tiên (#448,
+   * Documents/21 §18.8.3). Sàn không khai loại nào thì loại đó rơi về `customAxisName` hoặc `axis_unmapped`.
+   */
+  readonly standardSalesAttributes?: Partial<Record<PlatformKind, readonly string[]>>;
+  /** Khả năng khai biến thể của một category, tính từ attribute leaf (#448). Sàn không khai thì không xét `axis_shape`, `sales_required`. */
+  variantCapabilities?(leaf: readonly PlatformAttribute[]): VariantCapabilities;
   /**
    * Quyền category theo gian hàng (TikTok, A17): `categoryTree(token)` của gian hàng trả `permissionStatuses` cho từng node,
    * việc nền đẩy dùng để ghi `shop_category_permissions` trước khi đẩy. Sàn không có quyền theo gian hàng thì không khai.
@@ -629,11 +865,28 @@ export interface MarketplaceAdapter {
    */
   updateProduct?(accessToken: string, externalProductId: string, externalSkuId: string, product: NewProduct): Promise<{ live: boolean }>;
   /**
+   * Thêm phân loại vào sản phẩm sàn sẵn có (#295, Documents/21 §18.8.4), id SKU cũ giữ nguyên. TikTok: partial_edit gửi
+   * lại mọi SKU cũ cộng SKU mới, sàn đưa đi duyệt lại (`live: false`). Lazada: CreateProduct với `AssociatedSku` = `sku_id`
+   * số của một SKU sẵn có; sàn trả item khác `externalProductId` (bẫy truyền nhầm `item_id`) thì adapter xoá item lạ và ném
+   * `rejected` `associated_item_mismatch`. Trả SKU mới ghép theo `sellerSku`. Sàn không hỗ trợ thì không có hàm này.
+   */
+  addVariants?(accessToken: string, externalProductId: string, input: NewVariants): Promise<{ skus: CreatedSku[]; live: boolean }>;
+  /**
+   * Gỡ các phân loại khỏi sản phẩm sàn còn SKU khác (#295). TikTok gửi lại `skus` không có các SKU đó (duyệt lại); Lazada
+   * RemoveProduct `SkuId_<item>_<sku>`. Gỡ hết mọi SKU thì bên gọi tắt cả sản phẩm, không gọi hàm này.
+   */
+  removeVariants?(accessToken: string, externalProductId: string, externalSkuIds: readonly string[]): Promise<void>;
+  /**
    * Sửa nội dung sản phẩm đang bán (`update_content`, #293). Sản phẩm sàn nhiều SKU thì ném `rejected`
    * `shared_remote_product`, danh mục sàn khác `externalCategoryId` thì `category_mismatch`. `underReview`: sàn ngừng bán
    * bản cũ để duyệt; false là vẫn bán bản cũ trong lúc duyệt bản sửa. Sàn chưa hỗ trợ thì không có hàm này.
    */
   updateContent?(accessToken: string, externalProductId: string, content: ContentUpdate): Promise<{ underReview: boolean }>;
+  /**
+   * Đổi category của sản phẩm đang bán (#467, Documents/21 §18.5): dựng bản sửa từ chính dữ liệu đọc trên sàn, chỉ thay
+   * category và attribute. Không bật, tắt sản phẩm. Sàn chưa hỗ trợ thì không có hàm này (route trả 422).
+   */
+  changeCategory?(accessToken: string, externalProductId: string, input: CategoryChangeInput): Promise<CategoryChangeResult>;
   /** Trạng thái bản sửa nội dung đang duyệt (#293), đồng bộ đọc cho listing có bản sửa `auditing`. */
   contentRevision?(accessToken: string, externalProductId: string): Promise<ContentRevision>;
   /**
@@ -756,11 +1009,21 @@ export interface MarketplaceAdapter {
     externalReturnId: string,
     externalLineIds: readonly string[],
     decision: 'accept' | 'reject' | 'refund',
-    /** `kind`: loại yêu cầu (chỉ hoàn tiền đi API riêng ở Lazada); thiếu là `return`. */
-    opts: { reasonId?: string; comment?: string; kind?: 'return' | 'refund' },
+    /**
+     * `kind`: loại yêu cầu (chỉ hoàn tiền đi API riêng ở Lazada); thiếu là `return`. `images`: ảnh minh chứng đã nằm trên
+     * sàn (chuỗi `uploadImage` trả), chỉ có khi sàn khai `returnImageTypes` (#437).
+     */
+    opts: { reasonId?: string; comment?: string; kind?: 'return' | 'refund'; images?: readonly { name: string; url: string }[] },
   ): Promise<void>;
-  /** Báo sàn kho đã nhận hàng trả (#202, §20.1 `confirmDelivery`). */
+  /** Kiểu ảnh sàn nhận làm minh chứng khi từ chối yêu cầu trả (#437); không khai là sàn chưa nhận ảnh qua app. */
+  readonly returnImageTypes?: readonly string[];
+  /** Báo sàn kho đã nhận hàng trả lúc quét, chưa kiểm hàng (#202, §20.1; Lazada `confirmDelivery`). */
   confirmReturnReceived?(accessToken: string, externalReturnId: string, externalLineIds: readonly string[]): Promise<void>;
+  /**
+   * Báo sàn người bán đã kiểm hàng trả và đồng ý hoàn tiền, sau khi phiếu kiểm hàng hoàn ghi sổ (#392; TikTok
+   * `APPROVE_RECEIVED_PACKAGE`). Sàn đã qua bước này (người bán làm trên sàn, sàn tự hoàn khi quá hạn) thì coi là xong.
+   */
+  approveReturnRefund?(accessToken: string, externalReturnId: string): Promise<void>;
   /** Lịch sử đơn ngược phía sàn (#202, §20.1). */
   returnHistory?(
     accessToken: string,
@@ -808,6 +1071,11 @@ export interface MarketplaceAdapter {
   repackPackage?(accessToken: string, packageCode: string): Promise<void>;
   /** Mỗi phần tử là một tệp PDF, có thể chứa vận đơn của nhiều kiện. */
   shippingDocuments?(accessToken: string, packageCodes: readonly string[]): Promise<Uint8Array[]>;
+  /**
+   * Xoá hẳn các sản phẩm sàn (gom lại dữ liệu cũ, #295, Documents/21 §18.8.4): TikTok tắt rồi Delete Products, Lazada
+   * RemoveProduct mọi SKU của item. Sản phẩm đã xoá thì coi là xong (gọi lại an toàn). Sàn chưa có thì không có hàm này.
+   */
+  deleteProducts?(accessToken: string, externalProductIds: readonly string[]): Promise<void>;
 }
 
 /** Trạng thái yêu cầu trả của app (Documents/25 §9, Documents/21 §20; enum `sales.return_status`). */
@@ -837,8 +1105,10 @@ interface RemoteAftersale {
   /** Mã lý do của sàn và câu hiển thị. */
   reasonCode: string | null;
   reason: string | null;
-  /** Tổng tiền hoàn cho khách theo sàn; null khi sàn chưa trả. */
+  /** Tổng tiền hoàn cho khách theo sàn; null khi sàn chưa trả hay có số không đọc được. */
   refundAmount: string | null;
+  /** Chuỗi gốc của số tiền hoàn sàn trả mà không đọc được (Lazada, #436); app bật Cần xử lý thay vì ghi 0. */
+  refundAmountUnreadable?: string | null;
   lines: RemoteAftersaleLine[];
   createdAt: Date;
   updatedAt: Date;
@@ -859,6 +1129,11 @@ export interface RemoteReturn extends RemoteAftersale {
   returnTrackingCode: string | null;
   /** Hạn người bán phải trả lời, null khi không chờ người bán. */
   respondBy: Date | null;
+  /**
+   * Sàn báo người bán đã xử lý hàng trả về (TikTok: đồng ý hoàn tiền sau kiểm hàng, hay từ chối nhận hàng), khác với ĐVVC
+   * chỉ giao hàng về (Lazada). App còn chờ hàng về mà sàn báo vậy thì hàng được xử lý ngoài app (#392). Thiếu là false.
+   */
+  sellerHandledReceipt?: boolean;
   /** Trạng thái vận chuyển chiều về của sàn (Lazada `ofc_status`), chỉ để hiện (#202). */
   ofcStatus?: string | null;
   /** Hàng trả về kho sàn hay về người bán (Lazada `return_to_type`/`is_rtm`). */

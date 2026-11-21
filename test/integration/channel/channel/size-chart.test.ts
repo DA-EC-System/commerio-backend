@@ -20,15 +20,15 @@ const CHART_URL = 'https://files.commerio.test/size-chart.png';
 
 const variants: ListingVariant[] = [];
 const sizeCharts = new Map<string, string>();
-const newVariant = (categoryId: string) => {
+const newVariant = () => {
   const v: ListingVariant = {
     id: randomUUID(),
     productId: randomUUID(),
     productName: 'Áo thun',
     sku: `SC-${randomUUID().slice(0, 8)}`,
-    categoryId,
     attributesLabel: 'Đen / M',
     productCode: 'SP-TEST',
+    groupId: 'GROUP-TEST',
     attributes: [],
     archived: false,
     businessStatus: 'selling',
@@ -101,7 +101,7 @@ async function specVariant(rule: SizeChartRule | null, remote: SizeChartRule | u
      values ('tiktok', $1, 'Áo', true, 'Thời trang > Áo', 'thoi trang > ao', now(), $2)`,
     [leaf, rule],
   );
-  const v = newVariant(randomUUID());
+  const v = newVariant();
   await seedSpecs(company.companyId, 'tiktok', leaf, [v]);
   return v;
 }
@@ -114,7 +114,11 @@ const push = async (variantIds: string[]) => {
 
 async function jobsOf(listingId: string) {
   const { rows } = await testPool().query<{ data: Record<string, unknown> }>(
-    "select data from pgboss.job where name = 'channel.listing_push' and data->>'listingId' = $1",
+    // SKU chưa có sản phẩm trên sàn đi việc theo cha `channel.product_push` (#295).
+    `select j.data from pgboss.job j join channel.listings l on l.id = $1
+      where (j.name = 'channel.listing_push' and j.data->>'listingId' = $1::text)
+         or (j.name = 'channel.product_push' and j.data->>'shopProductId' = l.shop_product_id::text
+             and (j.data->>'pushStartedAt')::timestamptz = l.push_started_at)`,
     [listingId],
   );
   return rows.map((r) => r.data);
@@ -145,7 +149,7 @@ async function listingOf(id: string) {
 }
 
 beforeAll(async () => {
-  company = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany({ optionalModules: [] });
   const res = await auth(app().post('/api/v1/channel/shops/tiktok/token')).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
   expect(res.status, JSON.stringify(res.body)).toBe(201);
   shopId = res.body.shop.id;
@@ -181,10 +185,12 @@ describe('request đẩy: chặn size_chart_missing trước khi xếp việc', 
       ['pushing', null],
     ]);
     expect(await jobsOf(results[0]!.listingId!)).toEqual([
-      { companyId: company.companyId, shopId, listingId: results[0]!.listingId, imageUrls: IMAGES, sizeChartUrl: CHART_URL },
+      { companyId: company.companyId, shopId, shopProductId: expect.any(String), pushStartedAt: expect.any(String), imageUrls: IMAGES, sizeChartUrl: CHART_URL },
     ]);
     // Không có ảnh bảng kích cỡ thì việc không mang `sizeChartUrl` (dạng cũ).
-    expect(await jobsOf(results[1]!.listingId!)).toEqual([{ companyId: company.companyId, shopId, listingId: results[1]!.listingId, imageUrls: IMAGES }]);
+    expect(await jobsOf(results[1]!.listingId!)).toEqual([
+      { companyId: company.companyId, shopId, shopProductId: expect.any(String), pushStartedAt: expect.any(String), imageUrls: IMAGES },
+    ]);
   });
 });
 

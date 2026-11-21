@@ -293,7 +293,7 @@ export async function insertMarketplaceOrder(
   return row;
 }
 
-type OrderPatch = Partial<Omit<typeof orders.$inferInsert, 'legacyCancelling'>>;
+type OrderPatch = Partial<typeof orders.$inferInsert>;
 
 export async function updateOrder(id: string, patch: OrderPatch): Promise<void> {
   await getDb()

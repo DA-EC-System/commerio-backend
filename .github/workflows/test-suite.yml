@@ -1,0 +1,66 @@
+# Bộ kiểm dùng chung cho CI (ci.yml) và deploy staging (deploy-staging.yml), gọi bằng `uses:`. Gồm:
+#   static           : db:ci-check, lint, typecheck, depcruise, build image (tắt bằng build_image: false).
+#   test (phần n/3)  : npm test chia 3 phần theo file (vitest --shard), mỗi phần một runner. Phần có test integration
+#                      tự dựng container PostgreSQL riêng và chạy migration (test/integration/global-setup.ts).
+# Bên gọi xem kết quả gộp ở needs.<job gọi>.result. Sửa số phần thì sửa cả matrix lẫn tên job.
+name: Test suite
+
+on:
+  workflow_call:
+    inputs:
+      build_image:
+        description: 'Build Docker image trong job static (deploy tự build ở job image nên tắt)'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  static:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      # Migration của PR phải đứng sau mọi migration của nhánh đích, journal và snapshot liền mạch, schema.ts khớp
+      # migration (db/CLAUDE.md). Không cần DB. Push vào main thì không có base_ref, chỉ kiểm bộ migration.
+      - name: Kiểm migration
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ -n "$BASE_REF" ]; then
+            git fetch --no-tags --depth=1 origin "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF"
+            npm run db:ci-check -- --base "origin/$BASE_REF"
+          else
+            npm run db:ci-check
+          fi
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run depcruise
+      - name: Build image
+        if: inputs.build_image
+        run: docker build -f deploy/docker/Dockerfile -t commerio-backend .
+
+  test:
+    name: test (phần ${{ matrix.shard }}/3)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: npm test, phần ${{ matrix.shard }}/3
+        run: npx vitest run --shard=${{ matrix.shard }}/3
+      - name: Báo phần lỗi
+        if: failure()
+        run: echo "::error title=Test phần ${{ matrix.shard }}/3 lỗi::Xem log job test (phần ${{ matrix.shard }}/3). Chạy lại trên máy bằng npx vitest run --shard=${{ matrix.shard }}/3"

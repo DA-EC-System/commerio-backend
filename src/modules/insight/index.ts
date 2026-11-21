@@ -1,11 +1,13 @@
-// API công khai của module lớn `insight` (Phân tích: báo cáo, trợ lý AI).
+// API công khai của module lớn `insight` (Phân tích: báo cáo, trợ lý AI, checklist thiết lập ban đầu).
 // Module lớn khác chỉ được import từ file này; module con trong cùng module lớn gọi nhau qua index.ts của module con.
 import type { ModuleDefinition } from '../../shared/module.ts';
 import { reportModule } from './report/index.ts';
 import { assistantModule } from './assistant/index.ts';
+import { onboardingModule } from './onboarding/index.ts';
 
 export * from './report/index.ts';
 export * from './assistant/index.ts';
+export * from './onboarding/index.ts';
 
 /** Mỗi module con giữ tên, schema và đường dẫn /api/v1/<tên> riêng. */
-export const insightModules: readonly ModuleDefinition[] = [reportModule, assistantModule];
+export const insightModules: readonly ModuleDefinition[] = [reportModule, assistantModule, onboardingModule];

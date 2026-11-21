@@ -6,7 +6,7 @@ import { env } from '#src/shared/config/env.ts';
 import { withCompany } from '#src/shared/db/client.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
-import { archiveSku, createAttribute, createCategory, createProduct, valueId } from './helpers.ts';
+import { archiveSku, createAttribute, createGroup, createProduct, valueId } from './helpers.ts';
 
 // `catalog.getVariants(ids?)` cho inventory, pricing, sales, channel (Documents/21 §11; plan #12 S-5, B10).
 describe('getVariants', () => {
@@ -14,22 +14,22 @@ describe('getVariants', () => {
     const { companyId, ceo } = await createCompany();
     const color = await createAttribute(ceo.token, 'Màu', ['Đen', 'Trắng']);
     const size = await createAttribute(ceo.token, 'Size', ['XL']);
-    const category = await createCategory(ceo.token, 'Áo', 'AO-{SEQ:4}-{VAL}');
+    const group = await createGroup(ceo.token, 'Áo', 'AO-{SEQ:4}-{VAL}');
     const shirt = await createProduct(ceo.token, {
       name: 'Áo thun',
-      categoryId: category.id,
+      groupId: group.id,
       variants: [
         [valueId(color, 'Đen'), valueId(size, 'XL')],
         [valueId(color, 'Trắng'), valueId(size, 'XL')],
       ],
     });
     await archiveSku(ceo.token, shirt.id, shirt.variants[1]!.id);
-    const old = await createProduct(ceo.token, { name: 'Áo cũ', categoryId: category.id, variants: [[valueId(color, 'Đen')]] });
+    const old = await createProduct(ceo.token, { name: 'Áo cũ', groupId: group.id, variants: [[valueId(color, 'Đen')]] });
     await archiveSku(ceo.token, old.id, old.variants[0]!.id);
 
     const other = await createCompany();
-    const otherCategory = await createCategory(other.ceo.token, 'Của B', 'B-{SEQ}');
-    const theirs = await createProduct(other.ceo.token, { name: 'Của B', categoryId: otherCategory.id, variants: [[]] });
+    const otherGroup = await createGroup(other.ceo.token, 'Của B', 'B-{SEQ}');
+    const theirs = await createProduct(other.ceo.token, { name: 'Của B', groupId: otherGroup.id, variants: [[]] });
 
     const all = await withCompany(companyId, () => getVariants());
     expect(all).toEqual([
@@ -39,8 +39,8 @@ describe('getVariants', () => {
         productName: 'Áo thun',
         productCode: shirt.code,
         sku: 'AO-0001-DEN-XL',
-        categoryId: category.id,
-        categoryName: 'Áo',
+        groupId: group.id,
+        groupName: 'Áo',
         archived: false,
         businessStatus: 'selling',
         description: '',
@@ -52,8 +52,8 @@ describe('getVariants', () => {
         brand: null,
         image: null,
         attributes: [
-          { attributeId: color.id, attributeName: 'Màu', valueId: valueId(color, 'Đen'), value: 'Đen', code: 'DEN' },
-          { attributeId: size.id, attributeName: 'Size', valueId: valueId(size, 'XL'), value: 'XL', code: 'XL' },
+          { attributeId: color.id, attributeName: 'Màu', platformKind: null, scope: 'company', valueScope: 'company', valueId: valueId(color, 'Đen'), value: 'Đen', code: 'DEN' },
+          { attributeId: size.id, attributeName: 'Size', platformKind: null, scope: 'company', valueScope: 'company', valueId: valueId(size, 'XL'), value: 'XL', code: 'XL' },
         ],
       },
       expect.objectContaining({ id: shirt.variants[1]!.id, sku: 'AO-0002-TRANG-XL', archived: true, businessStatus: 'archived' }),
@@ -70,13 +70,13 @@ describe('getVariants', () => {
   it('lọc theo productIds: đúng biến thể của các sản phẩm đó (RLS), kèm productCode; [] là rỗng (#400 AC-S11)', async () => {
     const { companyId, ceo } = await createCompany();
     const color = await createAttribute(ceo.token, 'Màu', ['Đen', 'Trắng']);
-    const category = await createCategory(ceo.token, 'Áo', 'AO-{SEQ:4}-{VAL}');
-    const a = await createProduct(ceo.token, { name: 'Áo A', categoryId: category.id, variants: [[valueId(color, 'Đen')], [valueId(color, 'Trắng')]] });
-    const b = await createProduct(ceo.token, { name: 'Áo B', categoryId: category.id, variants: [[valueId(color, 'Đen')]] });
-    const c = await createProduct(ceo.token, { name: 'Áo C', categoryId: category.id, variants: [[valueId(color, 'Đen')]] });
+    const group = await createGroup(ceo.token, 'Áo', 'AO-{SEQ:4}-{VAL}');
+    const a = await createProduct(ceo.token, { name: 'Áo A', groupId: group.id, variants: [[valueId(color, 'Đen')], [valueId(color, 'Trắng')]] });
+    const b = await createProduct(ceo.token, { name: 'Áo B', groupId: group.id, variants: [[valueId(color, 'Đen')]] });
+    const c = await createProduct(ceo.token, { name: 'Áo C', groupId: group.id, variants: [[valueId(color, 'Đen')]] });
     const other = await createCompany();
-    const otherCategory = await createCategory(other.ceo.token, 'Của B', 'B-{SEQ}');
-    const theirs = await createProduct(other.ceo.token, { name: 'Của B', categoryId: otherCategory.id, variants: [[]] });
+    const otherGroup = await createGroup(other.ceo.token, 'Của B', 'B-{SEQ}');
+    const theirs = await createProduct(other.ceo.token, { name: 'Của B', groupId: otherGroup.id, variants: [[]] });
 
     const rows = await withCompany(companyId, () => getVariants(undefined, { productIds: [a.id, b.id, theirs.id, randomUUID(), 'abc'] }));
     expect(rows.map((v) => [v.id, v.productId, v.productCode])).toEqual([
@@ -93,8 +93,8 @@ describe('getVariants', () => {
 
   it('trả cân nặng, kích thước của SKU và mô tả của sản phẩm (#204, Lazada cần để tính phí ship)', async () => {
     const { companyId, ceo } = await createCompany();
-    const category = await createCategory(ceo.token, 'Ví', 'VI-{SEQ}');
-    const wallet = await createProduct(ceo.token, { name: 'Ví da', categoryId: category.id, variants: [[]] });
+    const group = await createGroup(ceo.token, 'Ví', 'VI-{SEQ}');
+    const wallet = await createProduct(ceo.token, { name: 'Ví da', groupId: group.id, variants: [[]] });
     const variantId = wallet.variants[0]!.id;
     await testPool().query(
       'update product.product_variants set weight_g = 250, length_mm = 200, width_mm = 100, height_mm = 30 where id = $1',
@@ -107,9 +107,9 @@ describe('getVariants', () => {
 
   it('targetNetPricesOf: đủ mọi id, chưa đặt giá hay id lạ thì null (#204, #225)', async () => {
     const { companyId, ceo } = await createCompany();
-    const category = await createCategory(ceo.token, 'Ví', 'VI-{SEQ}');
-    const priced = (await createProduct(ceo.token, { name: 'Ví có giá', categoryId: category.id, variants: [[]] })).variants[0]!.id;
-    const unpriced = (await createProduct(ceo.token, { name: 'Ví chưa giá', categoryId: category.id, variants: [[]] })).variants[0]!.id;
+    const group = await createGroup(ceo.token, 'Ví', 'VI-{SEQ}');
+    const priced = (await createProduct(ceo.token, { name: 'Ví có giá', groupId: group.id, variants: [[]] })).variants[0]!.id;
+    const unpriced = (await createProduct(ceo.token, { name: 'Ví chưa giá', groupId: group.id, variants: [[]] })).variants[0]!.id;
     await testPool().query('update product.product_variants set target_net_price = 150000 where id = $1', [priced]);
     const stray = randomUUID();
     const prices = await withCompany(companyId, () => targetNetPricesOf([priced, unpriced, stray]));
@@ -132,11 +132,11 @@ describe('getVariants: ảnh phân loại, xuất xứ, thương hiệu (#340)',
     const { companyId, ceo } = await createCompany();
     const color = await createAttribute(ceo.token, 'Màu', ['Trắng', 'Đen']);
     const size = await createAttribute(ceo.token, 'Size', ['M', 'L']);
-    const category = await createCategory(ceo.token, 'Áo', 'AO-{SEQ}-{VAL}');
+    const group = await createGroup(ceo.token, 'Áo', 'AO-{SEQ}-{VAL}');
     const make = (name: string) =>
       createProduct(ceo.token, {
         name,
-        categoryId: category.id,
+        groupId: group.id,
         variants: ['Trắng', 'Đen'].flatMap((c) => ['M', 'L'].map((s) => [valueId(color, c), valueId(size, s)])),
       });
     return { companyId, color, make };

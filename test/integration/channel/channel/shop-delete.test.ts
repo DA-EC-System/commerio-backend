@@ -33,7 +33,7 @@ let company: Awaited<ReturnType<typeof createCompany>>;
 let variantId: string;
 
 beforeAll(async () => {
-  company = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany({ optionalModules: [] });
   ({ variantId } = await createVariant(company.companyId));
   await receive(company.companyId, variantId, 100, 100000);
 });
@@ -119,7 +119,6 @@ async function fullShop() {
   await db.query(`insert into channel.shop_reauth_mails (company_id, shop_id, stage, deadline, seq) values ($1, $2, 'lost', now(), 1)`, [c, s.id]);
   await db.query(`insert into finance.config_versions (company_id, kind, shop_id, status, payload) values ($1, 'fee', $2, 'draft', '{}')`, [c, s.id]);
   await db.query(`insert into finance.order_settlements (order_id, company_id, shop_id, status) values ($1, $2, $3, 'none')`, [done.orderId, c, s.id]);
-  await db.query(`insert into insight.daily_channel_summary (company_id, day, source, shop_id) values ($1, '2026-11-01', 'marketplace', $2)`, [c, s.id]);
   const mc = await db.query<{ id: string }>(
     `insert into channel.message_channels (company_id, kind, external_account_id, display_name, shop_id)
      values ($1, 'tiktok_chat', $2, 'Chat sàn', $3) returning id`,
@@ -163,13 +162,13 @@ async function rowsOf(s: Awaited<ReturnType<typeof fullShop>>) {
     packageLines: await one('select count(*) as n from "order".package_lines where package_id = any($1)', s.packageIds),
     returnParcels: await one('select count(*) as n from "order".unmatched_return_parcels where return_request_id = $1', s.requestId),
     listings: await one('select count(*) as n from channel.listings where shop_id = $1', s.id),
+    shopProducts: await one('select count(*) as n from channel.shop_products where shop_id = $1', s.id),
     priceCalculations: await one('select count(*) as n from channel.price_calculations where shop_id = $1', s.id),
     rawOrders: await one('select count(*) as n from channel.raw_orders where shop_id = $1', s.id),
     remoteSkus: await one('select count(*) as n from channel.remote_skus where shop_id = $1', s.id),
     reauthMails: await one('select count(*) as n from channel.shop_reauth_mails where shop_id = $1', s.id),
     configVersions: await one('select count(*) as n from finance.config_versions where shop_id = $1', s.id),
     orderSettlements: await one('select count(*) as n from finance.order_settlements where shop_id = $1', s.id),
-    reportRows: await one('select count(*) as n from insight.daily_channel_summary where shop_id = $1', s.id),
     messageChannels: await one('select count(*) as n from channel.message_channels where shop_id = $1', s.id),
     inspection: await one('select count(*) as n from product.stock_documents where id = $1', s.inspection),
   };
@@ -187,7 +186,7 @@ describe('DELETE /channel/shops/:id (#398)', () => {
     const bPkg = await seedPackage(company.companyId, { status: 'reserved', shopId: b.id, lines: [{ variantId, quantity: 1, reserved: true }] });
     await listing(b.id, false);
     const manual = await createOrder(company.companyId, { lines: [{ variantId, quantity: 1, unitPrice: 100000 }] });
-    const other = await createCompany({ optionalModules: ['channel'] });
+    const other = await createCompany({ optionalModules: [] });
     const otherShop = await db.query<{ id: string }>(
       `insert into channel.shops (company_id, platform, external_shop_id, shop_name, status) values ($1, 'lazada', $2, 'Shop khác', 'connecting') returning id`,
       [other.companyId, `seller-${s.token}`],
@@ -217,7 +216,6 @@ describe('DELETE /channel/shops/:id (#398)', () => {
         stockDocuments: 1,
         configVersions: 1,
         orderSettlements: 1,
-        reportRows: 1,
         messageChannels: 1,
       },
       detached: { stockDocuments: 2 },
@@ -348,7 +346,7 @@ describe('DELETE /channel/shops/:id (#398)', () => {
   });
 
   it('gian hàng công ty khác hay id sai dạng: 404', async () => {
-    const other = await createCompany({ optionalModules: ['channel'] });
+    const other = await createCompany({ optionalModules: [] });
     const foreign = await db.query<{ id: string }>(
       `insert into channel.shops (company_id, platform, external_shop_id, shop_name, status) values ($1, 'lazada', $2, 'Shop khác', 'disconnected') returning id`,
       [other.companyId, randomUUID()],

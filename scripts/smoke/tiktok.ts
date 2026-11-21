@@ -278,6 +278,64 @@ async function uploadImage(url: string | undefined): Promise<void> {
   printStep('uploadImage (product/202309/images/upload)', true, { uri: await adapter.uploadImage(session(), url) });
 }
 
+/**
+ * Đổi category của một sản phẩm thử (`CM-TEST-`, #467) bằng `changeCategory` của adapter: in category trước, kết quả so SKU,
+ * giá, ảnh, rồi đọc lại category (bản đang bán và bản đang duyệt). Thuộc tính truyền `mã=giá trị` như create-product.
+ */
+// #497: các trường dùng chung của một sản phẩm (Get Product 202309) để ghép SKU tự điền: in tên trường và giá trị rút gọn.
+async function productFacts(productId: string | undefined): Promise<void> {
+  if (!productId) throw new Error('Cú pháp: product <productId>');
+  type Img = { urls?: string[] };
+  type P = {
+    title?: string;
+    description?: string;
+    brand?: { name?: string };
+    main_images?: Img[];
+    size_chart?: { image?: Img; template?: { id?: string } };
+    package_weight?: unknown;
+    package_dimensions?: unknown;
+    product_attributes?: { id?: string; name?: string; values?: { id?: string; name?: string }[] }[];
+    skus?: { id?: string; seller_sku?: string }[];
+  };
+  const p = await client.call<P>('GET', `/product/202309/products/${encodeURIComponent(productId)}`, { token: session() });
+  printStep('product/202309/products/{id}', true, {
+    title: p?.title,
+    description: p?.description?.slice(0, 120),
+    brand: p?.brand,
+    mainImages: p?.main_images?.map((i) => i.urls?.[0]?.slice(0, 80)),
+    sizeChart: { image: p?.size_chart?.image?.urls?.[0]?.slice(0, 80) ?? null, template: p?.size_chart?.template ?? null },
+    packageWeight: p?.package_weight,
+    packageDimensions: p?.package_dimensions,
+    attributes: p?.product_attributes?.map((a) => `${a.id} ${a.name}: ${a.values?.map((v) => `${v.id}/${v.name}`).join(', ')}`),
+    skus: p?.skus?.map((s) => `${s.id} ${s.seller_sku}`),
+  });
+}
+
+async function changeCategory(productId: string | undefined, categoryId: string | undefined, rest: string[]): Promise<void> {
+  if (!productId || !categoryId) throw new Error('Cú pháp: change-category <productId> <categoryId> [mãThuộcTính=giáTrị ...] [size-chart=<URL ảnh>]');
+  const packed = session();
+  const path = `/product/202309/products/${productId}`;
+  type P = { title?: string; category_chains?: { id: string; is_leaf?: boolean }[]; status?: string; skus?: { seller_sku?: string; price?: unknown }[] };
+  const before = await client.call<P>('GET', path, { token: packed });
+  if (!before?.title?.startsWith('CM-TEST-')) throw new Error('Chỉ đổi category sản phẩm thử có tên bắt đầu CM-TEST-');
+  const leaf = (p: P | undefined) => p?.category_chains?.find((c) => c.is_leaf)?.id;
+  // `size-chart=<URL ảnh>`: truyền URL như việc nền; adapter tự đưa ảnh lên chỉ khi sản phẩm chưa có bảng size.
+  const chart = rest.find((a) => a.startsWith('size-chart='))?.slice('size-chart='.length);
+  const result = await adapter.changeCategory!(packed, productId, {
+    externalCategoryId: categoryId,
+    attributes: Object.fromEntries(rest.filter((a) => !a.startsWith('size-chart=')).map((a) => a.split('=') as [string, string])),
+    ...(chart && { sizeChartUrl: chart }),
+  });
+  const live = await client.call<P>('GET', path, { token: packed });
+  const review = await client.call<P>('GET', path, { token: packed, query: { return_under_review_version: 'true' } }).catch(() => undefined);
+  printStep('changeCategory (Get Product → Edit Product 202509 → đọc lại)', result.mismatch.length === 0, {
+    before: { category: leaf(before), status: before.status, skus: before.skus?.map((s) => [s.seller_sku, s.price]) },
+    result,
+    after: { category: leaf(live), status: live?.status, skus: live?.skus?.map((s) => [s.seller_sku, s.price]) },
+    underReview: review ? { category: leaf(review), status: review.status } : null,
+  });
+}
+
 /** Tạo một sản phẩm thử tên bắt đầu `CM-TEST-` (#219); thuộc tính truyền `mã=giá trị`. */
 async function createProduct(categoryId: string | undefined, imageUrl: string | undefined, rest: string[]): Promise<void> {
   if (!categoryId || !imageUrl) throw new Error('Cú pháp: create-product <categoryId> <URL ảnh> [mãThuộcTính=giáTrị ...]');
@@ -414,6 +472,8 @@ const commands: Record<string, () => Promise<void> | void> = {
   activate: () => toggle('activate', args[0]),
   'upload-image': () => uploadImage(args[0]),
   'create-product': () => createProduct(args[0], args[1], args.slice(2)),
+  'change-category': () => changeCategory(args[0], args[1], args.slice(2)),
+  product: () => productFacts(args[0]),
   // orders [số ngày, mặc định 30] | open-orders | order <id> | split-attr <id> | split <id> <nhóm> <nhóm> | ship <kiện> [cách]
   // | package <kiện> (chỉ đọc)
   orders: () => orders(false, Number(args[0] ?? 30)),

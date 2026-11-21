@@ -1,5 +1,5 @@
 import { Decimal } from 'decimal.js';
-import { and, count, desc, eq, exists, gte, inArray, isNotNull, isNull, lt, not, notInArray, or, sql } from 'drizzle-orm';
+import { and, count, desc, eq, exists, gte, inArray, isNotNull, isNull, lt, lte, not, notInArray, or, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { currentCompanyId, getDb } from '../../../../shared/db/client.ts';
 import { type LedgerKind, NON_CASH as NON_CASH_KINDS, NOT_SETTLEMENT_DIFF, OFF_PLATFORM } from '../domain/ledger.ts';
@@ -196,6 +196,63 @@ export async function ledgerTotals(shopId?: string): Promise<{ receivable: strin
   return row!;
 }
 
+/** Một ngày, một gian hàng (`shopId` null: dòng không gắn gian hàng) của `dailyFigures`; tiền là chuỗi có dấu. */
+export interface DailyFigureRow {
+  day: string;
+  shopId: string | null;
+  revenue: string;
+  net: string;
+  cogs: string;
+  cashCollected: string;
+  platformFee: string;
+  shippingFee: string;
+  estimated: boolean;
+  lastAt: Date;
+}
+
+/**
+ * Số liệu trang Tổng quan (Documents/21 §21.5, #333): gom dòng còn hiệu lực (`isReplaced`) theo `occurred_on` và
+ * gian hàng trong [from, to], bỏ hẳn khoản ngoài lãi bán hàng (`notSalesProfit`: trả NCC, chi vận hành, COD tự giao,
+ * rút tiền, quảng cáo). `revenue` = doanh thu thuần, `net` = thực nhận (dòng tiền mặt, không gồm giá vốn), `cogs` âm,
+ * `cashCollected` = phần thực nhận đã quyết toán, `estimated` khi còn dòng tiền ước tính, `lastAt` = lúc ghi dòng mới nhất.
+ */
+export async function dailyFigures(
+  from: string,
+  to: string,
+  scope: { shopId?: string | undefined; withShop?: boolean | undefined },
+  kinds: { netRevenue: readonly LedgerKind[]; notSalesProfit: readonly LedgerKind[] },
+): Promise<DailyFigureRow[]> {
+  const e = ledgerEntries;
+  const sumWhere = (cond: ReturnType<typeof sql>) => sql<string>`coalesce(sum(${e.amount}) filter (where ${cond}), 0)::text`;
+  const inKinds = (ks: readonly LedgerKind[]) => (ks.length ? inArray(e.kind, [...ks]) : sql`false`);
+  const cash = notInArray(e.kind, NON_CASH);
+  return getDb()
+    .select({
+      day: e.occurredOn,
+      shopId: e.shopId,
+      revenue: sumWhere(sql`${inKinds(kinds.netRevenue)}`),
+      net: sumWhere(sql`${cash}`),
+      cogs: sumWhere(sql`${inArray(e.kind, NON_CASH)}`),
+      cashCollected: sumWhere(sql`${cash} and not ${e.isEstimate}`),
+      platformFee: sumWhere(sql`${inArray(e.kind, ['fee_fixed', 'fee_transaction', 'fee_service', 'fee_optional'])}`),
+      shippingFee: sumWhere(sql`${inArray(e.kind, ['shipping_cost', 'shipping_income'])}`),
+      estimated: sql<boolean>`coalesce(bool_or(${e.isEstimate} and ${cash}), false)`,
+      lastAt: sql<Date>`max(${e.createdAt})`.mapWith((v: string | Date) => new Date(v)),
+    })
+    .from(e)
+    .where(
+      and(
+        gte(e.occurredOn, from),
+        lte(e.occurredOn, to),
+        kinds.notSalesProfit.length ? notInArray(e.kind, [...kinds.notSalesProfit]) : undefined,
+        scope.shopId ? eq(e.shopId, scope.shopId) : undefined,
+        scope.withShop === true ? isNotNull(e.shopId) : scope.withShop === false ? isNull(e.shopId) : undefined,
+        not(isReplaced()),
+      ),
+    )
+    .groupBy(e.occurredOn, e.shopId);
+}
+
 // ── Đối soát (#117) ─────────────────────────────────────────────────────────────────────────────────────────────
 
 /** Mã giao dịch sàn đã có trong sổ (chạy lại cùng kỳ thì bỏ qua). */
@@ -365,6 +422,38 @@ export async function insertBankMatch(values: typeof bankMatches.$inferInsert): 
 }
 
 /** Doanh thu luỹ kế từ ngày `from` (dòng còn hiệu lực), cho cảnh báo mốc thuế. */
+/**
+ * Cơ sở trần hoàn tiền của đơn (#355, `refundCap`): doanh thu ước tính đã ghi theo kiện (dòng `revenue` nguồn `package`),
+ * tiền hoàn đã ghi (dòng ước tính `customer_refund`, `adjustment` của nguồn `return_refund`) dưới dạng số dương.
+ */
+export async function refundBasisOf(orderId: string): Promise<{ revenueByPackage: Map<string, string>; refunded: string }> {
+  const revenue = await getDb()
+    .select({ packageId: ledgerEntries.packageId, total: sql<string>`sum(${ledgerEntries.amount})::text` })
+    .from(ledgerEntries)
+    .where(
+      and(
+        eq(ledgerEntries.orderId, orderId),
+        eq(ledgerEntries.kind, 'revenue'),
+        eq(ledgerEntries.isEstimate, true),
+        eq(ledgerEntries.sourceType, 'package'),
+        isNotNull(ledgerEntries.packageId),
+      ),
+    )
+    .groupBy(ledgerEntries.packageId);
+  const [row] = await getDb()
+    .select({ refunded: sql<string>`(-coalesce(sum(${ledgerEntries.amount}), 0))::text` })
+    .from(ledgerEntries)
+    .where(
+      and(
+        eq(ledgerEntries.orderId, orderId),
+        eq(ledgerEntries.isEstimate, true),
+        eq(ledgerEntries.sourceType, 'return_refund'),
+        inArray(ledgerEntries.kind, ['customer_refund', 'adjustment']),
+      ),
+    );
+  return { revenueByPackage: new Map(revenue.map((r) => [r.packageId!, r.total])), refunded: row!.refunded };
+}
+
 export async function revenueSince(from: string): Promise<string> {
   const [row] = await getDb()
     .select({ total: sql<string>`coalesce(sum(${ledgerEntries.amount}), 0)::text` })

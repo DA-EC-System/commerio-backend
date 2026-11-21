@@ -17,12 +17,14 @@ export const versionConflict = (detail: string, current: unknown) =>
 
 export const inUse = (detail: string) => new AppError(409, 'in_use', detail);
 
+/** Ghi vào dòng nền tảng (dữ liệu chung, Documents/21 mục 5.5): chỉ migration đổi được. */
+export const platformManaged = () => new AppError(403, 'platform_managed', 'Dữ liệu chuẩn của nền tảng, công ty không sửa được');
+
+/** `company_id` NULL là dòng nền tảng. */
+export const scopeOf = (companyId: string | null) => (companyId === null ? ('platform' as const) : ('company' as const));
+
 /** Xoá hẳn sản phẩm đã hoàn thiện, đã dùng ở module khác hoặc sinh từ đề nghị nhập (#204, Documents/21 §17.4). */
 export const productInUse = (detail: string) => new AppError(409, 'product_in_use', detail);
-
-/** Biến thể quá 2 thuộc tính (#204, Documents/21 §17.4): kiểm trước khi ghi, thay lỗi CHECK `position in (0, 1)`. */
-export const tooManyAxes = () =>
-  new AppError(422, 'too_many_axes', 'Sản phẩm tối đa 2 thuộc tính phân loại', { errors: { variants: 'Mỗi biến thể tối đa 2 thuộc tính' } });
 
 export const variantExists = (sku: string) => new AppError(409, 'variant_exists', `Tổ hợp này đã có biến thể ${sku}`);
 

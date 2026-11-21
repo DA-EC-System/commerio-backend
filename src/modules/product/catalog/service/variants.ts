@@ -14,7 +14,6 @@ import {
   type VariantPatch,
   type VariantRow,
 } from '../repository/variants.ts';
-import { findCategories } from '../repository/categories.ts';
 import {
   auditOf,
   type Caller,
@@ -30,10 +29,11 @@ import {
 import { skuLabels } from './labels.ts';
 import { listedFieldErrors } from './listed-fields.ts';
 import { findOwnProduct, type ProductDetail, productDetail, toDong, toVariantView } from './products.ts';
-import { allocateSkus, comboKey, resolveCombos } from './sku-allocation.ts';
+import { allocateSkus, comboKey, resolveCombos, SKU_TOO_LONG } from './sku-allocation.ts';
 import { type CatalogContext, standardPricesOf } from './standard-price.ts';
+import type { PlatformKind } from '../repository/schema.ts';
 
-/** Biến thể kèm sản phẩm, danh mục và giá trị thuộc tính (theo `position`) cho inventory, pricing, sales, channel. */
+/** Biến thể kèm sản phẩm, nhóm hàng và giá trị thuộc tính (theo `position`) cho inventory, pricing, sales, channel. */
 export interface VariantSummary {
   id: string;
   productId: string;
@@ -41,8 +41,8 @@ export interface VariantSummary {
   /** Mã cha của sản phẩm (#204 D5); channel dùng làm khoá sản phẩm trên sàn (#400 A5). */
   productCode: string;
   sku: string;
-  categoryId: string;
-  categoryName: string;
+  groupId: string;
+  groupName: string;
   /** Không còn bán: biến thể ngừng bán **hoặc** sản phẩm đã lưu trữ (plan #12 B10). */
   archived: boolean;
   /** Trạng thái kinh doanh của SKU; nhập được khi `selling` hoặc `paused` (FE `purchasable`). */
@@ -59,7 +59,17 @@ export interface VariantSummary {
   brand: string | null;
   /** Ảnh phân loại theo giá trị của SKU ở thuộc tính gắn ảnh (#340); `url` rỗng khi thiếu `S3_PUBLIC_URL`. */
   image: VariantImage | null;
-  attributes: { attributeId: string; attributeName: string; valueId: string; value: string; code: string }[];
+  // `platformKind`: loại thuộc tính chuẩn sàn của trục (#510), channel ghép sales attribute theo loại.
+  attributes: {
+    attributeId: string;
+    attributeName: string;
+    platformKind: PlatformKind | null;
+    scope: 'platform' | 'company';
+    valueScope: 'platform' | 'company';
+    valueId: string;
+    value: string;
+    code: string;
+  }[];
 }
 
 /**
@@ -80,8 +90,8 @@ export async function getVariants(ids?: readonly string[], opts: { productIds?: 
     productName: v.productName,
     productCode: v.productCode,
     sku: v.sku,
-    categoryId: v.categoryId,
-    categoryName: v.categoryName,
+    groupId: v.groupId,
+    groupName: v.groupName,
     archived: v.businessStatus === 'archived',
     businessStatus: v.businessStatus,
     description: v.description,
@@ -124,9 +134,9 @@ export async function addVariant(ctx: CatalogContext, caller: Caller, productId:
     const same = variants.find((v) => comboKey(v.attributes.map((a) => a.valueId)) === key);
     if (same?.businessStatus === 'archived') throw variantArchived(same.id);
     if (same) throw variantExists(same.sku);
-    const [category] = await findCategories(product.categoryId);
-    const [allocated] = await allocateSkus(category!, [combo]);
-    const id = await insertVariant(caller.companyId, productId, allocated!.sku, combo.map((v) => v.id), 0);
+    const allocation = await allocateSkus(caller.companyId, [combo]);
+    if (!allocation.ok) throw badCombo(SKU_TOO_LONG);
+    const id = await insertVariant(caller.companyId, productId, allocation.skus[0]!.sku, combo.map((v) => v.id), 0);
     await touchProduct(productId);
     const [variant] = await findVariants({ ids: [id] });
     await recordAudit({
@@ -136,7 +146,7 @@ export async function addVariant(ctx: CatalogContext, caller: Caller, productId:
     });
     const prices = await standardPricesOf(ctx, [id]);
     const imageCount = (await productImageRows([productId], 1)).length;
-    const labels = await skuLabels(ctx, [variant!], () => ({ name: product.name, categoryId: product.categoryId, imageCount }));
+    const labels = await skuLabels(ctx, [variant!], () => ({ name: product.name, imageCount }));
     return toVariantView(variant!, labels.get(id)!, prices.get(id) ?? null, [], (await variantImagesOf([variant!])).get(id));
   }).catch((err: unknown) => {
     // Giá trị thuộc tính vừa bị xoá giữa lúc đọc và lúc chèn.

@@ -65,7 +65,7 @@ let company: Awaited<ReturnType<typeof createCompany>>;
 let token: string;
 
 beforeAll(async () => {
-  company = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany({ optionalModules: [] });
   token = company.ceo.token;
 });
 
@@ -102,7 +102,7 @@ describe('authorize-url nhận shopId (#398, 21 §18.4)', () => {
   });
 
   it('gian hàng của công ty khác thì 404 not_found', async () => {
-    const other = await createCompany({ optionalModules: ['channel'] });
+    const other = await createCompany({ optionalModules: [] });
     const foreign = await newShop(other.ceo.token);
     const res = await authorizeUrl(token, 'lazada', `?shopId=${foreign}`);
     expect(res.status).toBe(404);
@@ -198,7 +198,7 @@ describe('callback nối lại theo shopId trong state (#398)', () => {
 
   it('sàn trả seller đang gắn công ty khác thì 409 shop_mismatch (không phải shop_connected_elsewhere), actual.name null', async () => {
     const [a, b] = [seller(), seller()];
-    const other = await createCompany({ optionalModules: ['channel'] });
+    const other = await createCompany({ optionalModules: [] });
     await newShop(other.ceo.token, b);
     const shopId = await disconnectedShop(token, a);
     const before = await snapshot(company.companyId);
@@ -382,7 +382,7 @@ describe('dán token nối lại theo shopId (#398)', () => {
   });
 
   it('shopId của công ty khác hoặc của sàn khác thì 404 not_found, chưa gọi sàn', async () => {
-    const other = await createCompany({ optionalModules: ['channel'] });
+    const other = await createCompany({ optionalModules: [] });
     const foreign = await tiktokShop(other.ceo.token);
     const lazadaShop = await newShop(token);
     for (const shopId of [foreign, lazadaShop]) {

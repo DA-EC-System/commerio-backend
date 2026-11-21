@@ -24,7 +24,8 @@ const page = {
 
 export const StockListQuery = z.object({
   ...page,
-  categoryId: z.uuid('Danh mục không hợp lệ').optional(),
+  groupId: z.uuid('Nhóm hàng không hợp lệ').optional(),
+  productId: z.uuid('Sản phẩm không hợp lệ').optional(),
   belowMin: z
     .enum(['true', 'false'], 'belowMin là true hoặc false')
     .transform((v) => v === 'true')
@@ -62,7 +63,7 @@ export const StockLevel = z
     productName: z.string(),
     sku: z.string(),
     attributesLabel: z.string().meta({ example: 'Đỏ / M' }),
-    category: z.object({ id: z.string(), name: z.string() }),
+    group: z.object({ id: z.string(), name: z.string() }),
     onHand: z.number().int(),
     reserved: z.number().int(),
     locked: z.number().int(),

@@ -3,14 +3,273 @@
 <!-- Sinh tự động bởi `npm run db:docs` từ db/migrations. Không sửa tay. -->
 
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
-Mới nhất: **V106**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+Mới nhất: **V142**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
 
-## V106 · 20/11/2026 · doi-ghep-da-dung
+## V142 · 21/11/2026 · doi-ghep-da-dung
 
-`db/migrations/20261120065639_doi-ghep-da-dung.sql` · sinh từ schema
+`db/migrations/20261121071042_doi-ghep-da-dung.sql` · sinh từ schema
 
 - `order.package_lines`: + cột `remap_pending`; + check `package_lines_remap_pending`
 - enum `order.open_purpose`: + `remap`
+
+## V141 · 21/11/2026 · danh-muc-chuan-du-lieu
+
+`db/migrations/20261121060918_danh-muc-chuan-du-lieu.sql` · viết tay
+
+- viết tay: RLS, dữ liệu
+- Danh mục chuẩn 27 (#531, Documents/21 mục 5.7, 19 §3.2; `.claude/issues/luong-san-pham/du-lieu-chuan.md`).
+
+## V140 · 21/11/2026 · danh-muc-chuan
+
+`db/migrations/20261121060914_danh-muc-chuan.sql` · sinh từ schema
+
+- + bảng `product.group_allowed_attributes`
+- `product.attributes`: đổi check `attributes_platform_kind`
+- `product.product_groups`: + cột `renamed_from`, `split_into`; + check `product_groups_merge_platform`
+
+## V139 · 21/11/2026 · dong-phieu-nhan-chua-co-sku
+
+`db/migrations/20261121055718_dong-phieu-nhan-chua-co-sku.sql` · sinh từ schema
+
+- `product.goods_receipt_lines`: đổi cột `variant_id` (thành null)
+
+## V138 · 21/11/2026 · quyen-sao-ke-san-chung
+
+`db/migrations/20261121051107_quyen-sao-ke-san-chung.sql` · viết tay
+
+- viết tay: dữ liệu
+- Bỏ tên sàn khỏi nhãn quyền người dùng thấy ở màn vai trò ("Thiết kế cho nhiều sàn").
+
+## V137 · 21/11/2026 · anh-xa-hai-tang-du-lieu
+
+`db/migrations/20261121042909_anh-xa-hai-tang-du-lieu.sql` · viết tay
+
+- viết tay: RLS, khoá ngoại, dữ liệu
+- Ánh xạ sang sàn hai tầng (dữ liệu chung, Documents/19 §3.3, 21 §18.8.1, §5.6, be#522).
+
+## V136 · 21/11/2026 · anh-xa-hai-tang
+
+`db/migrations/20261121042905_anh-xa-hai-tang.sql` · sinh từ schema
+
+- `channel.axis_mappings`: đổi cột `company_id` (thành null); + index `axis_mappings_platform_code_uq`, `axis_mappings_platform_priority_uq`
+- `channel.spec_field_mappings`: đổi cột `company_id` (thành null); + unique `spec_field_mappings_field_code_uq`; + index `spec_field_mappings_platform_priority_uq`, `spec_field_mappings_platform_attribute_uq`
+- `channel.spec_option_mappings`: đổi cột `company_id` (thành null); − khoá ngoại `spec_option_mappings_field_fk`; + unique `spec_option_mappings_option_uq`; − unique `spec_option_mappings_uq`
+
+## V135 · 21/11/2026 · du-lieu-chung-chuyen
+
+`db/migrations/20261121032708_du-lieu-chung-chuyen.sql` · viết tay
+
+- viết tay: quyền, khoá ngoại, dữ liệu
+- Dữ liệu chuẩn hai tầng (#521, Documents/21 mục 5.6 "Migration", 19 mục 2): ghi dòng nền tảng (12 nhóm, 76 thông số, mẫu, trục, 4 thuộc tính chuẩn), gộp bản sao của từng công ty vào dòng nền tảng, chuyển mọi tham chiếu, xoá bản sao.
+
+## V134 · 21/11/2026 · du-lieu-chung-rls
+
+`db/migrations/20261121032412_du-lieu-chung-rls.sql` · viết tay
+
+- viết tay: RLS
+- Dữ liệu chuẩn hai tầng (#521, Documents/19 mục 2 "Dữ liệu chuẩn hai tầng", 21 mục 5.6).
+
+## V133 · 21/11/2026 · du-lieu-chung
+
+`db/migrations/20261121032353_du-lieu-chung.sql` · sinh từ schema
+
+- + bảng `product.company_group_settings`
+- `product.attribute_values`: đổi cột `company_id` (thành null); − unique `attribute_values_attribute_id_code_unique`; + index `attribute_values_platform_lower_value_uq`, `attribute_values_platform_code_uq`, `attribute_values_company_lower_value_uq`, `attribute_values_company_code_uq`; − index `attribute_values_attribute_lower_value_uq`
+- `product.attributes`: đổi cột `company_id` (thành null); + index `attributes_platform_lower_name_uq`, `attributes_platform_kind_uq`; − index `attributes_company_platform_kind_uq`; đổi index `attributes_company_lower_name_uq`
+- `product.group_spec_fields`: + cột `id`; đổi cột `company_id` (thành null); − khoá chính `group_spec_fields_group_id_field_id_pk`; + unique `group_spec_fields_group_field_company_uq`
+- `product.product_groups`: đổi cột `company_id` (thành null); + index `product_groups_platform_lower_name_uq`; đổi index `product_groups_company_lower_name_uq`
+- `product.spec_field_options`: đổi cột `company_id` (thành null); + index `spec_field_options_platform_lower_value_uq`, `spec_field_options_company_lower_value_uq`; − index `spec_field_options_field_lower_value_uq`
+- `product.spec_fields`: đổi cột `company_id` (thành null); − unique `spec_fields_company_code_uq`; + index `spec_fields_platform_code_uq`, `spec_fields_platform_lower_name_uq`, `spec_fields_company_code_uq`; đổi index `spec_fields_company_lower_name_uq`
+
+## V132 · 21/11/2026 · san-pham-san-du-lieu
+
+`db/migrations/20261120221509_san-pham-san-du-lieu.sql` · viết tay
+
+- viết tay: RLS, hàm, trigger, dữ liệu
+- Sản phẩm sàn theo gian hàng (#295, Documents/19 câu chốt Q1).
+
+## V131 · 21/11/2026 · san-pham-san-theo-gian-hang
+
+`db/migrations/20261120221503_san-pham-san-theo-gian-hang.sql` · sinh từ schema
+
+- + bảng `channel.shop_products`
+- `channel.listings`: + cột `shop_product_id`; + khoá ngoại `listings_shop_product_id_shop_products_id_fk`, `listings_shop_product_external_fk`; + index `listings_shop_product_id_index`
+- + 2 enum `channel`: shop_product_origin, shop_product_status
+
+## V130 · 21/11/2026 · ghep-truc-du-lieu
+
+`db/migrations/20261120215928_ghep-truc-du-lieu.sql` · viết tay
+
+- viết tay: dữ liệu
+- Ghép trục theo platform_kind cho spec có sẵn (#448, chỉ dữ liệu, chạy lại được): trục `__custom` của channel.product_specs đổi sang mã sales attribute chuẩn đầu tiên (theo attributes.platform_kind) mà leaf của spec có (kind = 'sales'), mỗi…
+
+## V129 · 21/11/2026 · anh-xa-truc-rls
+
+`db/migrations/20261120215924_anh-xa-truc-rls.sql` · viết tay
+
+- viết tay: RLS
+- Ánh xạ trục phân loại sang sales attribute của sàn (#448, Documents/19 §3.3): RLS company_isolation cho channel.axis_mappings (vòng lặp của 0002 chỉ chạy một lần).
+
+## V128 · 21/11/2026 · anh-xa-truc
+
+`db/migrations/20261120215920_anh-xa-truc.sql` · sinh từ schema
+
+- + bảng `channel.axis_mappings`
+
+## V127 · 21/11/2026 · anh-xa-thong-so-rls
+
+`db/migrations/20261120214154_anh-xa-thong-so-rls.sql` · viết tay
+
+- viết tay: RLS, dữ liệu
+- Ánh xạ thông số sang sàn (#509, Documents/19 §3.3).
+
+## V126 · 21/11/2026 · anh-xa-thong-so-san
+
+`db/migrations/20261120214152_anh-xa-thong-so-san.sql` · sinh từ schema
+
+- + 2 bảng `channel`: spec_field_mappings, spec_option_mappings
+
+## V125 · 21/11/2026 · thong-so-du-lieu
+
+`db/migrations/20261120210538_thong-so-du-lieu.sql` · viết tay
+
+- viết tay: dữ liệu
+- Thông số sản phẩm (#510, Documents/21 mục 5.5 "Seed"): công ty có trước nhận thứ công ty mới có từ `seedCompanyDefaults` ("Dung tích", "Hương vị", thư viện thông số, trục chuẩn và mẫu của 12 nhóm), không chép đè thứ đã có.
+
+## V124 · 21/11/2026 · thong-so-rls
+
+`db/migrations/20261120210458_thong-so-rls.sql` · viết tay
+
+- viết tay: RLS, khoá ngoại
+- Thông số sản phẩm (#510, Documents/19 §3.2).
+
+## V123 · 21/11/2026 · thong-so-san-pham
+
+`db/migrations/20261120210435_thong-so-san-pham.sql` · sinh từ schema
+
+- + 4 bảng `product`: group_spec_fields, product_spec_values, spec_field_options, spec_fields
+- `product.attributes`: đổi check `attributes_platform_kind`
+- `product.product_groups`: + cột `axis1_attribute_id`, `axis2_attribute_id`; + khoá ngoại `product_groups_axis1_attribute_id_attributes_id_fk`, `product_groups_axis2_attribute_id_attributes_id_fk`; + check `product_groups_axis_order`, `product_groups_axis_distinct`
+
+## V122 · 20/11/2026 · bo-daily-channel-summary
+
+`db/migrations/20261120165800_bo-daily-channel-summary.sql` · sinh từ schema
+
+- − bảng `insight.daily_channel_summary`
+- − enum `insight.order_source`
+
+## V121 · 20/11/2026 · ghep-tu-dien-spec-du-lieu
+
+`db/migrations/20261120154853_ghep-tu-dien-spec-du-lieu.sql` · viết tay
+
+- viết tay: dữ liệu
+- #497: nguồn từng attribute của spec đã có.
+
+## V120 · 20/11/2026 · ghep-tu-dien-spec
+
+`db/migrations/20261120154829_ghep-tu-dien-spec.sql` · sinh từ schema
+
+- `channel.product_specs`: + cột `field_sources`, `remote_facts`, `remote_read_at`, `remote_shop_id`; + khoá ngoại `product_specs_remote_shop_id_shops_id_fk`; + check `product_specs_remote`
+
+## V119 · 20/11/2026 · tran-hoan-tien-du-lieu
+
+`db/migrations/20261120105607_tran-hoan-tien-du-lieu.sql` · viết tay
+
+- viết tay: dữ liệu
+- #355: hoàn tiền khách chỉ ghi tới mức doanh thu đã ghi của các dòng trả (Documents/25 mục 10.1, E174).
+
+## V118 · 20/11/2026 · tra-tiktok-dong-y-hoan-tien-gia-ban-sao-sku-san-moc-day-gia-listing-gia-von-de-x
+
+`db/migrations/20261120105603_tra-tiktok-dong-y-hoan-tien-gia-ban-sao-sku-san-moc-day-gia-listing-gia-von-de-x.sql` · sinh từ schema
+
+- `channel.listings`: + cột `last_price_pushed_at`
+- `channel.price_calculations`: đổi check `price_calculations_trigger`
+- `channel.remote_skus`: + cột `price`; + check `remote_skus_price`
+- `order.return_requests`: + cột `respond_by`, `refund_approval`; + index `return_requests_refund_approval_pending_idx`; + check `return_requests_refund_approval`
+
+## V117 · 20/11/2026 · doi-category-san
+
+`db/migrations/20261120102414_doi-category-san.sql` · sinh từ schema
+
+- `channel.listings`: + cột `category_change`; + check `listings_category_change`
+
+## V116 · 20/11/2026 · dang-ky-cho-ma-quyen
+
+`db/migrations/20261120100235_dang-ky-cho-ma-quyen.sql` · viết tay
+
+- viết tay: quyền
+- #459: lần đăng ký chờ mã chỉ luồng đăng ký (role chủ bảng, ngoài withCompany) đụng tới; commerio_app không có quyền nào.
+
+## V115 · 20/11/2026 · dang-ky-cho-ma
+
+`db/migrations/20261120100216_dang-ky-cho-ma.sql` · sinh từ schema
+
+- + bảng `core.registrations`
+
+## V114 · 20/11/2026 · bo-cot-dang-huy-cu
+
+`db/migrations/20261120094957_bo-cot-dang-huy-cu.sql` · sinh từ schema
+
+- `order.orders`: − cột `cancelling`; + check `orders_cancel_pending_open`, `orders_cancel_requested_open`
+
+## V113 · 20/11/2026 · bo-co-dang-huy-cu
+
+`db/migrations/20261120094954_bo-co-dang-huy-cu.sql` · viết tay
+
+- viết tay: dữ liệu
+- Bỏ trigger, hàm giữ cột cờ cũ `cancelling` bằng `cancel_pending` (#417 bước một); dọn hai cờ chờ sàn của đơn đã dừng trước CHECK (#427), viết tay, chạy lại được.
+
+## V112 · 20/11/2026 · mst-unique
+
+`db/migrations/20261120085710_mst-unique.sql` · sinh từ schema
+
+- `core.companies`: đổi cột `tax_code` (thành null); + unique `companies_tax_code_unique`
+
+## V111 · 20/11/2026 · mst-chuan-hoa-kenh-ban-loi
+
+`db/migrations/20261120085707_mst-chuan-hoa-kenh-ban-loi.sql` · viết tay
+
+- viết tay: dữ liệu
+- #459: chuẩn hoá mã số thuế công ty, đặt NULL mã sai định dạng hoặc trùng (giữ công ty cũ nhất), bật Kênh bán (phân hệ lõi) cho mọi công ty.
+
+## V110 · 20/11/2026 · dong-san-pham-moi
+
+`db/migrations/20261120070207_dong-san-pham-moi.sql` · sinh từ schema
+
+- `product.purchase_request_lines`: + cột `new_parent_product_id`, `new_parent_name`, `new_option_values`; − cột `new_product_name`, `new_variant_attrs`; + check `purchase_request_lines_one_parent`, `purchase_request_lines_new_parent_group`; đổi check `purchase_request_lines_item`
+
+## V109 · 20/11/2026 · nhom-hang-du-lieu
+
+`db/migrations/20261119171451_nhom-hang-du-lieu.sql` · viết tay
+
+- viết tay: dữ liệu
+- Nhóm hàng (#447, plan A2): công ty có trước bản này nhận thứ công ty mới có từ `seedCompanyDefaults`, không chép đè.
+
+## V108 · 20/11/2026 · nhom-hang-rls-quyen
+
+`db/migrations/20261119171435_nhom-hang-rls-quyen.sql` · viết tay
+
+- viết tay: RLS, dữ liệu
+- Nhóm hàng (#447): RLS cho bảng mới `product.company_product_settings` (vòng lặp của 0002 chỉ chạy một lần; bảng `product_groups` đổi tên giữ nguyên policy cũ).
+
+## V107 · 20/11/2026 · nhom-hang
+
+`db/migrations/20261119171430_nhom-hang.sql` · sinh từ schema
+
+- + 2 bảng `product`: company_product_settings, product_groups
+- − bảng `product.categories`
+- `product.attribute_values`: + check `attribute_values_value_length`
+- `product.attributes`: + cột `platform_kind`; + index `attributes_company_platform_kind_uq`; + check `attributes_platform_kind`, `attributes_name_length`
+- `product.product_variants`: + check `product_variants_sku_length`
+- `product.products`: + cột `group_id`; − cột `category_id`; + khoá ngoại `products_group_id_product_groups_id_fk`; − khoá ngoại `products_category_id_categories_id_fk`; + index `products_group_id_index`; − index `products_category_id_index`
+- `product.purchase_request_lines`: + cột `new_group_id`; − cột `new_category_id`
+
+## V106 · 20/11/2026 · nhom-hang-cat-ten
+
+`db/migrations/20261119171400_nhom-hang-cat-ten.sql` · viết tay
+
+- viết tay: dữ liệu
+- Nhóm hàng (#447), chạy trước migration thêm CHECK tên thuộc tính <= 15, giá trị <= 20 ký tự (luật Lazada `VARIATION_*`, Documents/21 mục 5.2): cắt tên dài hơn, bỏ khoảng trắng cuối; trùng tên trong công ty (thuộc tính) hay trong thuộc tính…
 
 ## V105 · 19/11/2026 · don-nhap-loi-moi-qua-han
 

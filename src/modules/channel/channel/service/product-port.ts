@@ -4,13 +4,41 @@
 import type { Decimal } from 'decimal.js';
 import {
   availableOf,
+  countedOf,
+  type CreateFromPlatformResult,
+  createProductsFromPlatform,
+  fillProductFacts,
+  productMediaGaps,
+  type FactsSource,
+  getProductSpecs,
+  getSpecFields,
   getVariants,
+  type PlatformProductInput,
+  type ProductFacts,
   productImageUrls,
   productSizeChartUrls,
   standardPricesOf,
   type VariantSummary,
+  attributeKindsOf,
 } from '../../../product/index.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
+import type { CatalogSpecValue } from '../domain/spec-resolve.ts';
+
+/** Thông số của công ty (cổng `getSpecFields` của catalog, Documents/21 §11.3). */
+export interface SpecFieldInfo {
+  id: string;
+  code: string;
+  name: string;
+  input: CatalogSpecValue['input'];
+  unit: string | null;
+  allowCustom: boolean;
+  options: { id: string; value: string; position: number; scope?: DataScope }[];
+  /** Tầng dữ liệu (dữ liệu chung, chốt 22/11/2026): `platform` là thông số chuẩn, ánh xạ sang sàn chỉ nền tảng sửa. */
+  scope?: DataScope;
+}
+
+/** Dòng chuẩn của nền tảng (dùng chung mọi công ty) hay dòng riêng của công ty; thiếu thì coi là `company`. */
+export type DataScope = 'platform' | 'company';
 
 export interface ListingVariant {
   id: string;
@@ -18,12 +46,19 @@ export interface ListingVariant {
   productName: string;
   /** Mã cha của sản phẩm (#400 A5). */
   productCode: string;
+  /** Nhóm hàng của sản phẩm (#448: category cùng nhóm). */
+  groupId: string;
   sku: string;
-  categoryId: string;
   /** "Đen / M"; rỗng khi không có thuộc tính. */
   attributesLabel: string;
   /** Giá trị thuộc tính theo `position` (#400: ánh xạ trục biến thể sang sales attribute của sàn). */
-  attributes: { attributeId: string; attributeName: string; valueId: string; value: string }[];
+  attributes: {
+    attributeId: string;
+    attributeName: string;
+    platformKind: 'color' | 'size' | 'volume' | 'flavor' | null;
+    valueId: string;
+    value: string;
+  }[];
   archived: boolean;
   /**
    * Trạng thái kinh doanh của SKU. Tới khi #204 trả `readiness`, `paused` là SKU chưa sẵn sàng đẩy (`sku_not_ready`, #219
@@ -41,11 +76,15 @@ export interface ListingVariant {
 }
 
 export interface ProductPort {
+  /** Thuộc tính phân loại của công ty (#448); thiếu (bản giả của test) thì coi là không có thuộc tính nào. */
+  attributes?(): Promise<{ id: string; name: string; platformKind: 'color' | 'size' | 'volume' | 'flavor' | null; scope?: DataScope }[]>;
   /** Bỏ trống `ids` = mọi biến thể của công ty; `opts.productIds` lọc theo sản phẩm, `[]` là rỗng (#400 A13). */
   variants(ids?: readonly string[], opts?: { productIds?: readonly string[] }): Promise<ListingVariant[]>;
   standardPrices(ids: readonly string[]): Promise<Map<string, Decimal | null>>;
   /** Có mọi biến thể của công ty (chưa có tồn thì 0); id lạ không có trong Map thì không đẩy tồn (#222). */
   availableOf(ids: readonly string[]): Promise<Map<string, number>>;
+  /** SKU kho đã có số (#460); thiếu (bản giả của test) thì coi mọi SKU đã có số. */
+  countedOf?(ids: readonly string[]): Promise<Set<string>>;
   /**
    * Link ảnh catalog theo sản phẩm (#303), tối đa `max` ảnh đầu theo thứ tự; sản phẩm chưa có ảnh (hoặc máy chủ chưa
    * cấu hình link ảnh) không có trong Map.
@@ -53,11 +92,44 @@ export interface ProductPort {
   productImageUrls(productIds: readonly string[], max: number): Promise<Map<string, string[]>>;
   /** Link ảnh bảng kích cỡ theo sản phẩm (#347); sản phẩm chưa có ảnh không có trong Map. */
   productSizeChartUrls?(productIds: readonly string[]): Promise<Map<string, string>>;
+  /**
+   * Điền trường dùng chung đang trống của sản phẩm từ sàn (#497, Documents/21 §11.3); trả tên trường đã ghi. Thiếu (bản giả của
+   * test) thì ghép không điền gì.
+   */
+  fillProductFacts?(productId: string, facts: ProductFacts, source: FactsSource): Promise<{ filled: string[] }>;
+  /**
+   * Tạo sản phẩm, biến thể từ SKU sàn (#500, Documents/21 §18.7.5) trong giao dịch của bên gọi. Thiếu (bản giả của test) thì
+   * thiết lập trả 422 cho dòng `create`.
+   */
+  createFromPlatform?(
+    caller: { companyId: string; accountId: string },
+    groupId: string,
+    products: readonly PlatformProductInput[],
+    source: { shopId: string; shopName: string },
+  ): Promise<CreateFromPlatformResult>;
+  /**
+   * Giá trị thông số của sản phẩm cha (cổng `getProductSpecs`, #509, Documents/21 §11.3), đã xếp theo mẫu nhóm. Thiếu (catalog
+   * chưa có cổng, bản giả của test) thì không có thông số catalog nào để tự điền.
+   */
+  productSpecs?(productIds: readonly string[]): Promise<Map<string, { groupId: string | null; values: CatalogSpecValue[] }>>;
+  /** Thư viện thông số của công ty (cổng `getSpecFields`, #509). Thiếu thì trang ánh xạ rỗng. */
+  /** `companyId` khi gọi ngoài `withCompany` (seed lúc tạo công ty): lọc tường minh, không dựa vào RLS. */
+  specFields?(opts?: { companyId?: string }): Promise<SpecFieldInfo[]>;
+  /** Sản phẩm thiếu ảnh, thiếu bảng size (#498); thiếu (bản giả của test) thì ghép không tải ảnh sàn. */
+  productMediaGaps?(productIds: readonly string[]): Promise<Map<string, { images: boolean; sizeChart: boolean }>>;
 }
 
 // Trường #110 sẽ thêm; đọc tuỳ chọn để code không đổi khi Khang merge.
 type Extended = VariantSummary &
   Partial<Record<'description', string | null> & Record<'weightG' | 'lengthMm' | 'widthMm' | 'heightMm', number | null>>;
+
+/**
+ * Kind channel đã ánh xạ (`standardSalesAttributes`). Catalog có 23 kind từ #531; kind channel chưa biết coi như không
+ * kind (trục tự đặt hoặc `axis_unmapped`, như thuộc tính riêng) tới khi union của channel thêm kind đó.
+ */
+type ChannelKind = 'color' | 'size' | 'volume' | 'flavor';
+const CHANNEL_KINDS: readonly string[] = ['color', 'size', 'volume', 'flavor'] satisfies ChannelKind[];
+const channelKind = (k: string | null): ChannelKind | null => (k !== null && CHANNEL_KINDS.includes(k) ? (k as ChannelKind) : null);
 
 function toListingVariant(v: Extended): ListingVariant {
   return {
@@ -65,10 +137,16 @@ function toListingVariant(v: Extended): ListingVariant {
     productId: v.productId,
     productName: v.productName,
     productCode: v.productCode,
+    groupId: v.groupId,
     sku: v.sku,
-    categoryId: v.categoryId,
     attributesLabel: v.attributes.map((a) => a.value).join(' / '),
-    attributes: v.attributes.map(({ attributeId, attributeName, valueId, value }) => ({ attributeId, attributeName, valueId, value })),
+    attributes: v.attributes.map(({ attributeId, attributeName, platformKind, valueId, value }) => ({
+      attributeId,
+      attributeName,
+      platformKind: channelKind(platformKind),
+      valueId,
+      value,
+    })),
     archived: v.archived,
     businessStatus: v.businessStatus,
     description: v.description ?? null,
@@ -83,14 +161,29 @@ function toListingVariant(v: Extended): ListingVariant {
 
 let override: ProductPort | null = null;
 
+/**
+ * Cổng thông số của catalog (#509, Documents/21 §11.3): `getProductSpecs`, `getSpecFields`. Không cần `ctx`, nên seed ánh xạ
+ * (gọi từ core lúc tạo công ty) dùng được. Bản giả của test (`override`) thắng.
+ */
+export function catalogSpecPort(): Pick<ProductPort, 'productSpecs' | 'specFields'> {
+  if (override) return override;
+  return { productSpecs: getProductSpecs, specFields: getSpecFields };
+}
+
 export function productPort(ctx: ModuleContext): ProductPort {
   return (
     override ?? {
+      attributes: async () => (await attributeKindsOf()).map((a) => ({ ...a, platformKind: channelKind(a.platformKind) })),
       variants: async (ids, opts) => (await getVariants(ids, opts)).map(toListingVariant),
       standardPrices: (ids) => standardPricesOf(ctx, ids),
       availableOf,
+      countedOf,
       productImageUrls,
       productSizeChartUrls,
+      fillProductFacts,
+      ...catalogSpecPort(),
+      createFromPlatform: createProductsFromPlatform,
+      productMediaGaps,
     }
   );
 }

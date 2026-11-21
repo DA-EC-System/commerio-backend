@@ -5,12 +5,14 @@ import { AppError } from '../../../../shared/errors/app-error.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { responsibleOrgOf } from '../../../core/index.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
-import type { AttributeInput, AttributeKind, AttributeOption, AttributeTier, RequiredWhen } from '../domain/product-spec.ts';
+import type { AttributeInput, AttributeKind, AttributeOption, AttributeTier, CategoryPermission, RequiredWhen } from '../domain/product-spec.ts';
+import { permissionsOf } from '../repository/product-specs.ts';
 import {
   type CategoryRow,
   childrenOf,
   findCategory,
   leafAttributesOf,
+  pathIdsOf,
   replaceLeaf,
   searchLeaves,
   specsOnCategory,
@@ -32,6 +34,8 @@ export interface PlatformCategory {
   path: string;
   isLeaf: boolean;
   status: CategoryStatus;
+  /** `externalId` từ gốc tới chính category, cùng thứ tự với `path` (#467); cha chưa có trong bảng thì thiếu phần gốc. */
+  pathIds: string[];
 }
 
 export interface PlatformAttributeView {
@@ -56,13 +60,14 @@ export interface LeafDetail {
   products: { productId: string; code: string; name: string; source: SpecSource }[];
 }
 
-const toCategory = (r: CategoryRow): PlatformCategory => ({
+const toCategory = (r: CategoryRow, pathIds: ReadonlyMap<string, string[]>): PlatformCategory => ({
   externalId: r.externalId,
   parentExternalId: r.parentExternalId,
   name: r.name,
   path: r.path,
   isLeaf: r.isLeaf,
   status: r.status,
+  pathIds: pathIds.get(r.externalId) ?? [r.externalId],
 });
 
 /**
@@ -71,11 +76,24 @@ const toCategory = (r: CategoryRow): PlatformCategory => ({
  */
 export async function listPlatformCategories(
   raw: string,
-  query: { search?: string; parentId?: string },
-): Promise<{ items: PlatformCategory[]; syncedAt: Date | null }> {
+  query: { search?: string; parentId?: string; shopId?: string },
+  /** Công ty của người gọi; cần khi có `query.shopId`. */
+  companyId?: string,
+): Promise<{ items: (PlatformCategory & { permission?: CategoryPermission | null })[]; syncedAt: Date | null }> {
   const { platform } = platformOf(raw);
+  // `shopId` (#448, Documents/21 §18.5): gian hàng phải của công ty, đúng sàn (404); leaf kèm quyền của gian hàng đó.
+  if (query.shopId !== undefined) await assertShopOn(companyId!, platform, query.shopId);
   const rows = query.search ? await searchLeaves(platform, query.search) : await childrenOf(platform, query.parentId ?? null);
-  return { items: rows.map(toCategory), syncedAt: await treeSyncedAt(platform) };
+  const pathIds = await pathIdsOf(platform, rows.map((r) => r.externalId));
+  const items = rows.map((r) => toCategory(r, pathIds));
+  if (query.shopId === undefined) return { items, syncedAt: await treeSyncedAt(platform) };
+  const shopId = query.shopId;
+  const leafIds = rows.filter((r) => r.isLeaf).map((r) => r.externalId);
+  const permissions = await withCompany(companyId!, () => permissionsOf(shopId, leafIds));
+  return {
+    items: items.map((c) => ({ ...c, permission: c.isLeaf ? (permissions.get(c.externalId)?.status ?? null) : null })),
+    syncedAt: await treeSyncedAt(platform),
+  };
 }
 
 const unsupported = () => new AppError(422, 'marketplace_unsupported', 'Sàn này chưa hỗ trợ đọc category từ app');
@@ -85,7 +103,7 @@ const noShop = () => new AppError(409, 'shop_not_connected', 'Công ty chưa có
 const shopNotFound = () => new AppError(404, 'not_found', 'Không tìm thấy gian hàng');
 
 /** `shopId` gửi kèm phải là gian hàng của công ty, đúng sàn; không thì 404 (cả khi bảng còn hạn, review BE1 P2-7). */
-async function assertShopOn(companyId: string, platform: Marketplace, shopId: string): Promise<void> {
+export async function assertShopOn(companyId: string, platform: Marketplace, shopId: string): Promise<void> {
   const shop = await withCompany(companyId, () => ownShop(shopId));
   if (shop.platform !== platform) throw shopNotFound();
 }
@@ -148,7 +166,7 @@ export async function leafDetail(
     org: needOrg ? await responsibleOrgOf(companyId) : null,
   }));
   return {
-    category: { ...toCategory(category), sizeChartRule: category.sizeChartRule },
+    category: { ...toCategory(category, await pathIdsOf(platform, [externalId])), sizeChartRule: category.sizeChartRule },
     attributes: attributes.map(({ raw: _raw, ...a }) => {
       const field = a.tier === 'company' ? adapter.responsibleFields?.[a.code] : undefined;
       return { ...a, defaultValue: (field && org?.[field]) || null };

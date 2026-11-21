@@ -53,6 +53,45 @@ export type ListingPushJob = z.infer<typeof ListingPushJobSchema>;
 export const listingPushQueue = defineQueue('channel.listing_push', ListingPushJobSchema, { attempts: 5, retryDelaySeconds: 30 });
 
 /**
+ * Việc đẩy các SKU của một sản phẩm cha thành phân loại của **một** sản phẩm sàn (#295, Documents/21 §18.8.4): dòng
+ * `shop_products` `app` chưa có mã sàn thì tạo sản phẩm nhiều phân loại, có rồi thì thêm phân loại (`addVariants`). Listing
+ * của lượt là các dòng `pushing` trỏ `shopProductId` chưa có SKU sàn; `pushStartedAt` (ISO) là mốc lượt: lượt mới hơn ghi đè
+ * mốc trên dòng thì việc cũ bỏ. Hàng, số lần thử như `channel.listing_push`.
+ */
+export const ProductPushJobSchema = JobDataSchema.extend({
+  shopId: z.uuid(),
+  shopProductId: z.uuid(),
+  pushStartedAt: z.iso.datetime(),
+  imageUrls: z.array(z.string()).max(PUSH_IMAGE_MAX),
+  sizeChartUrl: z.string().nullish(),
+});
+export type ProductPushJob = z.infer<typeof ProductPushJobSchema>;
+export const productPushQueue = defineQueue('channel.product_push', ProductPushJobSchema, { attempts: 5, retryDelaySeconds: 30 });
+
+/**
+ * Đổi category của một sản phẩm trên một gian hàng (`apply-category`, #467, Documents/21 §18.5): `listingIds` là các listing
+ * của sản phẩm sàn `externalProductId` vừa chuyển `category_change = queued`, `toCategoryId` là category của spec lúc bấm.
+ */
+export const CategoryApplyJobSchema = JobDataSchema.extend({
+  shopId: z.uuid(),
+  productId: z.uuid(),
+  externalProductId: z.string().min(1),
+  listingIds: z.array(z.uuid()).min(1),
+  toCategoryId: z.string().min(1),
+});
+export type CategoryApplyJob = z.infer<typeof CategoryApplyJobSchema>;
+/**
+ * Việc đổi category (`runCategoryApply`, `category-apply.ts`). Như `channel.listing_push`: hàng `standard` (chống trùng ở CSDL:
+ * chỉ listing vừa chuyển `queued` mới xếp việc), thử 5 lần, lần đầu sau 30 giây, gấp đôi; lần thứ 5 trước mốc 30 phút.
+ */
+export const categoryApplyQueue = defineQueue('channel.category_apply', CategoryApplyJobSchema, { attempts: 5, retryDelaySeconds: 30 });
+
+/** Xếp việc đổi category, đi chung giao dịch vừa ghi `queued` (rollback thì không còn việc). */
+export async function sendCategoryApply(job: CategoryApplyJob): Promise<void> {
+  await sendJob(categoryApplyQueue, job);
+}
+
+/**
  * Lượt Tải lại SKU sàn chạy nền (`runRemoteSkusRefresh`, #361, Documents/21 §18.3): đọc sản phẩm sửa từ lần trước rồi đọc
  * trọn. Không lịch: xếp khi bấm Tải lại hay mở trang ghép lần đầu. Mỗi gian hàng một lượt (`stately`, khoá gian hàng). Thử
  * 2 lần, lần sau cách 30 giây (lỗi `incomplete_list` do danh sách đổi giữa chừng hay qua ở lần sau); cho chạy tới 15 phút,
@@ -110,6 +149,11 @@ export async function sendListingPush(job: ListingPushJob): Promise<void> {
   await sendJob(listingPushQueue, job);
 }
 
+/** Xếp việc đẩy theo cha (#295), đi chung giao dịch vừa chuyển các listing sang `pushing`. */
+export async function sendProductPush(job: ProductPushJob): Promise<void> {
+  await sendJob(productPushQueue, job);
+}
+
 /** Xếp một lượt Tải lại SKU sàn; đã có việc chờ cùng gian hàng thì không thêm. Đi chung giao dịch đang mở. */
 export async function sendRemoteSkusRefresh(companyId: string, shopId: string): Promise<void> {
   await sendJob(remoteSkusRefreshQueue, { companyId, shopId }, { key: shopId });
@@ -132,4 +176,30 @@ export async function reconcileShopJobs(): Promise<void> {
     await startShopJobs(shop.companyId, shop.id);
     if (shop.orderCutoffAt && !shop.openOrdersPulledAt) await sendOpenOrderPull(shop.companyId, shop.id);
   }
+}
+
+/**
+ * Gom lại dữ liệu cũ (#295, Documents/21 §18.8.4): các SKU của một cha đang nằm ở nhiều sản phẩm sàn trên một gian hàng thì
+ * tạo **một** sản phẩm nhiều phân loại rồi xoá các sản phẩm lẻ (`runProductRegroup`, `product-regroup.ts`). `startedAt` (ISO)
+ * là mốc lượt: ghi lên dòng `shop_products` mới, lượt thử lại dùng lại đúng dòng đó. `stately` theo (gian hàng, sản phẩm):
+ * bấm hai lần không xếp thêm. Hạn 15 phút vì tạo, xoá trên sàn nối nhau.
+ */
+export const ProductRegroupJobSchema = JobDataSchema.extend({
+  shopId: z.uuid(),
+  productId: z.uuid(),
+  startedAt: z.iso.datetime(),
+  imageUrls: z.array(z.string()).max(PUSH_IMAGE_MAX),
+  sizeChartUrl: z.string().nullish(),
+});
+export type ProductRegroupJob = z.infer<typeof ProductRegroupJobSchema>;
+export const productRegroupQueue = defineQueue('channel.product_regroup', ProductRegroupJobSchema, {
+  policy: 'stately',
+  attempts: 5,
+  retryDelaySeconds: 30,
+  expireInSeconds: 900,
+});
+
+/** Xếp việc gom lại, đi chung giao dịch của request. */
+export async function sendProductRegroup(job: ProductRegroupJob): Promise<void> {
+  await sendJob(productRegroupQueue, job, { key: `${job.shopId}:${job.productId}` });
 }

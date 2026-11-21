@@ -80,9 +80,9 @@ const variant: ListingVariant = {
   productId: randomUUID(),
   productName: 'Áo thun',
   sku: 'CMR-OS-1',
-  categoryId: randomUUID(),
   attributesLabel: 'Trắng',
   productCode: 'SP-TEST',
+  groupId: 'GROUP-TEST',
   attributes: [],
   archived: false,
   businessStatus: 'selling',
@@ -307,7 +307,7 @@ async function auditCount(shopId: string): Promise<number> {
 
 describe('phiếu đầu kỳ ghi sổ thì thoát chờ kiểm kê (#198 AC-11, AC-S4)', () => {
   it('AC-11a, AC-11b, AC-S4: openingStocktake null, mốc = countedAt, nhật ký hệ thống, xếp đúng một lượt đơn còn mở', async () => {
-    const c = await createCompany({ optionalModules: ['channel'] });
+    const c = await createCompany({ optionalModules: [] });
     const { shopId, documentId, number } = await waitingShop(c);
     const before = await shopRow(shopId);
     expect(await openPullJobs(shopId)).toBe(0);
@@ -350,7 +350,7 @@ describe('phiếu đầu kỳ ghi sổ thì thoát chờ kiểm kê (#198 AC-11,
   });
 
   it('gọi settleOpeningStocktake đúng một lần, trong giao dịch thoát chờ, sau khi đặt openingStocktake = null, đúng tham số', async () => {
-    const c = await createCompany({ optionalModules: ['channel'] });
+    const c = await createCompany({ optionalModules: [] });
     const { shopId, documentId } = await waitingShop(c);
     const event = posted(shopId, documentId);
 
@@ -365,7 +365,7 @@ describe('phiếu đầu kỳ ghi sổ thì thoát chờ kiểm kê (#198 AC-11,
   });
 
   it('settleOpeningStocktake lỗi: cả giao dịch rollback (vẫn chờ kiểm kê, không nhật ký, không xếp việc); consumer thử lại thì thoát chờ', async () => {
-    const c = await createCompany({ optionalModules: ['channel'] });
+    const c = await createCompany({ optionalModules: [] });
     const { shopId, documentId } = await waitingShop(c);
     const before = await shopRow(shopId);
     const event = posted(shopId, documentId);
@@ -386,7 +386,7 @@ describe('phiếu đầu kỳ ghi sổ thì thoát chờ kiểm kê (#198 AC-11,
   });
 
   it('settleOpeningStocktake lỗi tới hết số lần thử: vào DLQ, gian hàng vẫn chờ, phiếu posted; lập lại phiếu trả 409 shop_not_awaiting_stocktake', async () => {
-    const c = await createCompany({ optionalModules: ['channel'] });
+    const c = await createCompany({ optionalModules: [] });
     const { shopId, documentId } = await waitingShop(c);
     const before = await shopRow(shopId);
     settle.failNext = true;
@@ -412,7 +412,7 @@ describe('phiếu đầu kỳ ghi sổ thì thoát chờ kiểm kê (#198 AC-11,
   });
 
   it('I1: đơn đặt giữa lúc thiết lập và countedAt, chưa có trong DB, vẫn về qua lượt đơn còn mở chạy lại; xong mới đẩy tồn', async () => {
-    const c = await createCompany({ optionalModules: ['channel'] });
+    const c = await createCompany({ optionalModules: [] });
     const { shopId, documentId } = await waitingShop(c);
     const placedAt = new Date();
     await new Promise((r) => setTimeout(r, 5));
@@ -430,7 +430,7 @@ describe('phiếu đầu kỳ ghi sổ thì thoát chờ kiểm kê (#198 AC-11,
   });
 
   it('gian hàng không active (mất uỷ quyền): vẫn thoát chờ và đổi mốc, không xếp việc (nối lại sẽ xếp)', async () => {
-    const c = await createCompany({ optionalModules: ['channel'] });
+    const c = await createCompany({ optionalModules: [] });
     const { shopId, documentId } = await waitingShop(c);
     await testPool().query("update channel.shops set status = 'needs_reauth' where id = $1", [shopId]);
     const event = posted(shopId, documentId);
@@ -444,7 +444,7 @@ describe('phiếu đầu kỳ ghi sổ thì thoát chờ kiểm kê (#198 AC-11,
   });
 
   it('xếp việc lỗi thì cả giao dịch rollback: gian hàng vẫn chờ, không có nhật ký', async () => {
-    const c = await createCompany({ optionalModules: ['channel'] });
+    const c = await createCompany({ optionalModules: [] });
     const { shopId, documentId } = await waitingShop(c);
     const before = await shopRow(shopId);
     jobs.failNext = true;
@@ -457,7 +457,7 @@ describe('phiếu đầu kỳ ghi sổ thì thoát chờ kiểm kê (#198 AC-11,
   });
 
   it('AC-11d: thoát chờ thì công ty không còn bị chặn, gian hàng thứ hai thiết lập push được', async () => {
-    const c = await createCompany({ optionalModules: ['channel'] });
+    const c = await createCompany({ optionalModules: [] });
     const { shopId, documentId } = await waitingShop(c);
     const second = await app()
       .post('/api/v1/channel/shops/lazada/token')
@@ -476,8 +476,8 @@ describe('phiếu đầu kỳ ghi sổ thì thoát chờ kiểm kê (#198 AC-11,
   });
 
   it('AC-11c: phiếu khác, nguồn null, gian hàng công ty khác, phát lại lần hai: không đổi gì', async () => {
-    const c = await createCompany({ optionalModules: ['channel'] });
-    const other = await createCompany({ optionalModules: ['channel'] });
+    const c = await createCompany({ optionalModules: [] });
+    const other = await createCompany({ optionalModules: [] });
     const { shopId, documentId } = await waitingShop(c);
     const before = await shopRow(shopId);
 
@@ -495,7 +495,7 @@ describe('phiếu đầu kỳ ghi sổ thì thoát chờ kiểm kê (#198 AC-11,
   });
 
   it('S1: countedAt sau postedAt hoặc ở tương lai thì ném (consumer thử lại rồi DLQ), không đổi gì', async () => {
-    const c = await createCompany({ optionalModules: ['channel'] });
+    const c = await createCompany({ optionalModules: [] });
     const { shopId, documentId } = await waitingShop(c);
     const before = await shopRow(shopId);
     const now = Date.now();
@@ -512,7 +512,7 @@ describe('phiếu đầu kỳ ghi sổ thì thoát chờ kiểm kê (#198 AC-11,
   });
 
   it('S1: countedAt trước lúc thiết lập thì vẫn đặt mốc (chỉ ghi log cảnh báo)', async () => {
-    const c = await createCompany({ optionalModules: ['channel'] });
+    const c = await createCompany({ optionalModules: [] });
     const { shopId, documentId } = await waitingShop(c);
     const early = new Date((await shopRow(shopId)).order_cutoff_at.getTime() - 3_600_000).toISOString();
 
@@ -524,7 +524,7 @@ describe('phiếu đầu kỳ ghi sổ thì thoát chờ kiểm kê (#198 AC-11,
 
 describe('chờ phân hàng: thoát khi nhận allocation_done có cause.documentId trùng phiếu (§11.2, §18.6.11)', () => {
   it('không có cause, cause phiếu khác: vẫn chờ, không đẩy tồn; cause trùng: thoát, xếp đồng bộ, đẩy tồn đúng một lần; phát lại không đổi gì', async () => {
-    const c = await createCompany({ optionalModules: ['channel'] });
+    const c = await createCompany({ optionalModules: [] });
     const { shopId, documentId } = await waitingShop(c);
     await stocktakePosted(c, posted(shopId, documentId));
     await runOpenOrderPull({ companyId: c.companyId, shopId });
@@ -563,7 +563,7 @@ describe('chờ phân hàng: thoát khi nhận allocation_done có cause.documen
   });
 
   it('qua consumer thật: allocation_done có cause, variantIds rỗng (đếm khớp sổ) vẫn thoát chờ; không có cause thì không', async () => {
-    const c = await createCompany({ optionalModules: ['channel'] });
+    const c = await createCompany({ optionalModules: [] });
     const { shopId, documentId } = await waitingShop(c);
     expect(await viaConsumer(c, 'inventory.stocktake_posted', posted(shopId, documentId))).toEqual({ kind: 'done' });
     expect((await shopRow(shopId)).allocation_stocktake_id).toBe(documentId);
@@ -579,7 +579,7 @@ describe('chờ phân hàng: thoát khi nhận allocation_done có cause.documen
   });
 
   it('allocation_done có cause khi gian hàng còn chờ kiểm kê: không đổi gì (sự kiện thật chỉ phát trong giao dịch thoát chờ)', async () => {
-    const c = await createCompany({ optionalModules: ['channel'] });
+    const c = await createCompany({ optionalModules: [] });
     const { shopId, documentId } = await waitingShop(c);
     const before = await shopRow(shopId);
 
@@ -589,8 +589,8 @@ describe('chờ phân hàng: thoát khi nhận allocation_done có cause.documen
   });
 
   it('công ty khác (RLS) gửi cause trùng phiếu: không thoát chờ', async () => {
-    const c = await createCompany({ optionalModules: ['channel'] });
-    const other = await createCompany({ optionalModules: ['channel'] });
+    const c = await createCompany({ optionalModules: [] });
+    const other = await createCompany({ optionalModules: [] });
     const { shopId, documentId } = await waitingShop(c);
     await stocktakePosted(c, posted(shopId, documentId));
 
@@ -600,7 +600,7 @@ describe('chờ phân hàng: thoát khi nhận allocation_done có cause.documen
   });
 
   it('allocation_done tới trước khi lượt đơn mở xong: thoát chờ nhưng chưa xếp đồng bộ; lượt đơn mở xong mới xếp và đẩy tồn', async () => {
-    const c = await createCompany({ optionalModules: ['channel'] });
+    const c = await createCompany({ optionalModules: [] });
     const { shopId, documentId } = await waitingShop(c);
     await stocktakePosted(c, posted(shopId, documentId));
     await clearListingSyncJobs(shopId);
@@ -618,7 +618,7 @@ describe('chờ phân hàng: thoát khi nhận allocation_done có cause.documen
   });
 
   it('gian hàng không active nhận allocation_done: thoát chờ, không xếp đồng bộ', async () => {
-    const c = await createCompany({ optionalModules: ['channel'] });
+    const c = await createCompany({ optionalModules: [] });
     const { shopId, documentId } = await waitingShop(c);
     await stocktakePosted(c, posted(shopId, documentId));
     await testPool().query("update channel.shops set status = 'needs_reauth', open_orders_pulled_at = now() where id = $1", [shopId]);
@@ -647,7 +647,7 @@ describe('đẩy listing khi đang giữ tồn: 409 (§18.6.11)', () => {
   }
 
   it('chờ kiểm kê → shop_awaiting_stocktake; lượt đơn mở chưa xong → open_orders (dù đang chờ phân hàng); chờ phân hàng → allocation; thoát chờ → đẩy được', async () => {
-    const c = await createCompany({ optionalModules: ['channel'] });
+    const c = await createCompany({ optionalModules: [] });
     const { shopId, documentId } = await waitingShop(c);
     await mapCategory(c, shopId);
 
@@ -678,7 +678,7 @@ describe('đẩy listing khi đang giữ tồn: 409 (§18.6.11)', () => {
   });
 
   it('thứ tự kiểm: gian hàng không active thì shop_not_active trước shop_awaiting_stocktake', async () => {
-    const c = await createCompany({ optionalModules: ['channel'] });
+    const c = await createCompany({ optionalModules: [] });
     const { shopId } = await waitingShop(c);
     await testPool().query("update channel.shops set status = 'needs_reauth' where id = $1", [shopId]);
 
@@ -689,7 +689,7 @@ describe('đẩy listing khi đang giữ tồn: 409 (§18.6.11)', () => {
   });
 
   it('gian hàng chế độ push, lượt đơn mở chưa xong: 409 shop_awaiting_allocation, waitingFor open_orders', async () => {
-    const c = await createCompany({ optionalModules: ['channel'] });
+    const c = await createCompany({ optionalModules: [] });
     const { shopId, documentId } = await waitingShop(c);
     await stocktakePosted(c, posted(shopId, documentId));
     await allocated(c, documentId);
@@ -715,7 +715,7 @@ describe('POST /channel/shops/:id/opening-stocktake: lập lại phiếu kiểm 
     app().post(`/api/v1/channel/shops/${shopId}/opening-stocktake`).set({ Authorization: `Bearer ${token}` });
 
   it.each(['draft', 'pending'] as const)('phiếu hiện tại %s: 409 opening_stocktake_open kèm number, status', async (status) => {
-    const c = await createCompany({ optionalModules: ['channel'] });
+    const c = await createCompany({ optionalModules: [] });
     const { shopId, documentId, number } = await waitingShop(c);
     docStatus.set(documentId, status);
 
@@ -726,7 +726,7 @@ describe('POST /channel/shops/:id/opening-stocktake: lập lại phiếu kiểm 
   });
 
   it('phiếu bị từ chối: lập phiếu mới draft, giữ mốc tạm, ghi nhật ký; gọi lại thì 409 opening_stocktake_open; phiếu mới ghi sổ thì thoát chờ', async () => {
-    const c = await createCompany({ optionalModules: ['channel'] });
+    const c = await createCompany({ optionalModules: [] });
     const { shopId, documentId, number } = await waitingShop(c);
     docStatus.set(documentId, 'rejected');
     const before = await shopRow(shopId);
@@ -769,7 +769,7 @@ describe('POST /channel/shops/:id/opening-stocktake: lập lại phiếu kiểm 
     ['cancelled', 'cancelled' as const],
     ['không còn', null],
   ])('phiếu %s: gian hàng báo cancelled (#368), lập được phiếu mới', async (_name, status) => {
-    const c = await createCompany({ optionalModules: ['channel'] });
+    const c = await createCompany({ optionalModules: [] });
     const { shopId, documentId, number } = await waitingShop(c);
     if (status) docStatus.set(documentId, status);
     else docStatus.delete(documentId);
@@ -789,7 +789,7 @@ describe('POST /channel/shops/:id/opening-stocktake: lập lại phiếu kiểm 
   });
 
   it('phiếu đã ghi sổ (sự kiện chưa xử lý) hoặc openingStocktake null: 409 shop_not_awaiting_stocktake', async () => {
-    const c = await createCompany({ optionalModules: ['channel'] });
+    const c = await createCompany({ optionalModules: [] });
     const { shopId, documentId } = await waitingShop(c);
     docStatus.set(documentId, 'posted');
     expect((await recreate(c, shopId)).body.code).toBe('shop_not_awaiting_stocktake');
@@ -801,13 +801,13 @@ describe('POST /channel/shops/:id/opening-stocktake: lập lại phiếu kiểm 
   });
 
   it('gian hàng không active: 409 shop_not_active; thiếu quyền channel.shop.connect: 403; gian hàng công ty khác: 404', async () => {
-    const c = await createCompany({ optionalModules: ['channel'] });
+    const c = await createCompany({ optionalModules: [] });
     const { shopId, documentId } = await waitingShop(c);
     docStatus.set(documentId, 'rejected');
 
     const viewer = await addMember(c.companyId, await createCustomRole(c.companyId, ['channel.shop.view']));
     expect((await recreate(c, shopId, viewer.token)).status).toBe(403);
-    const other = await createCompany({ optionalModules: ['channel'] });
+    const other = await createCompany({ optionalModules: [] });
     expect((await recreate(other, shopId)).status).toBe(404);
 
     await testPool().query("update channel.shops set status = 'needs_reauth' where id = $1", [shopId]);

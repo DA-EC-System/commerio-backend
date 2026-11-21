@@ -11,6 +11,43 @@ export type SpecCategoryStatus = 'ok' | 'changed' | 'removed';
 /** Giá trị attribute trong spec: chuỗi (text, mã lựa chọn của select) hoặc mảng mã (multiselect). */
 export type SpecAttributeValue = string | string[];
 
+/** Nguồn của một attribute trong spec (#497, Documents/21 §18.5): đẩy (bản chép, lưu trước #497), đọc từ sàn khi ghép, người dùng sửa. */
+export type FieldSource = 'push' | 'match' | 'user';
+
+/**
+ * Bản sàn đang ghi ở lần đọc gần nhất khi ghép SKU (#497, cột `product_specs.remote_facts`): giá trị đã chuẩn hoá theo catalog
+ * (xuất xứ là mã ISO, mô tả chữ trơn, cân nặng g, kích thước mm theo SKU Commerio đã ghép). `shopName` là tên gian hàng lúc
+ * đọc, dùng khi gian hàng đã xoá.
+ */
+export interface RemoteSpecFacts {
+  shopName: string | null;
+  originCountry: string | null;
+  brand: string | null;
+  description: string | null;
+  sizeChartUrl: string | null;
+  imageUrls: string[];
+  variants: { variantId: string; weightG: number | null; lengthMm: number | null; widthMm: number | null; heightMm: number | null }[];
+}
+
+/** Hai giá trị attribute bằng nhau; chọn nhiều so như tập (đổi thứ tự không phải sửa). */
+const canonical = (v: SpecAttributeValue | undefined) => JSON.stringify(Array.isArray(v) ? [...v].sort() : (v ?? null));
+const sameValue = (a: SpecAttributeValue | undefined, b: SpecAttributeValue | undefined) => canonical(a) === canonical(b);
+
+/**
+ * Nguồn từng attribute sau khi người dùng lưu spec (#497): attribute giữ nguyên giá trị thì giữ nguồn cũ (thiếu thì nguồn cũ
+ * của cả spec), đổi hoặc mới thì `user`; attribute đã bỏ thì bỏ khỏi bảng nguồn.
+ */
+export function nextFieldSources(
+  before: { attributes: Record<string, SpecAttributeValue>; fieldSources: Record<string, FieldSource>; source: 'push' | 'match' } | undefined,
+  attributes: Record<string, SpecAttributeValue>,
+): Record<string, FieldSource> {
+  const out: Record<string, FieldSource> = {};
+  for (const code of Object.keys(attributes)) {
+    out[code] = before && sameValue(before.attributes[code], attributes[code]) ? (before.fieldSources[code] ?? before.source) : 'user';
+  }
+  return out;
+}
+
 export interface AttributeOption {
   id: string;
   label: string;
@@ -41,6 +78,21 @@ export interface PlatformAttribute {
 
 /** Trục phân loại tự đặt, không ánh xạ sang sales attribute nào của sàn. */
 export const CUSTOM_AXIS = '__custom';
+
+/** Loại thuộc tính phân loại của catalog (`attributes.platform_kind`) dùng để ghép trục với sales attribute của sàn (#448). */
+export type PlatformKind = 'color' | 'size' | 'volume' | 'flavor';
+
+/**
+ * Khả năng khai biến thể của một category (#448, Documents/21 §18.8.3): số trục tối đa, sàn có nhận tên trục tự đặt không,
+ * sales attribute bắt buộc phải có trong `axisMap`.
+ */
+export interface VariantCapabilities {
+  maxAxes: number;
+  customAxisName: boolean;
+  salesRequired: string[];
+  /** Thêm phân loại vào sản phẩm sàn đã có (`addVariants`, Documents/21 §18.8.4) */
+  addVariant: boolean;
+}
 
 /**
  * Chuẩn hoá đường dẫn để tìm không dấu: bỏ dấu (NFD), đổi `đ`/`Đ` → `d` (NFD không tách `đ`, G2.14), chữ thường, gộp khoảng
@@ -128,7 +180,16 @@ export function remoteSpecAttributes(
   return out;
 }
 
-export type MissingReason = 'required' | 'required_when' | 'axis_unmapped' | 'category_changed' | 'category_removed';
+export const MISSING_REASONS = [
+  'required',
+  'required_when',
+  'axis_unmapped',
+  'category_changed',
+  'category_removed',
+  'sales_required',
+  'axis_shape',
+] as const;
+export type MissingReason = (typeof MISSING_REASONS)[number];
 export interface MissingItem {
   code: string;
   label: string;
@@ -145,11 +206,10 @@ export interface SpecMissingInput {
   attributes: readonly PlatformAttribute[] | null;
   /** Trục phân loại của sản phẩm (attributeId, tên trục). */
   axes: readonly { attributeId: string; name: string }[];
-  /**
-   * Giá trị lúc đẩy sẽ tự điền khi spec không có: hồ sơ công ty (`tier = 'company'`), xuất xứ, thương hiệu của catalog
-   * (`tier = 'product'`; Lazada `brand` trống thì "No Brand"). Có giá trị dự phòng thì attribute không tính là thiếu.
-   */
-  fallbacks?: Readonly<Record<string, string | null | undefined>>;
+  /** Giá trị đã tính từ mọi nguồn (`resolved`, #509): có giá trị thì attribute không tính là thiếu. */
+  fallbacks?: Readonly<Record<string, SpecAttributeValue | null | undefined>>;
+  /** Khả năng khai biến thể của category (#448); không có (null) thì không xét `sales_required`, `axis_shape`, `__custom` luôn hợp lệ. */
+  caps?: VariantCapabilities | null;
 }
 
 const hasValue = (v: SpecAttributeValue | string | null | undefined): boolean =>
@@ -166,7 +226,7 @@ const missingLabel = (a: Pick<PlatformAttribute, 'label' | 'tier'>) => (a.tier =
  * chưa ánh xạ hoặc trỏ tới sales attribute leaf không còn.
  */
 export function specMissing(input: SpecMissingInput): MissingItem[] {
-  const { spec, attributes, axes, fallbacks = {} } = input;
+  const { spec, attributes, axes, fallbacks = {}, caps = null } = input;
   const out: MissingItem[] = [];
   if (spec.categoryStatus === 'changed') {
     out.push({ code: CATEGORY_CODE, label: 'Category trên sàn đã đổi, chọn lại category', reason: 'category_changed' });
@@ -187,8 +247,20 @@ export function specMissing(input: SpecMissingInput): MissingItem[] {
   const salesCodes = attributes ? new Set(attributes.filter((a) => a.kind === 'sales').map((a) => a.code)) : null;
   for (const axis of axes) {
     const target = spec.axisMap[axis.attributeId];
-    const mapped = target != null && (target === CUSTOM_AXIS || salesCodes === null || salesCodes.has(target));
+    const customOk = target === CUSTOM_AXIS && (caps === null || caps.customAxisName);
+    const mapped = target != null && (customOk || (target !== CUSTOM_AXIS && (salesCodes === null || salesCodes.has(target))));
     if (!mapped) out.push({ code: axis.attributeId, label: axis.name, reason: 'axis_unmapped' });
+  }
+  if (caps) {
+    const used = new Set(Object.values(spec.axisMap));
+    for (const code of caps.salesRequired) {
+      if (used.has(code)) continue;
+      const label = attributes?.find((a) => a.code === code)?.label ?? code;
+      out.push({ code, label, reason: 'sales_required' });
+    }
+    if (axes.length > caps.maxAxes) {
+      out.push({ code: 'axes', label: `Sản phẩm có ${axes.length} trục, category này nhận tối đa ${caps.maxAxes}`, reason: 'axis_shape' });
+    }
   }
   return out;
 }

@@ -20,6 +20,7 @@ import {
   type TokenSet,
   type ContentRevision,
 } from './common.ts';
+import { TIKTOK_ATTRIBUTE_LABELS, TIKTOK_SPEC_MAPPINGS } from './tiktok-spec-mappings.ts';
 import { logger } from '../../../../../shared/logger.ts';
 import { RESPONSIBLE_ATTRS } from './tiktok-categories.ts';
 import { tiktokListingMethods } from './tiktok-listing.ts';
@@ -31,6 +32,7 @@ import {
 } from './tiktok-client.ts';
 import { tiktokOrderMethods, type TiktokOrderDeps } from './tiktok-orders.ts';
 import { tiktokReturnMethods } from './tiktok-returns.ts';
+import { tiktokDeleteMethods } from './tiktok-delete.ts';
 
 export type { TiktokClient, TiktokConfig } from './tiktok-client.ts';
 
@@ -529,10 +531,16 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
     categoriesNeedToken: true,
     // Recommend Category: tiêu đề VN 25–255 ký tự, ngắn hơn sàn từ chối (12052051), app kiểm trước khi gọi (#400 lát 9).
     suggestionRules: { minNameLength: 25 },
+    // Sales attribute chuẩn của TikTok: 100000 Màu sắc, 100007 / 100001 Kích cỡ, 100089 Dung tích, 100092 Hương vị; sản phẩm tối
+    // đa 3 trục, tên trục tự đặt được (Documents#214 mục 3).
+    standardSalesAttributes: { color: ['100000'], size: ['100007', '100001'], volume: ['100089'], flavor: ['100092'] },
+    variantCapabilities: () => ({ maxAxes: 3, customAxisName: true, salesRequired: [], addVariant: true }),
     // Get Categories trả `permission_statuses` theo gian hàng mang token: việc đẩy ghi `shop_category_permissions` (#400 A17).
     categoryPermissionsPerShop: true,
     responsibleFields: RESPONSIBLE_ATTRS,
     productFields: { '100149': 'originCountry' },
+    defaultSpecMappings: TIKTOK_SPEC_MAPPINGS,
+    defaultAttributeLabels: TIKTOK_ATTRIBUTE_LABELS,
     togglesByProduct: true,
     connectMethods() {
       // OAuth cần `service_id` cho link uỷ quyền; dán token chỉ cần key, secret.
@@ -582,7 +590,12 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
     // Tồn, giá, ẩn hiện (#226), danh mục và đăng sản phẩm (#219): `tiktok-listing.ts`.
     ...tiktokListingMethods(client, { findSku }),
     ...tiktokReturnMethods(client),
+    // Ảnh minh chứng khi từ chối đi Upload Product Image (`use_case` DESCRIPTION_IMAGE) rồi vào `images` (#476). Sàn nhận
+    // cả WEBP, HEIC, BMP; giữ JPG, PNG như Lazada để một luật cho ô ảnh ở FE.
+    returnImageTypes: ['image/jpeg', 'image/png'],
     ...tiktokOrderMethods(client, deps),
+    // Xoá sản phẩm sàn cho gom lại dữ liệu cũ (#295).
+    ...tiktokDeleteMethods(client),
   };
 }
 

@@ -24,9 +24,9 @@ const variant = (): ListingVariant => {
     productId: randomUUID(),
     productName: 'Áo thun',
     sku: `CMR-${randomUUID().slice(0, 8)}`,
-    categoryId: randomUUID(),
     attributesLabel: 'Đen / M',
     productCode: 'SP-TEST',
+    groupId: 'GROUP-TEST',
     attributes: [],
     archived: false,
     businessStatus: 'selling',
@@ -89,7 +89,7 @@ const auth = (r: request.Test) => r.set('Authorization', `Bearer ${company.ceo.t
 const leaf = String(randomInt(700_000_000, 799_999_999));
 
 beforeAll(async () => {
-  company = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany({ optionalModules: [] });
   const res = await auth(app().post('/api/v1/channel/shops/lazada/token')).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
   shopId = res.body.shop.id;
   await activateShop(shopId);

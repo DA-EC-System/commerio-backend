@@ -6,7 +6,7 @@ import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
 import { createOrder } from '../../helpers/sales.ts';
 import { createSupplier, orderedRequest, pur } from '../purchasing/helpers.ts';
-import { api, archiveSku, createAttribute, createCategory, createProduct, uniq, valueId } from './helpers.ts';
+import { api, archiveSku, createAttribute, createGroup, createProduct, uniq, valueId } from './helpers.ts';
 
 // Sửa hàng loạt có gợi ý (#242, Documents/21 §17.5, 27 US-SP-04).
 let companyId: string;
@@ -24,12 +24,12 @@ beforeAll(async () => {
 const SUGGEST = { marginCoefficient: 1.4, priceRounding: 1000, reorderLeadDays: 7, reorderSafetyQty: 2, reorderDefaultQty: 5 };
 const NO_SUGGEST = { marginCoefficient: null, priceRounding: null, reorderLeadDays: null, reorderSafetyQty: null, reorderDefaultQty: null };
 
-/** Danh mục có cấu hình gợi ý (hoặc không), một sản phẩm một SKU không thuộc tính. */
+/** Nhóm hàng có cấu hình gợi ý (hoặc không), một sản phẩm một SKU không thuộc tính. Công ty chưa đặt gợi ý mặc định. */
 async function setup(suggest: object | null = SUGGEST) {
-  const category = await api(ceo).post('/categories', { name: uniq('Áo'), skuPattern: 'BK-{SEQ:4}', ...(suggest && { suggest }) });
-  expect(category.status, JSON.stringify(category.body)).toBe(201);
-  const product = await createProduct(ceo, { name: uniq('Áo'), categoryId: category.body.id, variants: [[]] });
-  return { category: category.body, product, variantId: product.variants[0]!.id };
+  const group = await api(ceo).post('/groups', { name: uniq('Áo'), ...(suggest && { suggest }) });
+  expect(group.status, JSON.stringify(group.body)).toBe(201);
+  const product = await createProduct(ceo, { name: uniq('Áo'), groupId: group.body.id, variants: [[]] });
+  return { group: group.body, product, variantId: product.variants[0]!.id };
 }
 
 const bulk = (token: string) => ({
@@ -53,16 +53,15 @@ const eventsOf = (variantId: string) =>
   testPool().query("select payload from core.outbox_messages where type = 'catalog.variant_price_changed' and key = $1 order by id", [variantId]);
 const variantRow = async (id: string) => (await testPool().query('select * from product.product_variants where id = $1', [id])).rows[0];
 
-describe('cấu hình gợi ý của danh mục', () => {
+describe('cấu hình gợi ý của nhóm hàng', () => {
   it('tạo kèm cấu hình, trả lại; sửa không gửi `suggest` thì giữ; gửi thì thay cả năm giá trị', async () => {
-    const { category } = await setup();
-    expect(category.suggest).toEqual(SUGGEST);
-    const keep = await api(ceo).put(`/categories/${category.id}`, { name: category.name, skuPattern: 'BK-{SEQ:4}', version: category.version });
+    const { group } = await setup();
+    expect(group.suggest).toEqual(SUGGEST);
+    const keep = await api(ceo).put(`/groups/${group.id}`, { name: group.name, version: group.version });
     expect(keep.status).toBe(200);
     expect(keep.body.suggest).toEqual(SUGGEST);
-    const clear = await api(ceo).put(`/categories/${category.id}`, {
-      name: category.name,
-      skuPattern: 'BK-{SEQ:4}',
+    const clear = await api(ceo).put(`/groups/${group.id}`, {
+      name: group.name,
       version: keep.body.version,
       suggest: NO_SUGGEST,
     });
@@ -70,10 +69,10 @@ describe('cấu hình gợi ý của danh mục', () => {
   });
 
   it('tạo không kèm cấu hình thì năm giá trị là null; hệ số dưới 1 hoặc quá hai chữ số thập phân bị từ chối', async () => {
-    const { category } = await setup(null);
-    expect(category.suggest).toEqual(NO_SUGGEST);
+    const { group } = await setup(null);
+    expect(group.suggest).toEqual(NO_SUGGEST);
     for (const marginCoefficient of [0.9, 1.234]) {
-      const bad = await api(ceo).post('/categories', { name: uniq('Xấu'), skuPattern: 'X-{SEQ}', suggest: { ...SUGGEST, marginCoefficient } });
+      const bad = await api(ceo).post('/groups', { name: uniq('Xấu'), suggest: { ...SUGGEST, marginCoefficient } });
       expect(bad.status).toBe(422);
     }
   });
@@ -122,7 +121,7 @@ describe('GET /variants/bulk-edit', () => {
     expect(row.suggestions.targetNetPrice).toBeUndefined();
   });
 
-  it('AC3: ngưỡng tồn = bán/ngày × ngày chờ + tồn an toàn; chưa bán thì mặc định danh mục; đơn huỷ không tính', async () => {
+  it('AC3: ngưỡng tồn = bán/ngày × ngày chờ + tồn an toàn; chưa bán thì mặc định của nhóm; đơn huỷ không tính', async () => {
     const sold = await setup();
     const fresh = await setup();
     await createOrder(companyId, { lines: [{ variantId: sold.variantId, quantity: 30, unitPrice: 100_000 }] });
@@ -134,7 +133,7 @@ describe('GET /variants/bulk-edit', () => {
     expect(b.suggestions.minQty).toMatchObject({ value: 5 });
   });
 
-  it('danh mục chưa đặt cấu hình thì không gợi ý giá, ngưỡng tồn dù đã có giá nhập', async () => {
+  it('nhóm và công ty đều chưa đặt cấu hình thì không gợi ý giá, ngưỡng tồn dù đã có giá nhập', async () => {
     const { product, variantId } = await setup(null);
     const supplier = await createSupplier(ceo, { name: uniq('NCC') });
     await orderedRequest({ requester: kho, ceo }, supplier.id, [{ variantId, quantity: 10, unitCost: 100_000 }]);
@@ -143,12 +142,46 @@ describe('GET /variants/bulk-edit', () => {
     expect(row.source!.lastCost).toBe(100_000);
   });
 
+  // AC-6 (#447): hệ số lãi, bước làm tròn, số ngày chờ... lấy ở nhóm hàng, nhóm để trống thì lấy ở cài đặt công ty. Dùng công ty
+  // riêng vì đặt gợi ý mặc định của công ty sẽ đổi kết quả của các ca "chưa đặt cấu hình" ở trên.
+  it('AC-6: SKU của nhóm có hệ số 1,2 gợi ý theo 1,2 "theo nhóm <tên>"; nhóm để trống gợi ý theo hệ số 2 của công ty "theo công ty"', async () => {
+    const own = await createCompany({ optionalModules: ['purchasing'] });
+    const owner = own.ceo.token;
+    const warehouse = (await addMember(own.companyId, 'warehouse')).token;
+    const settings = (await api(owner).get('/settings')).body as { skuPattern: string; version: number };
+    const company = await api(owner).put('/settings', { skuPattern: settings.skuPattern, suggest: { ...NO_SUGGEST, marginCoefficient: 2 }, version: settings.version });
+    expect(company.status, JSON.stringify(company.body)).toBe(200);
+
+    const groups = (await api(owner).get('/groups')).body.items as { id: string; name: string; version: number }[];
+    const electronics = groups.find((g) => g.name === 'Âm thanh, TV & máy ảnh')!;
+    const blank = groups.find((g) => g.name === 'Khác')!;
+    const set = await api(owner).put(`/groups/${electronics.id}`, { suggest: { ...NO_SUGGEST, marginCoefficient: 1.2 }, version: electronics.version });
+    expect(set.status, JSON.stringify(set.body)).toBe(200);
+
+    const inGroup = await createProduct(owner, { name: uniq('Tai nghe'), groupId: electronics.id, variants: [[]] });
+    const inBlank = await createProduct(owner, { name: uniq('Đồ lặt vặt'), groupId: blank.id, variants: [[]] });
+    const supplier = await createSupplier(owner, { name: uniq('NCC') });
+    await orderedRequest({ requester: warehouse, ceo: owner }, supplier.id, [
+      { variantId: inGroup.variants[0]!.id, quantity: 10, unitCost: 100_000 },
+      { variantId: inBlank.variants[0]!.id, quantity: 10, unitCost: 100_000 },
+    ]);
+
+    const list = await bulk(owner).list();
+    expect(list.status).toBe(200);
+    const byGroup = rowOf(list, inGroup.variants[0]!.id).suggestions.targetNetPrice!;
+    expect(byGroup.value).toBe(120_000);
+    expect(byGroup.basis).toMatch(new RegExp(`theo nhóm ${electronics.name}$`));
+    const byCompany = rowOf(list, inBlank.variants[0]!.id).suggestions.targetNetPrice!;
+    expect(byCompany.value).toBe(200_000);
+    expect(byCompany.basis).toMatch(/theo công ty$/);
+  });
+
   it('AC4: SKU còn trống chép cân nặng, kích thước, giá từ SKU anh em đã có số; ô đã đủ thì không gợi ý', async () => {
     const color = await createAttribute(ceo, uniq('Màu'), ['Đen', 'Trắng']);
-    const category = await createCategory(ceo, uniq('Quần'), 'Q-{SEQ:4}-{VAL}');
+    const group = await createGroup(ceo, uniq('Quần'), 'Q-{SEQ:4}-{VAL}');
     const pants = await createProduct(ceo, {
       name: uniq('Quần'),
-      categoryId: category.id,
+      groupId: group.id,
       variants: [[valueId(color, 'Đen')], [valueId(color, 'Trắng')]],
     });
     const [first, second] = pants.variants;
@@ -177,7 +210,7 @@ describe('GET /variants/bulk-edit', () => {
     expect(rowOf(res, first!.id).suggestions).toEqual({});
   });
 
-  it('lọc incomplete, danh mục, từ khoá có ký tự LIKE; SKU của sản phẩm đã lưu trữ không có; phân trang; công ty khác không thấy', async () => {
+  it('lọc incomplete, nhóm hàng, từ khoá có ký tự LIKE; SKU của sản phẩm đã lưu trữ không có; phân trang; công ty khác không thấy', async () => {
     const full = await setup(null);
     const empty = await setup(null);
     await api(ceo).patch(`/products/${full.product.id}/variants/${full.variantId}`, {
@@ -188,17 +221,17 @@ describe('GET /variants/bulk-edit', () => {
       widthMm: 100,
       heightMm: 100,
     });
-    const onlyEmpty = await bulk(ceo).list(`?categoryId=${empty.category.id}&incomplete=true`);
+    const onlyEmpty = await bulk(ceo).list(`?groupId=${empty.group.id}&incomplete=true`);
     expect(onlyEmpty.body.items.map((i: { variantId: string }) => i.variantId)).toEqual([empty.variantId]);
-    expect((await bulk(ceo).list(`?categoryId=${full.category.id}&incomplete=true`)).body.items).toEqual([]);
-    expect((await bulk(ceo).list(`?categoryId=${full.category.id}`)).body.total).toBe(1);
+    expect((await bulk(ceo).list(`?groupId=${full.group.id}&incomplete=true`)).body.items).toEqual([]);
+    expect((await bulk(ceo).list(`?groupId=${full.group.id}`)).body.total).toBe(1);
     expect((await bulk(ceo).list('?search=%25')).body.total).toBe(0); // `%` là chữ, không phải mẫu LIKE
     await archiveSku(ceo, empty.product.id, empty.variantId);
-    expect((await bulk(ceo).list(`?categoryId=${empty.category.id}`)).body.items).toEqual([]);
+    expect((await bulk(ceo).list(`?groupId=${empty.group.id}`)).body.items).toEqual([]);
     expect((await bulk(ceo).list('?page=1&pageSize=1')).body).toMatchObject({ page: 1, pageSize: 1 });
     expect((await bulk(ceo).list('?pageSize=201')).status).toBe(422);
     const other = await createCompany();
-    expect((await bulk(other.ceo.token).list(`?categoryId=${full.category.id}`)).body.items).toEqual([]);
+    expect((await bulk(other.ceo.token).list(`?groupId=${full.group.id}`)).body.items).toEqual([]);
   });
 
   it('cần `catalog.product.manage`: Kho nhận 403, không đăng nhập 401', async () => {

@@ -8,10 +8,10 @@ Mọi test của repo nằm ở đây. CI chạy `npm test` (`vitest run`), Vite
 |---|---|---|
 | `unit/` | Một hàm, một lớp, không I/O thật | Không DB, không mạng |
 | `api/` | Gọi HTTP vào `createApp()` bằng Supertest, không mở cổng thật | Không DB |
-| `integration/` | Repository, transaction, migration, RLS trên PostgreSQL thật | Docker đang chạy. `global-setup.ts` dựng một container `pgvector/pgvector:pg18` cho cả lượt, chạy mọi migration trong `db/migrations`; `setup.ts` đặt `DATABASE_URL` trước khi file test import code. Dữ liệu dùng chung giữa các file: mỗi test tự tạo công ty, email riêng (vd `randomUUID()`), không giả định bảng trống |
+| `integration/` | Repository, transaction, migration, RLS trên PostgreSQL thật | Docker đang chạy. `global-setup.ts` dựng một container `pgvector/pgvector:pg17` (cùng bản với staging) cho cả lượt, chạy mọi migration trong `db/migrations`; `setup.ts` đặt `DATABASE_URL` trước khi file test import code. Dữ liệu dùng chung giữa các file: mỗi test tự tạo công ty, email riêng (vd `randomUUID()`), không giả định bảng trống |
 | `blackbox/` | Gọi HTTP vào **server đang chạy** (máy dev, CI, staging), không dựng app trong tiến trình test | Không chạy trong `npm test`. Xem mục Hộp đen |
 
-Integration chạy migration và test bằng role `commerio_migrator` (`NOSUPERUSER CREATEROLE`, chủ các bảng) giống user `postgres` của Supabase, riêng extension `vector` (cần superuser) do `global-setup.ts` bật trước; `TEST_PG_IMAGE=pgvector/pgvector:pg17` để chạy trên PostgreSQL 17 như staging.
+Integration chạy migration và test bằng role `commerio_migrator` (`NOSUPERUSER CREATEROLE`, chủ các bảng) giống user `postgres` của Supabase, riêng extension `vector` (cần superuser) do `global-setup.ts` bật trước; đổi ảnh bằng `TEST_PG_IMAGE` (vd `pgvector/pgvector:pg18`).
 
 ### Helper dùng chung (`integration/helpers/`)
 
@@ -19,11 +19,11 @@ Integration chạy migration và test bằng role `commerio_migrator` (`NOSUPERU
 |---|---|
 | `db.ts` | `testPool()`: pool tới DB test bằng role chủ bảng (bỏ qua RLS), `setup.ts` tự đóng |
 | `http.ts` | `testApp()`, `login(email)`, `selectCompany(token, companyId)`, `refreshCookie(res)`, `PASSWORD` |
-| `company.ts` | `createCompany({ optionalModules? })` → `{ companyId, ceo: { email, token } }` (token đã chọn công ty); `addMember(companyId, 'admin' \| 'sale' \| 'warehouse' \| roleId)`; `createCustomRole(companyId, permissions)`; `registerCompany`, `registerBody`, `uniqueEmail` |
+| `company.ts` | `createCompany({ optionalModules? })` → `{ companyId, ceo: { email, token } }` (token đã chọn công ty; đăng ký qua API rồi đặt đúng bộ phân hệ tuỳ chọn trong DB, mặc định `purchasing`, `report`; Kênh bán là lõi từ #459); `uniqueTaxCode()` (mã số thuế unique trong CSDL, đăng ký nào cũng phải dùng mã riêng); `addMember(companyId, 'admin' \| 'sale' \| 'warehouse' \| roleId)`; `createCustomRole(companyId, permissions)`; `registerCompany`, `registerBody`, `uniqueEmail` |
 | `rls.ts` | `asCompany(companyId, fn)`: chạy như request trong công ty (role `commerio_app`), rồi rollback |
 | `locks.ts` | `raceBehindLock(lock, blocked, start)`: dựng chạy đua tất định. Mở giao dịch chạy `lock(holder)` (vd `select … for update`, chèn chưa commit), gửi các request đua trong `start`, chờ tới khi đúng `blocked` phiên bị chặn sau giao dịch đó (đếm cả phiên xếp hàng sau phiên bị chặn), rồi commit và trả kết quả của `start` |
 | `state.ts` | `lockCompany`, `suspendMembership`, `setModuleEnabled`, `revokePermission` (chỉ cho vai trò tuỳ biến) |
-| `catalog.ts` | `createVariant(companyId, { sku?, categoryName? })` → `{ variantId, productId, categoryId, sku }` (mỗi lần một danh mục và sản phẩm mới, ghi trong `withCompany`; không truyền `categoryName` trùng trong một công ty) |
+| `catalog.ts` | `createVariant(companyId, { sku?, groupName? })` → `{ variantId, productId, groupId, sku }` (mỗi lần một nhóm hàng và sản phẩm mới, ghi trong `withCompany`; không truyền `groupName` trùng trong một công ty, kể cả 27 danh mục chuẩn như "Khác") |
 | `sales.ts` | `createOrder(companyId, { lines: { variantId, quantity, unitPrice }[], paymentMethod?, source? })` → `{ orderId, code, total }` (ghi bảng sales trong `withCompany`, chép SKU, tên sản phẩm từ biến thể; đơn tay mặc định `prepaid`, đơn sàn không có phương thức; không tạo `payment.order_payments`) |
 
 Helper đóng băng trong lúc các nhánh làm song song; helper riêng của một module đặt ở `integration/<lớn>/<con>/helpers.ts`.

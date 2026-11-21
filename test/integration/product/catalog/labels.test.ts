@@ -6,7 +6,7 @@ import { variantReadiness } from '#src/modules/product/index.ts';
 import { withCompany } from '#src/shared/db/client.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
-import { type AttributeBody, api, archiveSku, businessStatus, createAttribute, createCategory, createProduct, uniq, valueId } from './helpers.ts';
+import { type AttributeBody, api, archiveSku, businessStatus, createAttribute, createGroup, createProduct, uniq, valueId } from './helpers.ts';
 
 // Ba lớp nhãn của SKU và nhãn cha suy từ con (#204 PR 3, Documents/21 §17.1, 25 §5.1–§5.4; spec mục 5.3; D7, D8).
 let companyId: string;
@@ -24,7 +24,7 @@ const newShop = async () => {
 };
 
 beforeAll(async () => {
-  const company = await createCompany({ optionalModules: ['channel'] });
+  const company = await createCompany({ optionalModules: [] });
   companyId = company.companyId;
   token = company.ceo.token;
   color = await createAttribute(token, 'Màu', ['Đen', 'Trắng', 'Xám', 'Nâu', 'Xanh', 'Đỏ']);
@@ -32,11 +32,11 @@ beforeAll(async () => {
   shopB = await newShop();
 });
 
-/** Sản phẩm `n` SKU (mỗi SKU một màu), danh mục riêng. */
+/** Sản phẩm `n` SKU (mỗi SKU một màu), nhóm hàng riêng. */
 async function product(n = 1, name = uniq('SP')) {
-  const category = await createCategory(token, uniq('Nhãn'), 'NH-{SEQ}-{VAL}');
+  const group = await createGroup(token, uniq('Nhãn'), 'NH-{SEQ}-{VAL}');
   const colors = ['Đen', 'Trắng', 'Xám', 'Nâu', 'Xanh', 'Đỏ'].slice(0, n);
-  return createProduct(token, { name, categoryId: category.id, variants: colors.map((c) => [valueId(color, c)]) });
+  return createProduct(token, { name, groupId: group.id, variants: colors.map((c) => [valueId(color, c)]) });
 }
 
 const listing = (variantId: string, status: string, shop = shopA) =>
@@ -207,10 +207,10 @@ describe('số câu truy vấn của trang danh sách (Review Focus 2)', () => {
   afterEach(() => vi.restoreAllMocks());
 
   it('trang 2 dòng và trang 20 dòng dùng cùng số câu', async () => {
-    const own = await createCompany({ optionalModules: ['channel'] });
-    const category = await createCategory(own.ceo.token, 'Đếm', 'DC-{SEQ}');
+    const own = await createCompany({ optionalModules: [] });
+    const group = await createGroup(own.ceo.token, 'Đếm', 'DC-{SEQ}');
     for (let i = 0; i < 20; i++) {
-      await createProduct(own.ceo.token, { name: `Đếm ${i}`, categoryId: category.id, variants: [[]] });
+      await createProduct(own.ceo.token, { name: `Đếm ${i}`, groupId: group.id, variants: [[]] });
     }
     const count = async (pageSize: number) => {
       const spy = vi.spyOn(pg.Client.prototype, 'query');
@@ -293,5 +293,59 @@ describe('độ hoàn thiện: ảnh phân loại (#340, AC-12)', () => {
     await archiveSku(token, p.id, p.variants[0]!.id);
     await image(p.id, 'Đen');
     expect((await everywhere(p)).incompleteCount).toEqual([0, 0]);
+  });
+});
+
+describe('lọc readiness (Documents/21 §17.2, lọc "Chờ hoàn thiện")', () => {
+  const ids = async (query: string) => {
+    const res = await api(token).get(`/products?pageSize=100${query}`);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    return res.body as { items: { id: string; incompleteCount: number }[]; total: number };
+  };
+
+  it('incomplete: có SKU chưa lưu trữ thiếu; ready: mọi SKU chưa lưu trữ đủ; SKU lưu trữ không tính', async () => {
+    const done = await product(2);
+    await withImage(done.id);
+    for (const v of done.variants) await complete(done.id, v.id);
+    const half = await product(2);
+    await withImage(half.id);
+    await complete(half.id, half.variants[0]!.id);
+    const archivedGap = await product(2);
+    await withImage(archivedGap.id);
+    await complete(archivedGap.id, archivedGap.variants[0]!.id);
+    await archiveSku(token, archivedGap.id, archivedGap.variants[1]!.id);
+    const noImage = await product(1);
+    await complete(noImage.id, noImage.variants[0]!.id);
+
+    const incomplete = (await ids('&readiness=incomplete')).items.map((p) => p.id);
+    const ready = (await ids('&readiness=ready')).items.map((p) => p.id);
+    expect(incomplete).toEqual(expect.arrayContaining([half.id, noImage.id]));
+    expect(incomplete).not.toContain(done.id);
+    expect(incomplete).not.toContain(archivedGap.id);
+    expect(ready).toEqual(expect.arrayContaining([done.id, archivedGap.id]));
+    expect(ready).not.toContain(half.id);
+  });
+
+  it('thông số bắt buộc của mẫu nhóm còn trống làm sản phẩm incomplete', async () => {
+    const groups = (await api(token).get('/groups')).body.items as { id: string; requiredCount: number }[];
+    const withRequired = groups.find((g) => g.requiredCount > 0)!;
+    const p = await createProduct(token, { name: uniq('Thông số'), groupId: withRequired.id, variants: [[valueId(color, 'Đen')]] });
+    await withImage(p.id);
+    await complete(p.id, p.variants[0]!.id);
+    expect((await ids('&readiness=incomplete')).items.map((x) => x.id)).toContain(p.id);
+  });
+
+  it('bộ lọc khớp incompleteCount của từng dòng trên mọi sản phẩm của công ty; giá trị lạ 422', async () => {
+    const all = await ids('');
+    expect(all.total).toBeLessThanOrEqual(100);
+    const incomplete = new Set((await ids('&readiness=incomplete')).items.map((p) => p.id));
+    const ready = new Set((await ids('&readiness=ready')).items.map((p) => p.id));
+    for (const p of all.items) {
+      expect([p.id, incomplete.has(p.id)]).toEqual([p.id, p.incompleteCount > 0]);
+      expect([p.id, ready.has(p.id)]).toEqual([p.id, p.incompleteCount === 0]);
+    }
+    const bad = await api(token).get('/products?readiness=done');
+    expect(bad.status).toBe(422);
+    expect(bad.body.errors.readiness).toBeTruthy();
   });
 });

@@ -1,7 +1,7 @@
 // Spec sàn của sản phẩm cha (#400, Documents/21 §18.5, Documents/19 mục 3.3). Chạy trong `withCompany` của bên gọi (RLS).
-import { and, eq, inArray, max, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, lt, max, or, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
-import type { CategoryPermission } from '../domain/product-spec.ts';
+import type { CategoryPermission, RemoteSpecFacts } from '../domain/product-spec.ts';
 import { type Marketplace, productSpecs, shopCategoryPermissions } from './schema.ts';
 
 export type ProductSpecRow = typeof productSpecs.$inferSelect;
@@ -28,11 +28,13 @@ export async function specsOf(productIds: readonly string[], platform: Marketpla
   return new Map(rows.map((r) => [r.productId, r]));
 }
 
-export type SpecValues = Pick<ProductSpecRow, 'externalCategoryId' | 'attributes' | 'axisMap' | 'valueMap'>;
+export type SpecValues = Pick<ProductSpecRow, 'externalCategoryId' | 'attributes' | 'axisMap' | 'valueMap' | 'fieldSources'>;
 
 /** Tạo spec (`PUT` lần đầu: `version = 1`; bản chép: `version = 0`). Đã có dòng thì `undefined`. */
 export async function insertSpec(
-  values: SpecValues & { companyId: string; productId: string; platform: Marketplace; source: ProductSpecRow['source']; version: number },
+  values: SpecValues & { companyId: string; productId: string; platform: Marketplace; source: ProductSpecRow['source']; version: number } & Partial<
+      Pick<ProductSpecRow, 'remoteFacts' | 'remoteReadAt' | 'remoteShopId'>
+    >,
 ): Promise<ProductSpecRow | undefined> {
   const [row] = await getDb()
     .insert(productSpecs)
@@ -56,6 +58,30 @@ export async function updateSpec(
     .where(and(eq(productSpecs.productId, productId), eq(productSpecs.platform, platform), eq(productSpecs.version, version)))
     .returning();
   return row;
+}
+
+/**
+ * Ghi bản sàn đang ghi (#497) khi bản này đọc sau bản đã lưu: câu UPDATE có điều kiện `remote_read_at` khoá dòng spec, hai gian
+ * hàng ghép cùng lúc thì câu sau chờ câu trước commit rồi xét lại điều kiện (READ COMMITTED), nên bản đọc sau luôn thắng, bản
+ * cũ hơn không đè. Không tăng `version` (không phải dữ liệu người dùng sửa). Trả `true` khi đã ghi.
+ */
+export async function recordRemoteFacts(
+  productId: string,
+  platform: Marketplace,
+  remote: { facts: RemoteSpecFacts; readAt: Date; shopId: string },
+): Promise<boolean> {
+  const rows = await getDb()
+    .update(productSpecs)
+    .set({ remoteFacts: remote.facts, remoteReadAt: remote.readAt, remoteShopId: remote.shopId })
+    .where(
+      and(
+        eq(productSpecs.productId, productId),
+        eq(productSpecs.platform, platform),
+        or(isNull(productSpecs.remoteReadAt), lt(productSpecs.remoteReadAt, remote.readAt)),
+      ),
+    )
+    .returning({ id: productSpecs.id });
+  return rows.length > 0;
 }
 
 /** Ghi category của sàn đọc được lên spec (đồng bộ thấy category đổi): chỉ đổi trạng thái, không tăng `version`. */
@@ -116,4 +142,12 @@ export async function upsertPermissions(
     select ${companyId}::uuid, ${shopId}::uuid, t.c, t.s, ${checkedAt.toISOString()}::timestamptz
     from jsonb_to_recordset(${JSON.stringify(items.map((i) => ({ c: i.externalCategoryId, s: i.status })))}::jsonb) as t(c text, s text)
     on conflict (shop_id, external_category_id) do update set status = excluded.status, checked_at = excluded.checked_at`);
+}
+
+/** Mọi spec của công ty trên một sàn, chỉ cột cần cho nguồn gợi ý category (#448). Gọi trong `withCompany`. */
+export async function specUsesOf(platform: Marketplace): Promise<{ productId: string; externalCategoryId: string; updatedAt: Date }[]> {
+  return getDb()
+    .select({ productId: productSpecs.productId, externalCategoryId: productSpecs.externalCategoryId, updatedAt: productSpecs.updatedAt })
+    .from(productSpecs)
+    .where(eq(productSpecs.platform, platform));
 }

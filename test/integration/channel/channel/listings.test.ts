@@ -8,7 +8,7 @@ import { stopJobs } from '#src/modules/core/platform/service/jobs/boss.ts';
 import { ChannelListing, ListingList, PushResults } from '#src/modules/channel/channel/api/schemas.ts';
 import { variantsBySellerSku } from '#src/modules/channel/channel/repository/raw-orders.ts';
 import { runListingPush } from '#src/modules/channel/channel/service/listing-push.ts';
-import type { NewProduct } from '#src/modules/channel/channel/service/marketplaces/common.ts';
+import { MarketplaceError, type NewProduct } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
 import { type ListingVariant, setProductPort } from '#src/modules/channel/channel/service/product-port.ts';
 import { withCompany } from '#src/shared/db/client.ts';
@@ -17,16 +17,15 @@ import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
 import { activateShop, fakeAdapter, seedSpecs } from './helpers.ts';
 
-const categoryId = randomUUID();
 const productId = randomUUID();
 const variant = (sku: string, extra: Partial<ListingVariant> = {}): ListingVariant => ({
   id: randomUUID(),
   productId,
   productName: 'Áo thun',
   sku,
-  categoryId,
   attributesLabel: 'Đen / M',
   productCode: 'SP-TEST',
+  groupId: 'GROUP-TEST',
   attributes: [],
   archived: false,
   businessStatus: 'selling',
@@ -41,7 +40,7 @@ const ok = variant('CMR-OK');
 const noPrice = variant('CMR-NOPRICE');
 const noDims = variant('CMR-NODIMS', { weightG: null });
 // Spec sàn theo sản phẩm cha (#400): sản phẩm khác, danh mục chưa ghép.
-const unmapped = variant('CMR-UNMAPPED', { categoryId: randomUUID(), productId: randomUUID() });
+const unmapped = variant('CMR-UNMAPPED', { productId: randomUUID() });
 const paused = variant('CMR-PAUSED', { businessStatus: 'paused' });
 const archived = variant('CMR-ARCHIVED', { archived: true });
 const all = [ok, noPrice, noDims, unmapped, paused, archived];
@@ -81,6 +80,7 @@ setProductPort(port);
 
 const createProduct = vi.fn(async (_t: string, p: NewProduct) => ({ externalProductId: `item-${p.sellerSku}`, externalSkuId: `sku-${p.sellerSku}`, live: false }));
 const deactivate = vi.fn(async () => {});
+const removeVariants = vi.fn(async (..._a: unknown[]): Promise<void> => {});
 registerAdapter(
   'lazada',
   fakeAdapter({
@@ -90,6 +90,7 @@ registerAdapter(
     uploadImage: async (_t, url) => `https://slatic.test/${encodeURIComponent(url)}`,
     createProduct,
     deactivate,
+    removeVariants,
   }),
 );
 afterAll(async () => {
@@ -135,7 +136,11 @@ async function rowsOf(variantId: string) {
 
 async function jobsOf(listingId: string) {
   const { rows } = await testPool().query<{ data: Record<string, unknown> }>(
-    "select data from pgboss.job where name = 'channel.listing_push' and data->>'listingId' = $1",
+    // SKU chưa có sản phẩm trên sàn đi việc theo cha `channel.product_push` (#295): khớp dòng `shop_products` và mốc lượt.
+    `select j.data from pgboss.job j join channel.listings l on l.id = $1
+      where (j.name = 'channel.listing_push' and j.data->>'listingId' = $1::text)
+         or (j.name = 'channel.product_push' and j.data->>'shopProductId' = l.shop_product_id::text
+             and (j.data->>'pushStartedAt')::timestamptz = l.push_started_at)`,
     [listingId],
   );
   return rows.map((r) => r.data);
@@ -148,7 +153,7 @@ async function runJob(listingId: string) {
 }
 
 beforeAll(async () => {
-  company = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany({ optionalModules: [] });
   const res = await auth(app().post('/api/v1/channel/shops/lazada/token')).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
   shopId = res.body.shop.id;
   await activateShop(shopId);
@@ -169,7 +174,9 @@ describe('đẩy listing: request chỉ kiểm và xếp việc', () => {
     const [row] = await rowsOf(ok.id);
     // #399: đẩy tạo sản phẩm mới thì nội dung là của app.
     expect(row).toMatchObject({ status: 'pushing', seller_sku: 'CMR-OK', push_attempts: 0, content_source: 'app' });
-    expect(await jobsOf(row.id)).toEqual([{ companyId: company.companyId, shopId, listingId: row.id, imageUrls: CATALOG }]);
+    expect(await jobsOf(row.id)).toEqual([
+      { companyId: company.companyId, shopId, shopProductId: expect.any(String), pushStartedAt: expect.any(String), imageUrls: CATALOG },
+    ]);
     expect(await rowsOf(noPrice.id)).toEqual([]);
     const history = await testPool().query(
       "select from_state, to_state, action, actor_id is null as by_system from core.state_transitions where entity_type = 'listings' and entity_id = $1",
@@ -181,8 +188,8 @@ describe('đẩy listing: request chỉ kiểm và xếp việc', () => {
   // Spec chỉ đến từ migration (bản chép `version = 0`), `PUT` spec hay ghép SKU. Ca này không chứng minh việc bỏ chép lười
   // (BE3; bảng ghép cũ đã xoá nên typecheck và schema bảo đảm), chỉ kiểm mã chặn khi thiếu spec và khi spec chép bị đánh changed.
   it('#400: sản phẩm chưa có spec → category_unmapped, không tạo spec; bản chép version 0 bị đồng bộ đánh changed → spec_incomplete', async () => {
-    const first = variant(`CMR-A18-${randomUUID().slice(0, 6)}`, { productId: randomUUID(), categoryId: randomUUID() });
-    const second = variant(`CMR-A18-${randomUUID().slice(0, 6)}`, { productId: first.productId, categoryId: first.categoryId, weightG: null });
+    const first = variant(`CMR-A18-${randomUUID().slice(0, 6)}`, { productId: randomUUID() });
+    const second = variant(`CMR-A18-${randomUUID().slice(0, 6)}`, { productId: first.productId, weightG: null });
     all.push(first, second);
     legacy.add(first.productId);
     catalogImages.set(first.productId, CATALOG);
@@ -220,14 +227,17 @@ describe('đẩy listing: request chỉ kiểm và xếp việc', () => {
     },
   );
 
-  it('hai biến thể cùng sản phẩm trong một request: đọc ảnh một lần, hai việc cùng URL (#303)', async () => {
+  it('hai biến thể cùng sản phẩm trong một request: đọc ảnh một lần, một việc theo cha (#303, #295)', async () => {
     const a = ownProduct('CMR-PAIR-A', ['https://files.commerio.test/pair.jpg']);
     const b = variant(`CMR-PAIR-B-${randomUUID().slice(0, 6)}`, { productId: a.productId });
     all.push(b);
     productImageUrls.mockClear();
     const res = await results([a.id, b.id]);
     expect(productImageUrls).toHaveBeenCalledTimes(1);
-    for (const r of res) expect((await jobsOf(r.listingId!))[0]!.imageUrls).toEqual(['https://files.commerio.test/pair.jpg']);
+    const jobs = await Promise.all(res.map((r) => jobsOf(r.listingId!)));
+    expect(jobs.map((j) => j.length)).toEqual([1, 1]);
+    expect(jobs[0]).toEqual(jobs[1]);
+    expect(jobs[0]![0]!.imageUrls).toEqual(['https://files.commerio.test/pair.jpg']);
   });
 
   it('listing đã gỡ có ảnh trên sàn đẩy lại được khi catalog không có ảnh (#303)', async () => {
@@ -392,7 +402,7 @@ describe('đẩy listing: request chỉ kiểm và xếp việc', () => {
       variant(`CMR-AXIS-OLD-${randomUUID().slice(0, 6)}`, {
         productId: live.productId,
         archived: true,
-        attributes: [{ attributeId: axisId, attributeName: 'Màu', valueId: randomUUID(), value: 'Đỏ' }],
+        attributes: [{ attributeId: axisId, attributeName: 'Màu', platformKind: 'color', valueId: randomUUID(), value: 'Đỏ' }],
       }),
     );
     await testPool().query(
@@ -418,7 +428,7 @@ describe('đẩy listing: request chỉ kiểm và xếp việc', () => {
     expect((await push(Array.from({ length: 21 }, () => randomUUID()))).status).toBe(422);
     const sale = await addMember(company.companyId, 'sale');
     expect((await auth(app().post(`/api/v1/channel/shops/${shopId}/listings/push`), sale.token).send({ variantIds: [ok.id] })).status).toBe(403);
-    const other = await createCompany({ optionalModules: ['channel'] });
+    const other = await createCompany({ optionalModules: [] });
     expect((await auth(app().get(`/api/v1/channel/shops/${shopId}/listings`), other.ceo.token)).status).toBe(404);
     // Biến thể của công ty khác: cổng không thấy (RLS) nên not_found.
     expect((await results([randomUUID()]))[0]).toMatchObject({ code: 'not_found', status: null });
@@ -438,6 +448,53 @@ describe('gỡ listing', () => {
     expect(again.status).toBe(409);
     expect(again.body.code).toBe('invalid_transition');
     expect((await auth(app().post(`/api/v1/channel/shops/${shopId}/listings/${noPrice.id}/delist`)).send({ version: 1 })).status).toBe(404);
+  });
+
+  it('sản phẩm sàn còn SKU khác: gỡ riêng phân loại, bỏ mã sàn khỏi listing; SKU cuối cùng thì tắt (#295, §18.8.4)', async () => {
+    const [a, b] = [fresh('CMR-GO-A'), fresh('CMR-GO-B')];
+    const item = `item-go-${randomUUID().slice(0, 6)}`;
+    for (const v of [a, b]) {
+      await testPool().query(
+        `insert into channel.listings (company_id, shop_id, variant_id, seller_sku, status, external_product_id, external_sku_id, content_source)
+         values ($1, $2, $3, $4, 'live', $5, $6, 'app')`,
+        [company.companyId, shopId, v.id, v.sku, item, `sku-${v.sku}`],
+      );
+    }
+    deactivate.mockClear();
+    const delist = async (v: { id: string }) => {
+      const [row] = await rowsOf(v.id);
+      return auth(app().post(`/api/v1/channel/shops/${shopId}/listings/${v.id}/delist`)).send({ version: row.version });
+    };
+    expect((await delist(a)).status).toBe(200);
+    expect(removeVariants).toHaveBeenCalledWith(expect.any(String), item, [`sku-${a.sku}`]);
+    expect(deactivate).not.toHaveBeenCalled();
+    expect((await rowsOf(a.id))[0]).toMatchObject({ status: 'delisted', external_product_id: null, external_sku_id: null });
+    removeVariants.mockClear();
+    expect((await delist(b)).status).toBe(200);
+    expect(removeVariants).not.toHaveBeenCalled();
+    expect(deactivate).toHaveBeenCalledWith(expect.any(String), item, `sku-${b.sku}`);
+    expect((await rowsOf(b.id))[0]).toMatchObject({ status: 'delisted', external_product_id: item });
+  });
+
+  it('bản sao đếm thừa SKU nhưng sàn báo last_variant: tắt SKU, giữ mã sàn như SKU cuối (#295, sửa sau DoD staging)', async () => {
+    const [a, b] = [fresh('CMR-LAST-A'), fresh('CMR-LAST-B')];
+    const item = `item-last-${randomUUID().slice(0, 6)}`;
+    for (const v of [a, b]) {
+      await testPool().query(
+        `insert into channel.listings (company_id, shop_id, variant_id, seller_sku, status, external_product_id, external_sku_id, content_source)
+         values ($1, $2, $3, $4, 'live', $5, $6, 'app')`,
+        [company.companyId, shopId, v.id, v.sku, item, `sku-${v.sku}`],
+      );
+    }
+    removeVariants.mockClear();
+    deactivate.mockClear();
+    removeVariants.mockRejectedValueOnce(new MarketplaceError('rejected', 'last_variant', 'SKU cuối'));
+    const [row] = await rowsOf(a.id);
+    const res = await auth(app().post(`/api/v1/channel/shops/${shopId}/listings/${a.id}/delist`)).send({ version: row.version });
+    expect(res.status).toBe(200);
+    expect(removeVariants).toHaveBeenCalledTimes(1);
+    expect(deactivate).toHaveBeenCalledWith(expect.any(String), item, `sku-${a.sku}`);
+    expect((await rowsOf(a.id))[0]).toMatchObject({ status: 'delisted', external_product_id: item, external_sku_id: `sku-${a.sku}` });
   });
 
   it('listing đang pushing thì gỡ 409 invalid_transition (21 §18.6.4)', async () => {

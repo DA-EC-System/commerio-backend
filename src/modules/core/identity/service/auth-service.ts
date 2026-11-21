@@ -4,6 +4,7 @@ import {
   assertTokenCurrent,
   type CompanyAccess,
 } from '../../../../shared/auth/company-access.ts';
+import type { ModuleContext } from '../../../../shared/module.ts';
 import { type AccessClaims, signAccessToken } from '../../../../shared/auth/jwt.ts';
 import { env } from '../../../../shared/config/env.ts';
 import { inTransaction, withCompany } from '../../../../shared/db/client.ts';
@@ -12,7 +13,14 @@ import { AppError } from '../../../../shared/errors/app-error.ts';
 import { logger } from '../../../../shared/logger.ts';
 import { BUILTIN_ROLES, assignRole, permissionModule, rolesAndPermissions } from '../../access/index.ts';
 import { recordAudit } from '../../audit/index.ts';
-import { createCompany, getCompanies, getEnabledModules, type OptionalModule } from '../../platform/index.ts';
+import {
+  createCompany,
+  DEFAULT_OPTIONAL_MODULES,
+  getCompanies,
+  getEnabledModules,
+  type OptionalModule,
+  TAX_CODE_TAKEN_MESSAGE,
+} from '../../platform/index.ts';
 import {
   type AccountRow,
   canSelfApprove,
@@ -130,29 +138,57 @@ async function callerAccount(auth: AccessClaims): Promise<AccountRow> {
   return account;
 }
 
+/**
+ * Dữ liệu có sẵn của công ty mới do module lớp trên tạo (catalog `seedCompanyDefaults`, #447). core không import product
+ * (luật `lop-core`): `src/wiring.ts` tiêm qua `IdentityContext`, `createCompanyWithCeo` gọi trong cùng giao dịch tạo công ty.
+ */
+export type SeedCompanyDefaults = (companyId: string) => Promise<void>;
+
+export interface IdentityContext extends ModuleContext {
+  readonly seedCompanyDefaults?: SeedCompanyDefaults;
+}
+
 export interface RegisterInput {
   company: { name: string; taxCode: string };
   ceo: { fullName: string; email: string; password: string };
-  optionalModules: OptionalModule[];
-  assistantDataConsent: boolean;
+  /** Chỉ seed dùng; API đăng ký luôn bật `DEFAULT_OPTIONAL_MODULES` (Documents/21 mục 2.1). */
+  optionalModules?: readonly OptionalModule[];
+  assistantDataConsent?: boolean;
 }
 
-/** UC-PI-01: công ty, tài khoản CEO, phân hệ, nhật ký trong một transaction (Documents/21 V13). */
-export async function register(input: RegisterInput): Promise<{ companyId: string; email: string }> {
-  // Băm trước khi mở transaction: argon2 chậm có chủ ý, không nên giữ transaction trong lúc đó.
-  const passwordHash = await hashPassword(input.ceo.password);
-  const emailTaken = () =>
-    new AppError(409, 'email_taken', 'Email đã được dùng', { errors: { 'ceo.email': 'Email này đã có tài khoản' } });
+export const taxCodeTaken = () =>
+  new AppError(409, 'tax_code_taken', TAX_CODE_TAKEN_MESSAGE, { errors: { 'company.taxCode': TAX_CODE_TAKEN_MESSAGE } });
+
+export const emailTaken = () =>
+  new AppError(409, 'email_taken', 'Email đã được dùng', { errors: { 'ceo.email': 'Email này đã có tài khoản' } });
+
+/**
+ * Công ty, tài khoản CEO, phân hệ, vai trò, nhật ký trong một transaction (Documents/21 V13). Mật khẩu đã băm.
+ * Gọi từ `verifyRegistration` (#459) và seed; ném `email_taken`, `tax_code_taken` khi trùng (kể cả đua, #51).
+ */
+export async function createCompanyWithCeo(
+  input: Omit<RegisterInput, 'ceo'> & {
+    ceo: { fullName: string; email: string; passwordHash: string };
+    testRegistration?: boolean;
+  },
+  seedCompanyDefaults: SeedCompanyDefaults,
+): Promise<{ companyId: string; accountId: string }> {
+  const optionalModules = input.optionalModules ?? DEFAULT_OPTIONAL_MODULES;
   try {
     return await inTransaction(async () => {
       if (await findAccountByEmail(input.ceo.email)) throw emailTaken();
-      const accountId = await createAccount({ email: input.ceo.email, fullName: input.ceo.fullName, passwordHash });
+      const accountId = await createAccount({
+        email: input.ceo.email,
+        fullName: input.ceo.fullName,
+        passwordHash: input.ceo.passwordHash,
+      });
       const companyId = await createCompany({
         ...input.company,
-        optionalModules: input.optionalModules,
-        aiConsent: input.assistantDataConsent,
+        optionalModules,
+        aiConsent: input.assistantDataConsent ?? false,
         createdBy: accountId,
       });
+      await seedCompanyDefaults(companyId);
       const membershipId = await createMembership(companyId, accountId);
       await assignRole({ membershipId, roleId: BUILTIN_ROLES.ceo.id, companyId });
       await recordAudit({
@@ -162,16 +198,47 @@ export async function register(input: RegisterInput): Promise<{ companyId: strin
         entityType: 'core.companies',
         entityId: companyId,
         label: input.company.name,
-        after: { ...input.company, ceoEmail: input.ceo.email, optionalModules: input.optionalModules },
+        after: {
+          ...input.company,
+          ceoEmail: input.ceo.email,
+          optionalModules,
+          ...(input.testRegistration && { testRegistration: true }),
+        },
       });
-      return { companyId, email: input.ceo.email };
+      return { companyId, accountId };
     });
   } catch (err) {
     // Hai người đăng ký cùng email cùng lúc: ràng buộc UNIQUE chặn người sau (#51).
     const { code, constraint } = pgError(err);
     if (code === '23505' && constraint === 'accounts_email_unique') throw emailTaken();
+    if (code === '23505' && constraint === 'companies_tax_code_unique') throw taxCodeTaken();
     throw err;
   }
+}
+
+/** Tạo công ty một bước, chỉ cho seed dữ liệu demo (API đăng ký đi hai bước qua mã email, #459). */
+export async function register(
+  input: RegisterInput,
+  seedCompanyDefaults: SeedCompanyDefaults,
+): Promise<{ companyId: string; email: string }> {
+  // Băm trước khi mở transaction: argon2 chậm có chủ ý, không nên giữ transaction trong lúc đó.
+  const passwordHash = await hashPassword(input.ceo.password);
+  const { companyId } = await createCompanyWithCeo({ ...input, ceo: { ...input.ceo, passwordHash } }, seedCompanyDefaults);
+  return { companyId, email: input.ceo.email };
+}
+
+/** Phiên gắn công ty ngay sau khi tạo công ty (#459): như `/login` rồi `select-company`. */
+export async function sessionForCompany(accountId: string, companyId: string) {
+  const account = await findAccountById(accountId);
+  if (!account) throw new Error(`không thấy tài khoản vừa tạo ${accountId}`);
+  const context = await companyContext(account.id, companyId);
+  return {
+    accessToken: await signAccessToken(claimsFor(account, context)),
+    refreshToken: await newRefreshToken(account.id, companyId),
+    account: toAccountView(account),
+    memberships: await membershipViews(account.id),
+    context,
+  };
 }
 
 /** UC-PI-03: đăng nhập chưa gắn công ty; sai email hay sai mật khẩu đều cùng một lỗi (Documents/21 V2). */

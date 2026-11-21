@@ -16,10 +16,13 @@ export {
   attachmentProblem,
   attachmentsOf,
   confirmUploads,
+  detachAll,
   type EntityRef,
+  fileLinks,
   fileProblem,
   hasAttachments,
   MAX_ATTACHMENTS,
   publicFileUrls,
   replaceAttachments,
 } from './service/attachments.ts';
+export { ingestRemoteImage } from './service/remote-images.ts';

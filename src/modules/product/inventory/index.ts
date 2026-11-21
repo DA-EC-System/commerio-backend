@@ -19,6 +19,7 @@ export const inventoryModule: ModuleDefinition = {
 
 export {
   availableOf,
+  countedOf,
   type DocumentRef,
   nextDocNumber,
   type ReceiveBackMeta,
@@ -37,10 +38,16 @@ export {
 export { InsufficientStock, moveSupplierReturn, type ReceivedLine, receiveGoods, type ReturnLine } from './service/posting.ts';
 // Số phiếu kho cho chứng từ của purchasing (nguồn, phiếu sinh tiếp của phiếu trả NCC, #210).
 export { docRefsOf as stockDocumentRefs, docsFromSource as stockDocumentsFrom } from './repository/documents.ts';
+// Phiếu kiểm hàng hoàn có phần thiếu (`claim_flag`): sales không báo sàn đồng ý hoàn tiền (commerio-backend#392).
+export { returnInspectionClaimed } from './service/return-claim.ts';
 // Phiếu kho có duyệt (#208): xuất huỷ chờ xử lý cho phiếu trả NCC bị huỷ (#210), kiểm kê đầu kỳ cho channel (#245).
 export { createOpeningStocktake, createQuarantineWriteOff } from './service/documents.ts';
 // Trạng thái phiếu kiểm kê đầu kỳ cho channel (#198, #245).
-export { docStatusesOf as stockDocumentStatusOf } from './repository/documents.ts';
+export {
+  docStatusesOf as stockDocumentStatusOf,
+  openingStockState,
+  type OpeningStockState,
+} from './repository/documents.ts';
 export { setSupplierReturnPort, type SupplierReturnPort } from './service/document-views.ts';
 export { recheckThresholds, setIncomingSource } from './service/thresholds.ts';
 // Lý do chặn lưu trữ SKU phần kho cho catalog (#204); `product/index.ts` nối vào `ctx` của catalog.

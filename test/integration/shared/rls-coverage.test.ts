@@ -9,9 +9,29 @@ const RLS_EXCEPTIONS: Record<string, string> = {
   'core.refresh_tokens': 'chỉ luồng xác thực đọc, chạy bằng role chủ bảng; commerio_app không có quyền nào',
 };
 
+/**
+ * Bảng dữ liệu chuẩn hai tầng (Documents/19 mục 2, #521): bốn policy `tier_*` thay `company_isolation` (đọc dòng nền tảng
+ * `company_id` NULL và dòng của công ty, ghi chỉ dòng của công ty).
+ */
+const TIER_TABLES = [
+  'product.product_groups',
+  'product.attributes',
+  'product.attribute_values',
+  'product.spec_fields',
+  'product.spec_field_options',
+  'product.group_spec_fields',
+  'product.group_allowed_attributes',
+  'channel.spec_field_mappings',
+  'channel.spec_option_mappings',
+  'channel.axis_mappings',
+];
+const TIER_POLICIES = ['tier_delete', 'tier_insert', 'tier_read', 'tier_update'];
+
 /** Quyền của commerio_app khác mặc định (SELECT, INSERT, UPDATE, DELETE). */
 const EXPECTED_PRIVILEGES: Record<string, readonly Privilege[]> = {
   'core.refresh_tokens': [],
+  // Lần đăng ký chờ mã (#459): mật khẩu đã băm, chỉ luồng đăng ký (role chủ bảng) đụng tới.
+  'core.registrations': [],
   'core.companies': ['SELECT'],
   'core.permissions': ['SELECT'],
   'core.audit_logs': ['SELECT', 'INSERT'],
@@ -52,6 +72,7 @@ interface TableInfo {
   has_company_id: boolean;
   rls: boolean;
   has_policy: boolean;
+  policies: string[];
 }
 
 async function tables(): Promise<TableInfo[]> {
@@ -63,7 +84,9 @@ async function tables(): Promise<TableInfo[]> {
            c.relrowsecurity as rls,
            exists (select 1 from pg_policies p
                    where p.schemaname = n.nspname and p.tablename = c.relname
-                     and p.policyname = 'company_isolation') as has_policy
+                     and p.policyname = 'company_isolation') as has_policy,
+           array(select p.policyname::text from pg_policies p
+                 where p.schemaname = n.nspname and p.tablename = c.relname order by 1) as policies
     from pg_class c join pg_namespace n on n.oid = c.relnamespace
     where c.relkind = 'r' and n.nspname not in ('pg_catalog', 'information_schema', 'pg_toast', 'drizzle', 'public')
     order by 1`);
@@ -74,10 +97,17 @@ async function tables(): Promise<TableInfo[]> {
 describe('phủ RLS và quyền commerio_app trên mọi bảng', () => {
   it('bảng có company_id bật RLS và có policy company_isolation, trừ danh sách ngoại lệ', async () => {
     const missing = (await tables())
-      .filter((t) => t.has_company_id && !(t.name in RLS_EXCEPTIONS))
+      .filter((t) => t.has_company_id && !(t.name in RLS_EXCEPTIONS) && !TIER_TABLES.includes(t.name))
       .filter((t) => !t.rls || !t.has_policy)
       .map((t) => t.name);
     expect(missing).toEqual([]);
+  });
+
+  it('bảng dữ liệu chuẩn hai tầng bật RLS, có đúng bốn policy tier_*', async () => {
+    const all = await tables();
+    for (const name of TIER_TABLES) {
+      expect(all.find((t) => t.name === name), name).toMatchObject({ has_company_id: true, rls: true, policies: TIER_POLICIES });
+    }
   });
 
   it('bảng trong danh sách ngoại lệ vẫn đúng là không có RLS (danh sách không cũ đi)', async () => {

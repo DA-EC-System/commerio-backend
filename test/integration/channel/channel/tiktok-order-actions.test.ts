@@ -56,7 +56,7 @@ let company: Awaited<ReturnType<typeof createCompany>>;
 let shopId: string;
 
 beforeAll(async () => {
-  company = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany({ optionalModules: [] });
   shopExternalId = `74951${Math.floor(Math.random() * 1e12)}`;
   const res = await request(testApp())
     .post('/api/v1/channel/shops/tiktok/token')
@@ -159,7 +159,7 @@ describe('tách kiện trên sàn TikTok (#221)', () => {
   });
 
   it('gian hàng của công ty khác: 404', async () => {
-    const other = await createCompany({ optionalModules: ['channel'] });
+    const other = await createCompany({ optionalModules: [] });
     const err = await caught(() => marketplaceSplitAttributes(other.companyId, shopId, 'O1'));
     expect(err.status).toBe(404);
   });
@@ -177,7 +177,7 @@ describe('giao kiện trên sàn TikTok (#221)', () => {
   });
 
   it('gian hàng của công ty khác: 404, không gọi sàn', async () => {
-    const other = await createCompany({ optionalModules: ['channel'] });
+    const other = await createCompany({ optionalModules: [] });
     const err = await caught(() => marketplaceShipPackage(other.companyId, shopId, 'PK-9'));
     expect(err.status).toBe(404);
     expect(calls).toEqual([]);

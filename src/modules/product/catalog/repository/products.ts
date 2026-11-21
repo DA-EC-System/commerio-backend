@@ -1,7 +1,7 @@
 import { and, desc, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
 import {
-  categories,
+  productGroups,
   productAttributeValueImages,
   productImages,
   products,
@@ -20,8 +20,8 @@ const columns = {
   imageAttributeId: products.imageAttributeId,
   originCountry: products.originCountry,
   brand: products.brand,
-  categoryId: products.categoryId,
-  categoryName: categories.name,
+  groupId: products.groupId,
+  groupName: productGroups.name,
   updatedAt: products.updatedAt,
   version: products.version,
   // SQL có bí danh: cột trong `sql` của Drizzle không kèm tên bảng.
@@ -36,17 +36,19 @@ export async function findProduct(id: string) {
   const [row] = await getDb()
     .select(columns)
     .from(products)
-    .innerJoin(categories, eq(categories.id, products.categoryId))
+    .innerJoin(productGroups, eq(productGroups.id, products.groupId))
     .where(eq(products.id, id));
   return row;
 }
 
 export interface ProductFilter {
   search?: string | undefined;
-  categoryId?: string | undefined;
+  groupId?: string | undefined;
   status: 'active' | 'archived';
   /** Có ít nhất một SKU ở trạng thái này (#204). */
   businessStatus?: 'selling' | 'paused' | 'discontinued' | undefined;
+  /** Có SKU chưa lưu trữ `incomplete` / mọi SKU chưa lưu trữ `ready` (Documents/21 §17.2). */
+  readiness?: 'incomplete' | 'ready' | undefined;
   page: number;
   pageSize: number;
 }
@@ -56,17 +58,44 @@ const hasLiveVariant = sql`exists (select 1 from product.product_variants pv
   where pv.product_id = products.id and pv.archived_at is null)`;
 
 /**
+ * Có SKU chưa lưu trữ `incomplete`: cùng luật với `readinessOf` (`domain/labels.ts`; Documents/21 §17.1), viết bằng SQL để
+ * lọc trong câu phân trang. Trường của cha (tên, ảnh, ảnh phân loại một phần, thông số bắt buộc trống) làm mọi SKU thiếu;
+ * ngưỡng tồn đọc `stock_levels` của inventory (cùng schema `product`, không có dòng là chưa đặt). Đổi luật thì sửa cả hai
+ * nơi; test `labels.test.ts` ("lọc readiness") so bộ lọc với `incompleteCount`.
+ */
+const hasIncompleteVariant = sql`exists (select 1 from product.product_variants pv
+  left join product.stock_levels sl on sl.variant_id = pv.id
+  where pv.product_id = products.id and pv.archived_at is null and (
+    pv.target_net_price is null or sl.min_qty is null or pv.weight_g is null
+    or pv.length_mm is null or pv.width_mm is null or pv.height_mm is null
+    or btrim(products.name) = ''
+    or not exists (select 1 from product.product_images pi where pi.product_id = products.id)
+    or exists (select 1 from product.group_spec_fields g
+      where g.group_id = products.group_id and g.required
+        and not exists (select 1 from product.product_spec_values v where v.product_id = products.id and v.field_id = g.field_id))
+    or exists (select 1 from (
+      select bool_or(pavi.id is not null) as some_img, bool_and(pavi.id is not null) as all_img
+      from product.product_variants pv2
+      join product.variant_attribute_values vav on vav.variant_id = pv2.id
+      join product.attribute_values av on av.id = vav.attribute_value_id and av.attribute_id = products.image_attribute_id
+      left join product.product_attribute_value_images pavi
+        on pavi.product_id = pv2.product_id and pavi.attribute_value_id = vav.attribute_value_id
+      where pv2.product_id = products.id and pv2.archived_at is null) x
+      where x.some_img and not x.all_img)))`;
+
+/**
  * Tên hoặc SKU của mọi biến thể (kể cả đã lưu trữ) chứa `search`, không phân biệt hoa thường, không ký tự đại diện.
  * `active`: còn SKU chưa lưu trữ; `archived`: mọi SKU đã lưu trữ.
  */
 export async function listProducts(filter: ProductFilter) {
   const where = and(
     filter.status === 'archived' ? sql`not ${hasLiveVariant}` : hasLiveVariant,
-    filter.categoryId ? eq(products.categoryId, filter.categoryId) : undefined,
+    filter.groupId ? eq(products.groupId, filter.groupId) : undefined,
     filter.businessStatus
       ? sql`exists (select 1 from product.product_variants pv
           where pv.product_id = products.id and pv.business_status = ${filter.businessStatus})`
       : undefined,
+    filter.readiness === 'incomplete' ? hasIncompleteVariant : filter.readiness === 'ready' ? sql`not ${hasIncompleteVariant}` : undefined,
     filter.search
       ? sql`(strpos(lower(${products.name}), lower(${filter.search})) > 0 or exists (
           select 1 from product.product_variants pv
@@ -77,7 +106,7 @@ export async function listProducts(filter: ProductFilter) {
   const rows = await getDb()
     .select(columns)
     .from(products)
-    .innerJoin(categories, eq(categories.id, products.categoryId))
+    .innerJoin(productGroups, eq(productGroups.id, products.groupId))
     .where(where)
     .orderBy(desc(products.updatedAt), products.id)
     .limit(filter.pageSize)
@@ -101,10 +130,17 @@ export async function productCodeTaken(code: string): Promise<boolean> {
   return rows.length > 0;
 }
 
-export async function insertProduct(companyId: string, categoryId: string, name: string, description: string, code: string) {
+export async function insertProduct(
+  companyId: string,
+  groupId: string,
+  name: string,
+  description: string,
+  code: string,
+  extras: Pick<ProductExtras, 'originCountry' | 'brand' | 'imageAttributeId'> = {},
+) {
   const [row] = await getDb()
     .insert(products)
-    .values({ companyId, categoryId, name, description, code })
+    .values({ companyId, groupId, name, description, code, ...extras })
     .returning({ id: products.id });
   return row!.id;
 }
@@ -112,7 +148,7 @@ export async function insertProduct(companyId: string, categoryId: string, name:
 const current = (id: string, version: number) => and(eq(products.id, id), eq(products.version, version));
 
 /** Trường của sản phẩm ghi cùng câu (#340); khoá vắng mặt thì giữ nguyên. */
-export type ProductExtras = Partial<{ imageAttributeId: string | null; originCountry: string | null; brand: string | null }>;
+export type ProductExtras = Partial<{ imageAttributeId: string | null; originCountry: string | null; brand: string | null; groupId: string }>;
 
 export async function updateProductIfVersion(id: string, version: number, name: string, description: string, extras: ProductExtras = {}) {
   const rows = await getDb()
@@ -156,4 +192,14 @@ export async function sizeChartRows(productIds: readonly string[]): Promise<{ pr
     .from(products)
     .where(and(inArray(products.id, [...productIds]), isNotNull(products.sizeChartFileId)));
   return rows.map((r) => ({ productId: r.productId, fileId: r.fileId! }));
+}
+
+/** Nhóm hàng của các sản phẩm (đọc qua RLS); sản phẩm không thấy thì vắng mặt. */
+export async function productGroupIds(ids: readonly string[]): Promise<Map<string, string>> {
+  if (!ids.length) return new Map();
+  const rows = await getDb()
+    .select({ id: products.id, groupId: products.groupId })
+    .from(products)
+    .where(inArray(products.id, [...ids]));
+  return new Map(rows.map((r) => [r.id, r.groupId]));
 }

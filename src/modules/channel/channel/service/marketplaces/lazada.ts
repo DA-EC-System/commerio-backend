@@ -1,29 +1,37 @@
 // Adapter Lazada Open Platform (Documents/tich-hop-san/lazada.md §2, §3, §7.1). Cách ký chép từ scripts/smoke/lazada.ts.
 import { createHmac } from 'node:crypto';
+import { LAZADA_ATTRIBUTE_LABELS, LAZADA_SPEC_MAPPINGS } from './lazada-spec-mappings.ts';
 import type { LedgerKind } from '../../../../finance/index.ts';
 import {
   type CascadeLevel,
   type CategorySuggestion,
   DEFAULT_REFRESH_LEAD_MS,
   epochDate,
-  existingProduct,
+  existingFromSkus,
   existingSku,
   INVALID_AMOUNT,
   type MarketplaceAdapter,
   MarketplaceError,
   type NewProduct,
+  type NewVariants,
   type Payout,
   partResults,
   type PerSkuResult,
   type PlatformWarehouse,
   type PriceQuantity,
+  type ProductSku,
+  productSkus,
   PROMOTION_LOCKED,
   type RemoteCounts,
   type RemoteLineInfo,
   type RemoteLineStatus,
   type RemoteOrder,
   type RemotePackageEvent,
+  plainDescription,
   type RemoteProductCategory,
+  type RemoteProductFacts,
+  toGrams,
+  toMillimeters,
   type RemoteSku,
   type RemoteState,
   refreshBefore,
@@ -35,10 +43,13 @@ import {
   type SettlementTxn,
   type TokenSet,
 } from './common.ts';
-import { lazadaCategoryNodes, lazadaLeafAttributes } from './lazada-categories.ts';
+import { lazadaCategoryNodes, lazadaLeafAttributes, lazadaVariantCapabilities } from './lazada-categories.ts';
+import { lazadaCategoryMismatch, lazadaReactivated, lazadaSkuViews, lazadaUnderReview } from './lazada-category-change.ts';
+import { type LazadaCreatedSku, associatedSkuId, lazadaSkuIdentity, lazadaVariation, matchCreatedSkus } from './lazada-variants.ts';
 import { lazadaReturnMethods } from './lazada-returns.ts';
 import { downloadDocument } from './image-source.ts';
 import { lazadaPackingMethods, type LazadaPackingDeps } from './lazada-packing.ts';
+import { lazadaDeleteMethods } from './lazada-delete.ts';
 
 export interface LazadaConfig {
   appKey: string | undefined;
@@ -216,7 +227,7 @@ export function lazadaError(res: LazadaResponse): MarketplaceError {
 
 /** Đọc `data` của GetProductItem thành category và attribute (#400 lát 12): giá trị chuỗi, số; mảng thì từng phần tử. */
 export function lazadaProductCategory(data: unknown): RemoteProductCategory | null {
-  const d = data as { primary_category?: unknown; attributes?: unknown } | undefined;
+  const d = data as { primary_category?: unknown; attributes?: unknown; images?: unknown; skus?: unknown } | undefined;
   if (d?.primary_category == null || d.primary_category === '') return null;
   const attrs = d.attributes && typeof d.attributes === 'object' ? (d.attributes as Record<string, unknown>) : {};
   const text = (v: unknown) => (typeof v === 'string' || typeof v === 'number' ? String(v) : null);
@@ -226,6 +237,39 @@ export function lazadaProductCategory(data: unknown): RemoteProductCategory | nu
       const values = (Array.isArray(raw) ? raw : [raw]).map(text).filter((v): v is string => v !== null && v.trim() !== '');
       return values.length ? [{ code, values: values.map((name) => ({ id: null, name })) }] : [];
     }),
+    facts: lazadaProductFacts(d.images, attrs, d.skus),
+  };
+}
+
+const isHttpUrl = (u: string) => /^https?:/i.test(u);
+
+/**
+ * Trường dùng chung của GetProductItem (#497; gọi thật 20/11/2026 trên shop thử, request_id 2101248d17951887633343753):
+ * `attributes.brand`, `attributes.description` (HTML), `images[]` (ảnh sản phẩm; `skus[].Images` là ảnh phân loại, không lấy),
+ * `attributes.size_chart` (attribute `input = 'text'` mang link ảnh, 22 category trên staging), `skus[]`: `SkuId`,
+ * `package_weight` (kg), `package_length`, `package_width`, `package_height` (cm), chuỗi số.
+ */
+export function lazadaProductFacts(images: unknown, attrs: Record<string, unknown>, skus: unknown): RemoteProductFacts {
+  const text = (v: unknown) => (typeof v === 'string' && v.trim() !== '' ? v.trim() : null);
+  const chart = text(attrs['size_chart']);
+  return {
+    brand: text(attrs['brand']),
+    description: plainDescription(attrs['description']),
+    imageUrls: (Array.isArray(images) ? images : []).map(text).filter((u): u is string => u !== null && isHttpUrl(u)),
+    sizeChartUrl: chart && isHttpUrl(chart) ? chart : null,
+    skus: (Array.isArray(skus) ? (skus as Record<string, unknown>[]) : []).flatMap((k) =>
+      k.SkuId == null
+        ? []
+        : [
+            {
+              externalSkuId: String(k.SkuId),
+              weightG: toGrams(k.package_weight),
+              lengthMm: toMillimeters(k.package_length),
+              widthMm: toMillimeters(k.package_width),
+              heightMm: toMillimeters(k.package_height),
+            },
+          ],
+    ),
   };
 }
 
@@ -845,8 +889,8 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
   }
 
   /** SKU của `/product/create`, `/product/update`: tiền chuỗi, gam → kg, mm → cm. */
-  const skuPayload = (p: NewProduct) => ({
-    quantity: String(p.quantity),
+  const skuPayload = (p: Pick<ProductSku, 'quantity' | 'price' | 'weightG' | 'lengthMm' | 'widthMm' | 'heightMm'>) => ({
+    ...(p.quantity !== undefined && { quantity: String(p.quantity) }),
     price: p.price,
     package_weight: String(p.weightG / 1000),
     package_length: String(p.lengthMm / 10),
@@ -1001,9 +1045,30 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
     return String(sku?.Status ?? '').toLowerCase() === 'inactive';
   }
 
+  async function removeSkus(accessToken: string, itemId: string, skuIds: readonly string[]): Promise<void> {
+    const sku_id_list = JSON.stringify(skuIds.map((id) => `SkuId_${itemId}_${id}`));
+    await call(config.apiUrl, '/product/remove', { access_token: accessToken, sku_id_list }, 'FORM');
+  }
+
+  async function deactivateSku(accessToken: string, externalProductId: string, externalSkuId: string): Promise<void> {
+    const apiRequestBody =
+      `<Request><Product><ItemId>${xml(externalProductId)}</ItemId>` +
+      `<Skus><SkuId>${xml(externalSkuId)}</SkuId></Skus></Product></Request>`;
+    // E0004 "Product Status not online" (tài liệu DeactivateProduct: "already in the Inactive state"): đọc lại trạng thái,
+    // đã tắt thì coi là xong như TikTok; còn chờ duyệt hay đang bán thì ném lại lỗi gốc (#359).
+    try {
+      await call(config.apiUrl, '/product/deactivate', { access_token: accessToken, apiRequestBody }, 'FORM');
+    } catch (err) {
+      if (err instanceof MarketplaceError && err.platformCode === 'E0004' && (await inactiveOnPlatform(accessToken, externalProductId, externalSkuId))) return;
+      throw err;
+    }
+  }
+
   return {
     // Yêu cầu trả (#202), file riêng `lazada-returns.ts`.
-    ...lazadaReturnMethods((apiPath, params) => call(config.apiUrl, apiPath, params, 'GET')),
+    ...lazadaReturnMethods((apiPath, params) => call(config.apiUrl, apiPath, params, 'GET'), (raw, where) => lazadaAmount(raw, where)),
+    // `/image/migrate` chỉ nhận JPG, PNG (như ảnh sản phẩm); ảnh minh chứng đi qua đó trước khi vào `image_info` (#437).
+    returnImageTypes: ['image/jpeg', 'image/png'],
     ...lazadaPackingMethods((apiPath, params, method) => call(config.apiUrl, apiPath, params, method), {
       download: deps.download ?? ((url) => downloadDocument(url, { trustedOrigin: new URL(config.apiUrl).origin })),
     }),
@@ -1052,6 +1117,8 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
     categoriesNeedToken: false,
     productFields: { brand: 'brand', country_origin_hb: 'originCountry' },
     defaultBrand: DEFAULT_BRAND,
+    defaultSpecMappings: LAZADA_SPEC_MAPPINGS,
+    defaultAttributeLabels: LAZADA_ATTRIBUTE_LABELS,
     async categoryTree(accessToken) {
       const params = { ...(accessToken && { access_token: accessToken }), language_code: 'vi_VN' };
       return lazadaCategoryNodes((await call(config.apiUrl, '/category/tree/get', params, 'GET')).data);
@@ -1074,8 +1141,13 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
       return lazadaProductCategory(body.data);
     },
     suggestionRules: { needsImage: true },
+    // Lazada chỉ nhận trục là sale prop của category (Documents#214 mục 3).
+    standardSalesAttributes: { color: ['color_family'], size: ['size'], volume: ['volume'], flavor: ['flavor'] },
+    variantCapabilities: lazadaVariantCapabilities,
     async suggestCategories(accessToken, input) {
-      const params = { access_token: accessToken, product_name: input.name, image_url: input.imageUrl ?? '' };
+      // `image_url` bắt buộc khác rỗng (Documents#214 mục 2.3): service chặn `images_missing` trước; không có ảnh thì không gọi sàn.
+      if (!input.imageUrl) return [];
+      const params = { access_token: accessToken, product_name: input.name, image_url: input.imageUrl };
       try {
         return lazadaSuggestions((await call(config.apiUrl, '/product/category/suggestion/get', params, 'GET')).data);
       } catch (err) {
@@ -1092,10 +1164,15 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
     },
     async createProduct(accessToken, p: NewProduct) {
       // Idempotent theo SellerSku: lần đẩy trước đã tạo mà bên gọi mất kết quả thì trả sản phẩm đó, không tạo thêm.
-      const existing = existingSku(await skusIn(accessToken, [p.sellerSku], 'all'), p.sellerSku);
+      // Nhiều SKU (#295): tra mọi SellerSku; thấy đủ và cùng một sản phẩm thì trả sản phẩm đó, thấy một phần thì từ chối.
+      const skus = productSkus(p);
+      const sellerSkus = skus.map((s) => s.sellerSku);
+      const found = p.skipExistingSkuCheck ? [] : await skusIn(accessToken, sellerSkus, 'all'); // #295 regroup: bỏ chống trùng
+      const existing = existingFromSkus(sellerSkus, sellerSkus.map((sku) => existingSku(found, sku)));
       if (existing) {
-        return existingProduct(existing);
+        return existing;
       }
+      const multi = Boolean(p.skus?.length);
       const payload = JSON.stringify({
         Request: {
           Product: {
@@ -1106,15 +1183,77 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
             // request_id 2141336017948496094571739). Việc đẩy luôn gửi brand (catalog, trống thì `defaultBrand`); mặc định
             // ở đây chỉ chặn trường hợp bên gọi không gửi. Đẩy lại (`/product/update`) không gửi mặc định để không đè brand đang có.
             Attributes: { brand: DEFAULT_BRAND, ...flatAttributes(p.attributes), name: p.name, description: p.description },
-            Skus: { Sku: [{ SellerSku: p.sellerSku, ...skuPayload(p) }] },
+            ...(multi && p.salesAttributes?.length && { Variation: lazadaVariation(p.salesAttributes) }),
+            Skus: { Sku: skus.map((s) => ({ ...lazadaSkuIdentity(s, p.salesAttributes), ...skuPayload(s) })) },
           },
         },
       });
       const body = await call(config.apiUrl, '/product/create', { access_token: accessToken, payload }, 'FORM');
-      const data = body.data as { item_id?: unknown; item_status?: unknown; sku_list?: { sku_id?: unknown }[] } | undefined;
-      const skuId = data?.sku_list?.[0]?.sku_id;
-      if (data?.item_id === undefined || skuId === undefined) throw new MarketplaceError('rejected', 'unexpected_response');
-      return { externalProductId: String(data.item_id), externalSkuId: String(skuId), live: data.item_status === 'Active' };
+      const data = body.data as { item_id?: unknown; item_status?: unknown; sku_list?: LazadaCreatedSku[] } | undefined;
+      // Ghép theo seller_sku, không theo vị trí (Lazada đổi thứ tự `sku_list`, đo 21/11/2026).
+      const created = matchCreatedSkus(sellerSkus, data?.sku_list);
+      const first = created.find((c) => c.sellerSku === sellerSkus[0]);
+      if (data?.item_id === undefined || !first) throw new MarketplaceError('rejected', 'unexpected_response');
+      return {
+        externalProductId: String(data.item_id),
+        externalSkuId: first.externalSkuId,
+        live: data.item_status === 'Active',
+        ...(multi && { skus: created }),
+      };
+    },
+    // Thêm phân loại vào sản phẩm sẵn có (#295): UpdateProduct không thêm được SKU (mọi SKU phải có SkuId, 4216), nên gọi
+    // CreateProduct với `AssociatedSku` = sku_id của một SKU sẵn có (đo 21/11/2026, L2f). Chỉ gửi SKU mới, không gửi
+    // Variation (sàn tự thêm giá trị trục). BẪY: truyền item_id vào AssociatedSku thì sàn không báo lỗi mà tạo item mới (L2g);
+    // nên lấy sku_id từ sàn và kiểm item_id trả về.
+    async addVariants(accessToken, itemId, input: NewVariants) {
+      const associated = associatedSkuId((await call(config.apiUrl, '/product/item/get', { access_token: accessToken, item_id: itemId }, 'GET')).data);
+      const sellerSkus = input.skus.map((s) => s.sellerSku);
+      const payload = JSON.stringify({
+        Request: {
+          Product: {
+            PrimaryCategory: input.externalCategoryId,
+            AssociatedSku: associated,
+            Images: { Image: input.imageUrls },
+            Attributes: { brand: DEFAULT_BRAND, ...flatAttributes(input.attributes), name: input.name, description: input.description },
+            Skus: { Sku: input.skus.map((s) => ({ ...lazadaSkuIdentity(s, input.salesAttributes), ...skuPayload(s) })) },
+          },
+        },
+      });
+      const body = await call(config.apiUrl, '/product/create', { access_token: accessToken, payload }, 'FORM');
+      const data = body.data as { item_id?: unknown; item_status?: unknown; sku_list?: LazadaCreatedSku[] } | undefined;
+      if (data?.item_id === undefined) throw new MarketplaceError('rejected', 'unexpected_response');
+      if (String(data.item_id) !== itemId) {
+        // Sàn tạo item lạ: xoá ngay các SKU của nó (trùng SellerSku với SKU vừa thêm), rồi báo lỗi.
+        const strayIds = (data.sku_list ?? []).flatMap((s) => (s.sku_id === undefined ? [] : [String(s.sku_id)]));
+        let cleaned = true;
+        try {
+          if (strayIds.length) await removeSkus(accessToken, String(data.item_id), strayIds);
+        } catch (err) {
+          if (!(err instanceof MarketplaceError)) throw err;
+          cleaned = false;
+        }
+        throw new MarketplaceError(
+          'rejected',
+          'associated_item_mismatch',
+          `Sàn tạo sản phẩm mới ${String(data.item_id)} thay vì thêm vào ${itemId}${cleaned ? '; đã xoá sản phẩm đó' : '; chưa xoá được, xoá tay trên Seller Center'}`,
+        );
+      }
+      const skus = matchCreatedSkus(sellerSkus, data.sku_list);
+      if (skus.length < sellerSkus.length) throw new MarketplaceError('rejected', 'unexpected_response', 'Sàn không trả đủ SKU vừa thêm');
+      return { skus, live: data.item_status === 'Active' };
+    },
+    // Gỡ phân loại (#295): RemoveProduct `sku_id_list` = JSON mảng `SkuId_<item>_<sku>` (đo 21/11/2026, L3); giá trị trục
+    // không còn SKU nào dùng thì sàn tự bỏ. Gỡ hết SKU thì sàn xoá cả item (gọi thật 21/11/2026 trên staging: đọc lại báo
+    // E207, request_id 2141336017952241347675401), nên đọc item trước: không còn SKU nào khác chưa xoá thì `last_variant`
+    // như TikTok, bên gọi tắt SKU thay vì gỡ. Bản sao SKU sàn của app có thể cũ, không dùng để quyết.
+    async removeVariants(accessToken, itemId, skuIds) {
+      const data = (await call(config.apiUrl, '/product/item/get', { access_token: accessToken, item_id: itemId }, 'GET')).data as Row | undefined;
+      const gone = new Set(skuIds.map(String));
+      const rest = ((Array.isArray(data?.skus) ? data.skus : []) as Row[]).filter(
+        (x) => !gone.has(String(x.SkuId ?? '')) && String(x.Status ?? '').toLowerCase() !== 'deleted',
+      );
+      if (!rest.length) throw new MarketplaceError('rejected', 'last_variant', 'Không gỡ được SKU cuối cùng của sản phẩm trên sàn; tắt SKU');
+      await removeSkus(accessToken, itemId, skuIds);
     },
     // UpdateProduct (open.lazada.com "Update a product", tra 11/11/2026): payload như `/product/create`, `SkuId` bắt buộc
     // (mã 4216), không đổi được SellerSku; `Status: active` bật lại SKU đã tắt (lazada.md §11.4). Trạng thái sau khi ghi
@@ -1136,6 +1275,45 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
       if (!after || after.state === 'review' || after.state === 'rejected') return { live: false };
       if (after.state === 'live') return { live: true };
       throw new MarketplaceError('rejected', 'still_inactive', `Sàn chưa bật lại sản phẩm (trạng thái ${after.state})`);
+    },
+    // Đổi category sản phẩm đang bán (#467): UpdateProduct chỉ gửi ItemId, PrimaryCategory, Attributes và SkuId của từng SKU
+    // (open.lazada.com "Update a product": cập nhật thuộc tính hay SKU của sản phẩm có sẵn; 4108 thiếu thuộc tính bắt buộc
+    // sau đổi category, E201 CategoryId sai đều là sàn từ chối). Không gửi tên, mô tả, ảnh, giá, tồn, Status, brand mặc định
+    // nên sàn giữ nguyên. Đọc `/product/item/get` trước và sau để so; SKU đã tắt mà bật lại thì tắt lại từng SKU.
+    async changeCategory(accessToken, externalProductId, input) {
+      const read = async () => (await call(config.apiUrl, '/product/item/get', { access_token: accessToken, item_id: externalProductId }, 'GET')).data;
+      const before = await read();
+      const skuIds = lazadaSkuViews(before).map((s) => s.skuId);
+      const payload = JSON.stringify({
+        Request: {
+          Product: {
+            ItemId: externalProductId,
+            PrimaryCategory: input.externalCategoryId,
+            Attributes: { ...flatAttributes(input.attributes), ...(await deliveryOptions(accessToken, externalProductId)) },
+            Skus: { Sku: skuIds.map((SkuId) => ({ SkuId })) },
+          },
+        },
+      });
+      await call(config.apiUrl, '/product/update', { access_token: accessToken, payload }, 'FORM');
+      const after = await read();
+      const mismatch = lazadaCategoryMismatch(before, after);
+      // Quy tắc trạng thái: SKU đã tắt (hoặc listing app đang ẩn) phải còn tắt sau khi sửa.
+      const reactivated = lazadaReactivated(before, after, input.keepDeactivated === true);
+      let failedOff = false;
+      for (const skuId of reactivated) {
+        try {
+          await deactivateSku(accessToken, externalProductId, skuId);
+        } catch (err) {
+          if (!(err instanceof MarketplaceError)) throw err;
+          failedOff = true;
+        }
+      }
+      if (failedOff) mismatch.push('bật lại SKU đang tắt và chưa tắt lại được; tắt trên Seller Center');
+      // Lazada áp category ngay (gọi thật 20/11/2026): trả category đọc lại để ghi vào listing, khác category gửi lên thì lệch
+      const category = (after as { primary_category?: unknown } | undefined)?.primary_category;
+      const externalCategoryId = category == null || category === '' ? undefined : String(category);
+      if (externalCategoryId && externalCategoryId !== input.externalCategoryId) mismatch.push(`vẫn ở category ${externalCategoryId}`);
+      return { underReview: lazadaUnderReview(after), mismatch, ...(externalCategoryId && { externalCategoryId }) };
     },
     getSkus,
     // Số sản phẩm: một lời gọi `limit=1`, đọc `total_products` (#198/#284: đọc từng trang quá hạn 10 giây với gian hàng
@@ -1188,19 +1366,7 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
       }
       return partResults(items, errors.stock, errors.price);
     },
-    async deactivate(accessToken, externalProductId, externalSkuId) {
-      const apiRequestBody =
-        `<Request><Product><ItemId>${xml(externalProductId)}</ItemId>` +
-        `<Skus><SkuId>${xml(externalSkuId)}</SkuId></Skus></Product></Request>`;
-      // E0004 "Product Status not online" (tài liệu DeactivateProduct: "already in the Inactive state"): đọc lại trạng thái,
-      // đã tắt thì coi là xong như TikTok; còn chờ duyệt hay đang bán thì ném lại lỗi gốc (#359).
-      try {
-        await call(config.apiUrl, '/product/deactivate', { access_token: accessToken, apiRequestBody }, 'FORM');
-      } catch (err) {
-        if (err instanceof MarketplaceError && err.platformCode === 'E0004' && (await inactiveOnPlatform(accessToken, externalProductId, externalSkuId))) return;
-        throw err;
-      }
-    },
+    deactivate: deactivateSku,
     // Hiện lại SKU (#224, lazada.md §11.4): `/product/update` `Status: active` về Active ngay, không qua QC, giữ giá, tồn.
     // Chỉ gửi SkuId, Status và thuộc tính giao hàng đang có (update tự bật giao hàng khi không gửi).
     async activate(accessToken, externalProductId, externalSkuId) {
@@ -1350,5 +1516,7 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
         };
       });
     },
+    // Xoá sản phẩm sàn cho gom lại dữ liệu cũ (#295).
+    ...lazadaDeleteMethods((apiPath, params, method) => call(config.apiUrl, apiPath, params, method)),
   };
 }

@@ -15,16 +15,15 @@ import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
 import { fakeAdapter, seedSpecs } from './helpers.ts';
 
-const categoryId = randomUUID();
 const productId = randomUUID();
 const variant = (sku: string, extra: Partial<ListingVariant> = {}): ListingVariant => ({
   id: randomUUID(),
   productId,
   productName: 'Áo thun',
   sku,
-  categoryId,
   attributesLabel: 'Đen / M',
   productCode: 'SP-TEST',
+  groupId: 'GROUP-TEST',
   attributes: [],
   archived: false,
   businessStatus: 'selling',
@@ -37,11 +36,14 @@ const variant = (sku: string, extra: Partial<ListingVariant> = {}): ListingVaria
 });
 const variants: ListingVariant[] = [];
 const noPrice = new Set<string>();
+/** SKU kho chưa có số tồn (#460): chưa nhập, chưa kiểm kê */
+const notCounted = new Set<string>();
 const port = {
   variants: async (ids?: readonly string[]) => variants.filter((v) => !ids || ids.includes(v.id)),
   standardPrices: async (ids: readonly string[]) => new Map(ids.map((id) => [id, noPrice.has(id) ? null : new Decimal(150000)])),
   productImageUrls: async () => new Map<string, string[]>(),
   availableOf: async (ids: readonly string[]) => new Map(ids.map((id) => [id, 7])),
+  countedOf: async (ids: readonly string[]) => new Set(ids.filter((id) => !notCounted.has(id))),
 };
 setProductPort(port);
 
@@ -111,7 +113,7 @@ const auth = (r: request.Test) => r.set('Authorization', `Bearer ${company.ceo.t
 const job = (listingId: string, imageUrls = ['https://img.test/a.png']) => ({ companyId: company.companyId, shopId, listingId, imageUrls });
 
 beforeAll(async () => {
-  company = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany({ optionalModules: [] });
   const res = await auth(app().post('/api/v1/channel/shops/lazada/token')).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
   shopId = res.body.shop.id;
 });
@@ -194,7 +196,7 @@ describe('việc nền channel.listing_push', () => {
     expect(v.sku).not.toBe('SKU-TREN-SAN');
   });
 
-  it('review BE2 P1-2: spec lưu mã lựa chọn → lên sàn là nhãn; xuất xứ (ISO của catalog) thành nhãn sàn, thương hiệu catalog thắng khoá chép', async () => {
+  it('review BE2 P1-2: spec lưu mã lựa chọn → lên sàn là nhãn; xuất xứ (ISO của catalog) thành nhãn sàn, thương hiệu ghi đè trong spec thắng catalog (E179, #509)', async () => {
     const leaf = String(700_000_000 + Math.floor(Math.random() * 99_000_000));
     const option = (id: string, label: string) => ({ id, label });
     const base = { kind: 'property' as const, allowCustom: false, required: false, requiredWhen: null, isKey: false, raw: {} };
@@ -218,7 +220,7 @@ describe('việc nền channel.listing_push', () => {
     expect(await listing(id)).toMatchObject({ push_error: null });
     expect(createProduct.mock.calls[0]![1]).toMatchObject({
       externalCategoryId: leaf,
-      attributes: { clothing_material: 'Denim', occasion: ['Thể thao', 'Bình thường'], country_origin_hb: 'Việt Nam', brand: 'Acme' },
+      attributes: { clothing_material: 'Denim', occasion: ['Thể thao', 'Bình thường'], country_origin_hb: 'Việt Nam', brand: 'Cũ' },
     });
   });
 
@@ -546,12 +548,37 @@ describe('việc nền channel.listing_push', () => {
       expect(await listing(id)).toMatchObject({ platform_stock: 0, stock_sync: 'pending' });
     });
 
-    it('đẩy lại sản phẩm đã có trên sàn cũng gửi tồn 0', async () => {
+    it('đẩy lại sản phẩm đã có trên sàn không gửi tồn (giữ số trên sàn, #460), listing chờ đẩy tồn', async () => {
       const { id, v } = await pushing({ external_product_id: 'P9', external_sku_id: 'S9', external_image_urls: ['https://slatic.test/cu.png'] });
       await staleElsewhere(v);
       await runListingPush(port, job(id, []));
-      expect(updateProduct.mock.calls[0]![3].quantity).toBe(0);
+      expect(updateProduct.mock.calls[0]![3]).not.toHaveProperty('quantity');
       expect(await listing(id)).toMatchObject({ stock_sync: 'pending' });
+    });
+  });
+
+  describe('SKU kho chưa có số (#460, Documents/25 §6.4)', () => {
+    it('đẩy lại sản phẩm đã có trên sàn: không gửi tồn, giữ số trên sàn; listing chờ đẩy tồn', async () => {
+      const { id, v } = await pushing({ external_product_id: 'P8', external_sku_id: 'S8', external_image_urls: ['https://slatic.test/cu.png'] });
+      notCounted.add(v.id);
+      await runListingPush(port, job(id, []));
+      expect(updateProduct).toHaveBeenCalledTimes(1);
+      expect(updateProduct.mock.calls[0]![3]).not.toHaveProperty('quantity');
+      expect(await listing(id)).toMatchObject({ status: 'live', stock_sync: 'pending' });
+    });
+
+    it('SKU đã có số thì đẩy lại gửi số có thể bán như cũ', async () => {
+      const { id } = await pushing({ external_product_id: 'P7', external_sku_id: 'S7', external_image_urls: ['https://slatic.test/cu.png'] });
+      await runListingPush(port, job(id, []));
+      expect(updateProduct.mock.calls[0]![3].quantity).toBe(7);
+    });
+
+    it('tạo mới trên sàn gửi 0 (sàn chưa có gì để đè)', async () => {
+      const { id, v } = await pushing();
+      notCounted.add(v.id);
+      await runListingPush(port, job(id));
+      expect(createProduct.mock.calls[0]![1].quantity).toBe(0);
+      expect(await listing(id)).toMatchObject({ platform_stock: 0 });
     });
   });
 

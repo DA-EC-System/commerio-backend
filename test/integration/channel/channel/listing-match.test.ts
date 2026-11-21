@@ -26,9 +26,9 @@ const newVariant = (extra: Partial<ListingVariant> = {}) => {
     productId: randomUUID(),
     productName: 'Cốc sứ',
     sku: `CMR-${randomUUID().slice(0, 8)}`,
-    categoryId: randomUUID(),
     attributesLabel: 'Trắng',
     productCode: 'SP-TEST',
+    groupId: 'GROUP-TEST',
     attributes: [],
     archived: false,
     businessStatus: 'selling',
@@ -164,7 +164,7 @@ const accountIdOf = async (email: string) =>
   (await testPool().query<{ id: string }>('select id from core.accounts where email = $1', [email])).rows[0]!.id;
 
 beforeAll(async () => {
-  company = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany({ optionalModules: [] });
   admin = await addMember(company.companyId, 'admin');
   sale = await addMember(company.companyId, 'sale');
   const res = await as(app().post('/api/v1/channel/shops/lazada/token'), company.ceo.token).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
@@ -499,12 +499,13 @@ describe('đợt 2: đơn về giữa lúc đổi ghép (review #309 N1)', () =>
 });
 
 describe('đợt 2: 409 `version_conflict` kèm `current`', () => {
-  it('Listing đổi giữa lúc ghép đọc và lúc ghi → 409 `version_conflict` có `current` là listing mới nhất', async () => {
+  it('Request khác đổi ghép giữa lúc ghép đọc và lúc ghi → 409 `version_conflict` có `current` là listing mới nhất', async () => {
     const { r, listing } = await mapped();
+    const other = newVariant();
     const res = await raceBehindLock(
       async (holder) => {
         await holder.query('select id from channel.shops where id = $1 for share', [shopId]);
-        await holder.query('update channel.listings set version = version + 1 where id = $1', [listing.id]);
+        await holder.query('update channel.listings set variant_id = $2, version = version + 1 where id = $1', [listing.id, other.id]);
       },
       1,
       () => match(admin.token, { externalSkuId: r.externalSkuId, variantId: newVariant().id }).then((x) => x),
@@ -512,6 +513,44 @@ describe('đợt 2: 409 `version_conflict` kèm `current`', () => {
     expect(res.status).toBe(409);
     expect(res.body.type).toMatch(/version_conflict$/);
     expect(ChannelListing.parse(res.body.current)).toMatchObject({ id: listing.id, version: listing.version + 1 });
+    expect((await rowOf(r.externalSkuId)).variant_id).toBe(other.id);
+  });
+
+  it('Request khác gỡ listing giữa lúc ghép đọc và lúc ghi → 409 `version_conflict`, `current` null', async () => {
+    const { r, listing } = await mapped();
+    const res = await raceBehindLock(
+      async (holder) => {
+        await holder.query('select id from channel.shops where id = $1 for share', [shopId]);
+        await holder.query(`update channel.listings set status = 'delisted', version = version + 1 where id = $1`, [listing.id]);
+      },
+      1,
+      () => match(admin.token, { externalSkuId: r.externalSkuId, variantId: newVariant().id }).then((x) => x),
+    );
+    expect(res.status).toBe(409);
+    expect(res.body.type).toMatch(/version_conflict$/);
+    expect(res.body.current).toBeNull();
+  });
+
+  it('#411: việc đẩy tồn, giá ghi listing giữa lúc ghép đọc và lúc ghi (chỉ tăng `version`) → ghép vẫn 200', async () => {
+    const { r, listing } = await mapped();
+    const next = newVariant();
+    const res = await raceBehindLock(
+      async (holder) => {
+        await holder.query('select id from channel.shops where id = $1 for share', [shopId]);
+        // Như `pushPending` ghi kết quả: bộ ba đồng bộ, giá đã gửi, tăng `version`; không đổi cột ghép.
+        await holder.query(
+          `update channel.listings set stock_sync = 'synced', price_sync = 'synced', listed_price = 50000, version = version + 3 where id = $1`,
+          [listing.id],
+        );
+      },
+      1,
+      () => match(admin.token, { externalSkuId: r.externalSkuId, variantId: next.id }).then((x) => x),
+    );
+    expect(res.status).toBe(200);
+    const after = ChannelListing.parse(res.body);
+    expect(after).toMatchObject({ id: listing.id, stockSync: 'pending', priceSync: 'pending' });
+    expect(after.version).toBeGreaterThan(listing.version + 3);
+    expect((await rowOf(r.externalSkuId)).variant_id).toBe(next.id);
   });
 });
 

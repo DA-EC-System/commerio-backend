@@ -4,6 +4,7 @@
 import { requireCompanyId } from '../../../../shared/db/client.ts';
 import { type MissingField, type ParentFields, type Readiness, readinessOf } from '../domain/labels.ts';
 import { productImageRows } from '../repository/product-images.ts';
+import { missingRequiredSpecs } from '../repository/specs.ts';
 import { partialVariantImageProducts } from '../repository/variant-images.ts';
 import { findVariants, type VariantRow } from '../repository/variants.ts';
 import { isUuid } from './errors.ts';
@@ -19,24 +20,26 @@ export interface SkuLabels extends ListingPresence {
   minQty: number | null;
 }
 
-/** Trường chung của cha mà bên gọi tự có; ảnh phân loại một phần do `skuLabels` hỏi một lần cho cả lô. */
-export type ParentInput = Omit<ParentFields, 'variantImagesPartial'>;
+/** Trường chung của cha mà bên gọi tự có; ảnh phân loại một phần, thông số thiếu do `skuLabels` hỏi một lần cho cả lô. */
+export type ParentInput = Omit<ParentFields, 'variantImagesPartial' | 'specsMissing'>;
 
-/** Nhãn cho các SKU (có thể của nhiều sản phẩm); `parentOf` cho trường chung của cha (tên, danh mục, số ảnh). */
+/** Nhãn cho các SKU (có thể của nhiều sản phẩm); `parentOf` cho trường chung của cha (tên, số ảnh). */
 export async function skuLabels(
   ctx: CatalogContext,
   rows: readonly VariantRow[],
   parentOf: (productId: string) => ParentInput,
 ): Promise<Map<string, SkuLabels>> {
   const ids = rows.map((v) => v.id);
-  const partial = await partialVariantImageProducts([...new Set(rows.map((v) => v.productId))]);
+  const productIds = [...new Set(rows.map((v) => v.productId))];
+  const partial = await partialVariantImageProducts(productIds);
+  const specs = await missingRequiredSpecs(productIds);
   // Tuần tự: hai cổng dùng chung một client của giao dịch.
   const minQty = await requirePort(ctx, 'minQtyOf')(ids);
   const presence = await requirePort(ctx, 'listingPresenceOf')(ids);
   return new Map(
     rows.map((v) => {
       const q = minQty.get(v.id) ?? null;
-      const parent = { ...parentOf(v.productId), variantImagesPartial: partial.has(v.productId) };
+      const parent = { ...parentOf(v.productId), variantImagesPartial: partial.has(v.productId), specsMissing: specs.has(v.productId) };
       return [v.id, { ...readinessOf(parent, { ...v, minQty: q }), minQty: q, ...(presence.get(v.id) ?? NOT_LISTED) }];
     }),
   );
@@ -57,6 +60,7 @@ export async function variantReadinessOf(
   const productIds = [...new Set(rows.map((v) => v.productId))];
   const withImage = new Set((await productImageRows(productIds, 1)).map((i) => i.productId));
   const partial = await partialVariantImageProducts(productIds);
+  const specs = await missingRequiredSpecs(productIds);
   const minQty = await minQtyOf(rows.map((v) => v.id));
   return new Map(
     rows.map((v) => [
@@ -64,9 +68,9 @@ export async function variantReadinessOf(
       readinessOf(
         {
           name: v.productName,
-          categoryId: v.categoryId,
           imageCount: withImage.has(v.productId) ? 1 : 0,
           variantImagesPartial: partial.has(v.productId),
+          specsMissing: specs.has(v.productId),
         },
         { ...v, minQty: minQty.get(v.id) ?? null },
       ),

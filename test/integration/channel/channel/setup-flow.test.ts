@@ -23,9 +23,9 @@ const variant = (sku: string, productName = 'Áo', attributesLabel = ''): Listin
   productId: randomUUID(),
   productName,
   sku,
-  categoryId: randomUUID(),
   attributesLabel,
   productCode: 'SP-TEST',
+  groupId: 'GROUP-TEST',
   attributes: [],
   archived: false,
   businessStatus: 'selling',
@@ -104,7 +104,7 @@ async function shopRow(id: string) {
 
 describe('mốc kéo đơn và gian hàng đầu tiên (AC-1, AC-2, AC-4, AC-5, AC-18)', () => {
   it('AC-2, AC-5: GET /setup trả proposedCutoffAt lúc gọi; công ty chưa có gian hàng xong thiết lập là gian hàng đầu tiên', async () => {
-    const c = await createCompany({ optionalModules: ['channel'] });
+    const c = await createCompany({ optionalModules: [] });
     const shopId = await connectingShop(c);
     const t0 = Date.now();
     const res = await preview(c, shopId);
@@ -123,7 +123,7 @@ describe('mốc kéo đơn và gian hàng đầu tiên (AC-1, AC-2, AC-4, AC-5, 
     ['chỉ gian hàng đang chờ kiểm kê', waiting, true],
     ['chỉ gian hàng khác đang thiết lập', {}, true],
   ])('AC-5: %s → firstShopOfCompany theo cột thứ ba', async (_name, cols, expected) => {
-    const c = await createCompany({ optionalModules: ['channel'] });
+    const c = await createCompany({ optionalModules: [] });
     const shopId = await connectingShop(c);
     await otherShop(c.companyId, cols);
     const res = await preview(c, shopId);
@@ -131,14 +131,14 @@ describe('mốc kéo đơn và gian hàng đầu tiên (AC-1, AC-2, AC-4, AC-5, 
   });
 
   it('AC-5: gian hàng xong thiết lập của công ty khác không làm công ty này thành "không phải đầu tiên"', async () => {
-    const c = await createCompany({ optionalModules: ['channel'] });
+    const c = await createCompany({ optionalModules: [] });
     const shopId = await connectingShop(c);
     await otherShop(randomUUID(), setUp);
     expect((await preview(c, shopId)).body.firstShopOfCompany).toBe(true);
   });
 
   it('AC-4: gian hàng đầu tiên gửi push → 422 errors.openingStock; đọc lại vẫn connecting, không listing', async () => {
-    const c = await createCompany({ optionalModules: ['channel'] });
+    const c = await createCompany({ optionalModules: [] });
     const shopId = await connectingShop(c);
     const res = await setup(c, shopId, { externalSkuIds: ['sku-1'], openingStock: 'push' });
     expect(res.status).toBe(422);
@@ -147,7 +147,7 @@ describe('mốc kéo đơn và gian hàng đầu tiên (AC-1, AC-2, AC-4, AC-5, 
   });
 
   it('AC-1: orderCutoffAt trong body bị bỏ qua (kể cả tương lai, sai định dạng); mốc = lúc gọi POST', async () => {
-    const c = await createCompany({ optionalModules: ['channel'] });
+    const c = await createCompany({ optionalModules: [] });
     const shopId = await connectingShop(c);
     await otherShop(c.companyId, setUp);
     const t0 = Date.now();
@@ -163,7 +163,7 @@ describe('mốc kéo đơn và gian hàng đầu tiên (AC-1, AC-2, AC-4, AC-5, 
   });
 
   it.each(['push', 'stocktake'])('AC-18: công ty đang chờ phiếu đầu kỳ → %s 422 errors.openingStock, vẫn connecting', async (mode) => {
-    const c = await createCompany({ optionalModules: ['channel'] });
+    const c = await createCompany({ optionalModules: [] });
     const shopId = await connectingShop(c);
     await otherShop(c.companyId, waiting);
     const res = await setup(c, shopId, { externalSkuIds: ['sku-1'], openingStock: mode });
@@ -183,7 +183,7 @@ describe('kiểm kê đầu kỳ và chế độ chờ (AC-6, AC-7, AC-8, AC-9, 
   }
 
   it('AC-7: cổng mặc định lập phiếu kiểm kê đầu kỳ thật của inventory (#245), gian hàng chờ kiểm kê phiếu nháp', async () => {
-    const c = await createCompany({ optionalModules: ['channel'] });
+    const c = await createCompany({ optionalModules: [] });
     const shopId = await connectingShop(c);
     const res = await setup(c, shopId, { externalSkuIds: ['sku-1'], openingStock: 'stocktake' });
     expect(res.status, JSON.stringify(res.body)).toBe(200);
@@ -197,7 +197,7 @@ describe('kiểm kê đầu kỳ và chế độ chờ (AC-6, AC-7, AC-8, AC-9, 
       createOpeningStocktake: () => Promise.reject(new AppError(503, 'service_unavailable', 'Kho đang bận')),
       openingStocktakeStatusOf: async () => new Map(),
     });
-    const c = await createCompany({ optionalModules: ['channel'] });
+    const c = await createCompany({ optionalModules: [] });
     const shopId = await connectingShop(c);
     const res = await setup(c, shopId, { externalSkuIds: ['sku-1'], openingStock: 'stocktake' });
     expect(res.status).toBe(503);
@@ -206,7 +206,7 @@ describe('kiểm kê đầu kỳ và chế độ chờ (AC-6, AC-7, AC-8, AC-9, 
 
   it('AC-6, AC-9: stocktake lập phiếu một lần, gian hàng active chờ kiểm kê; lúc thiết lập chỉ đẩy giá', async () => {
     const create = fakeStocktake();
-    const c = await createCompany({ optionalModules: ['channel'] });
+    const c = await createCompany({ optionalModules: [] });
     const shopId = await connectingShop(c);
     const t0 = Date.now();
     const res = await setup(c, shopId, { externalSkuIds: ['sku-1'], openingStock: 'stocktake' });
@@ -243,7 +243,7 @@ describe('kiểm kê đầu kỳ và chế độ chờ (AC-6, AC-7, AC-8, AC-9, 
   });
 
   it('AC-16 (phần thiết lập): push chỉ đẩy giá, tồn chờ lượt kéo đơn còn mở', async () => {
-    const c = await createCompany({ optionalModules: ['channel'] });
+    const c = await createCompany({ optionalModules: [] });
     const shopId = await connectingShop(c);
     await otherShop(c.companyId, setUp);
     expect((await setup(c, shopId, { externalSkuIds: ['sku-1'], openingStock: 'push' })).status).toBe(200);
@@ -253,7 +253,7 @@ describe('kiểm kê đầu kỳ và chế độ chờ (AC-6, AC-7, AC-8, AC-9, 
   });
 
   it('#396: listing ghép lúc thiết lập lấy tên trên sàn làm mốc "tên lúc ghép"', async () => {
-    const c = await createCompany({ optionalModules: ['channel'] });
+    const c = await createCompany({ optionalModules: [] });
     const shopId = await connectingShop(c);
     await otherShop(c.companyId, setUp);
     expect((await setup(c, shopId, { externalSkuIds: ['sku-1'], openingStock: 'push' })).status).toBe(200);
@@ -263,7 +263,7 @@ describe('kiểm kê đầu kỳ và chế độ chờ (AC-6, AC-7, AC-8, AC-9, 
 
   it('AC-18: hai gian hàng cùng công ty lập phiếu đầu kỳ cùng lúc → đúng một 200, một 422, một phiếu', async () => {
     const create = fakeStocktake();
-    const c = await createCompany({ optionalModules: ['channel'] });
+    const c = await createCompany({ optionalModules: [] });
     const [a, b] = [await connectingShop(c), await connectingShop(c)];
     const res = await Promise.all([a, b].map((id) => setup(c, id, { openingStock: 'stocktake' })));
     expect(res.map((r) => r.status).sort()).toEqual([200, 422]);
@@ -279,7 +279,7 @@ describe('kiểm kê đầu kỳ và chế độ chờ (AC-6, AC-7, AC-8, AC-9, 
 
 describe('quyền của thiết lập (AC-S1)', () => {
   it('401 thiếu token; 403 Sale, Kho (C1-01q); 403 module_disabled; 404 gian hàng công ty khác', async () => {
-    const c = await createCompany({ optionalModules: ['channel'] });
+    const c = await createCompany({ optionalModules: [] });
     const shopId = await connectingShop(c);
     expect((await app().get(`/api/v1/channel/shops/${shopId}/setup`)).status).toBe(401);
     for (const role of ['sale', 'warehouse'] as const) {
@@ -288,7 +288,7 @@ describe('quyền của thiết lập (AC-S1)', () => {
       expect(res.status).toBe(403);
       expect(res.body.code).toBe('forbidden');
     }
-    const other = await createCompany({ optionalModules: ['channel'] });
+    const other = await createCompany({ optionalModules: [] });
     expect((await preview(other, shopId)).status).toBe(404);
     await setModuleEnabled(c.companyId, 'channel', false);
     const off = await preview(c, shopId);

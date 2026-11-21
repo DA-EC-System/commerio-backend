@@ -1,10 +1,14 @@
 import { type Response, Router } from 'express';
 import { getAuth } from '../../../../shared/auth/authenticate.ts';
-import { getAccess } from '../../../../shared/auth/authorize.ts';
+import { anyOf, getAccess } from '../../../../shared/auth/authorize.ts';
 import { moduleOfPermission } from '../../../../shared/auth/company-access.ts';
+import { AppError } from '../../../../shared/errors/app-error.ts';
 import { validate, validated } from '../../../../shared/http/validate.ts';
 import * as attributes from '../service/attributes.ts';
-import * as categories from '../service/categories.ts';
+import * as groups from '../service/groups.ts';
+import { getGroupTemplate, putGroupTemplate } from '../service/group-templates.ts';
+import * as specFields from '../service/spec-fields.ts';
+import * as settings from '../service/settings.ts';
 import { type BusinessActor, changeBusinessStatus } from '../service/business-status.ts';
 import { type BulkEditContext, type BulkViewer, listBulkEdit, saveBulkEdit } from '../service/bulk-edit.ts';
 import * as products from '../service/products.ts';
@@ -15,17 +19,29 @@ import type { CatalogContext } from '../service/standard-price.ts';
 import {
   AddVariantBody,
   AttributeBody,
+  AttributesQuery,
   BusinessStatusBody,
   BulkEditQuery,
   BulkSaveBody,
-  CategoryBody,
   CreateProductBody,
+  AttributeValueBody,
+  AttributeValueParams,
+  GroupBody,
+  GroupHiddenBody,
+  GroupListQuery,
+  GroupTemplateBody,
+  SpecOptionBody,
+  SpecOptionParams,
+  MoveProductsBody,
   IdParams,
   ProductListQuery,
   SetVariantImageBody,
+  SettingsBody,
+  SpecFieldBody,
   UpdateAttributeBody,
-  UpdateCategoryBody,
+  UpdateGroupBody,
   UpdateProductBody,
+  UpdateSpecFieldBody,
   UpdateVariantBody,
   VariantImageParams,
   VariantParams,
@@ -38,6 +54,7 @@ function caller(res: Response): Caller {
 }
 
 const MANAGE = 'catalog.product.manage';
+const SETUP = 'catalog.group.manage';
 
 /** Quyền phụ của route (`getAccess`, đọc DB lúc `authorize`); quyền của phân hệ đang tắt không tính. */
 function can(res: Response, permission: string): boolean {
@@ -62,30 +79,103 @@ function bulkViewer(res: Response): BulkViewer {
 export function catalogRouter(ctx: CatalogContext): Router {
   const router = Router();
   const view = ctx.authorize('catalog.product.view');
-  const setup = ctx.authorize('catalog.category.manage');
+  const setup = ctx.authorize(SETUP);
   const manage = ctx.authorize(MANAGE);
+  // Tạo nhanh nhóm (chỉ tên) từ form sản phẩm, đề nghị nhập (21 mục 5.2). `purchasing.request.manage` đứng cuối: `anyOf`
+  // chỉ thử tiếp khi `forbidden`, phân hệ purchasing tắt thì `module_disabled` trả ngay.
+  const quickGroup = anyOf(setup, manage, ctx.authorize('purchasing.request.manage'));
 
-  router.get('/categories', view, async (_req, res) => {
-    res.json(await categories.listCategories(caller(res).companyId));
+  router.get('/groups', view, validate({ query: GroupListQuery }), async (_req, res) => {
+    const { includeHidden } = validated<typeof GroupListQuery>(res, 'query');
+    res.json(await groups.listGroups(caller(res).companyId, { includeHidden }));
   });
 
-  router.post('/categories', setup, validate({ body: CategoryBody }), async (_req, res) => {
-    res.status(201).json(await categories.createCategory(caller(res), validated<typeof CategoryBody>(res, 'body')));
-  });
-
-  router.put('/categories/:id', setup, validate({ params: IdParams, body: UpdateCategoryBody }), async (_req, res) => {
+  // Ẩn, hiện nhóm nền tảng cho công ty (Documents/21 mục 5.6).
+  router.put('/groups/:id/hidden', setup, validate({ params: IdParams, body: GroupHiddenBody }), async (_req, res) => {
     const { id } = validated<typeof IdParams>(res, 'params');
-    res.json(await categories.updateCategory(caller(res), id, validated<typeof UpdateCategoryBody>(res, 'body')));
+    res.json(await groups.setHidden(caller(res), id, validated<typeof GroupHiddenBody>(res, 'body').hidden));
   });
 
-  router.delete('/categories/:id', setup, validate({ params: IdParams, query: VersionQuery }), async (_req, res) => {
+  router.post('/groups', quickGroup, validate({ body: GroupBody }), async (_req, res) => {
+    const input = validated<typeof GroupBody>(res, 'body');
+    if (input.suggest !== undefined && !can(res, SETUP)) {
+      throw new AppError(403, 'forbidden', 'Bạn không có quyền đặt gợi ý của nhóm hàng');
+    }
+    if (input.copyTemplateFromGroupId !== undefined && !can(res, SETUP)) {
+      throw new AppError(403, 'forbidden', 'Bạn không có quyền chép mẫu thông số của nhóm hàng');
+    }
+    res.status(201).json(await groups.createGroup(caller(res), input));
+  });
+
+  router.put('/groups/:id', setup, validate({ params: IdParams, body: UpdateGroupBody }), async (_req, res) => {
     const { id } = validated<typeof IdParams>(res, 'params');
-    await categories.deleteCategory(caller(res), id, validated<typeof VersionQuery>(res, 'query').version);
+    res.json(await groups.updateGroup(caller(res), id, validated<typeof UpdateGroupBody>(res, 'body')));
+  });
+
+  router.delete('/groups/:id', setup, validate({ params: IdParams, query: VersionQuery }), async (_req, res) => {
+    const { id } = validated<typeof IdParams>(res, 'params');
+    await groups.deleteGroup(caller(res), id, validated<typeof VersionQuery>(res, 'query').version);
     res.status(204).end();
   });
 
-  router.get('/attributes', view, async (_req, res) => {
-    res.json(await attributes.listAttributes(caller(res).companyId));
+  router.post('/groups/:id/move-products', manage, validate({ params: IdParams, body: MoveProductsBody }), async (_req, res) => {
+    const { id } = validated<typeof IdParams>(res, 'params');
+    res.json(await groups.moveProducts(caller(res), id, validated<typeof MoveProductsBody>(res, 'body')));
+  });
+
+  // Mẫu thông số và trục chuẩn của nhóm (#510, Documents/21 mục 5.5).
+  router.get('/groups/:id/template', view, validate({ params: IdParams }), async (_req, res) => {
+    const { id } = validated<typeof IdParams>(res, 'params');
+    res.json(await getGroupTemplate(caller(res).companyId, id));
+  });
+
+  router.put('/groups/:id/template', setup, validate({ params: IdParams, body: GroupTemplateBody }), async (_req, res) => {
+    const { id } = validated<typeof IdParams>(res, 'params');
+    res.json(await putGroupTemplate(caller(res), id, validated<typeof GroupTemplateBody>(res, 'body')));
+  });
+
+  // Thư viện thông số (#510, Documents/21 mục 5.5).
+  router.get('/spec-fields', view, async (_req, res) => {
+    res.json(await specFields.listSpecFields(caller(res).companyId));
+  });
+
+  router.post('/spec-fields', setup, validate({ body: SpecFieldBody }), async (_req, res) => {
+    res.status(201).json(await specFields.createSpecField(caller(res), validated<typeof SpecFieldBody>(res, 'body')));
+  });
+
+  router.put('/spec-fields/:id', setup, validate({ params: IdParams, body: UpdateSpecFieldBody }), async (_req, res) => {
+    const { id } = validated<typeof IdParams>(res, 'params');
+    res.json(await specFields.updateSpecField(caller(res), id, validated<typeof UpdateSpecFieldBody>(res, 'body')));
+  });
+
+  // Lựa chọn riêng của công ty trên thông số nền tảng (Documents/21 mục 5.6).
+  router.post('/spec-fields/:id/options', setup, validate({ params: IdParams, body: SpecOptionBody }), async (_req, res) => {
+    const { id } = validated<typeof IdParams>(res, 'params');
+    res.status(201).json(await specFields.addSpecOption(caller(res), id, validated<typeof SpecOptionBody>(res, 'body').value));
+  });
+
+  router.delete('/spec-fields/:id/options/:optionId', setup, validate({ params: SpecOptionParams }), async (_req, res) => {
+    const { id, optionId } = validated<typeof SpecOptionParams>(res, 'params');
+    await specFields.removeSpecOption(caller(res), id, optionId);
+    res.status(204).end();
+  });
+
+  router.delete('/spec-fields/:id', setup, validate({ params: IdParams, query: VersionQuery }), async (_req, res) => {
+    const { id } = validated<typeof IdParams>(res, 'params');
+    await specFields.deleteSpecField(caller(res), id, validated<typeof VersionQuery>(res, 'query').version);
+    res.status(204).end();
+  });
+
+  router.get('/settings', view, async (_req, res) => {
+    res.json(await settings.getSettings(caller(res).companyId));
+  });
+
+  router.put('/settings', setup, validate({ body: SettingsBody }), async (_req, res) => {
+    res.json(await settings.updateSettings(caller(res), validated<typeof SettingsBody>(res, 'body')));
+  });
+
+  router.get('/attributes', view, validate({ query: AttributesQuery }), async (_req, res) => {
+    res.json(await attributes.listAttributes(caller(res).companyId, validated<typeof AttributesQuery>(res, 'query')));
   });
 
   router.post('/attributes', setup, validate({ body: AttributeBody }), async (_req, res) => {
@@ -95,6 +185,18 @@ export function catalogRouter(ctx: CatalogContext): Router {
   router.put('/attributes/:id', setup, validate({ params: IdParams, body: UpdateAttributeBody }), async (_req, res) => {
     const { id } = validated<typeof IdParams>(res, 'params');
     res.json(await attributes.updateAttribute(caller(res), id, validated<typeof UpdateAttributeBody>(res, 'body')));
+  });
+
+  // Giá trị riêng của công ty trên thuộc tính nền tảng (Documents/21 mục 5.6).
+  router.post('/attributes/:id/values', setup, validate({ params: IdParams, body: AttributeValueBody }), async (_req, res) => {
+    const { id } = validated<typeof IdParams>(res, 'params');
+    res.status(201).json(await attributes.addAttributeValue(caller(res), id, validated<typeof AttributeValueBody>(res, 'body')));
+  });
+
+  router.delete('/attributes/:id/values/:valueId', setup, validate({ params: AttributeValueParams }), async (_req, res) => {
+    const { id, valueId } = validated<typeof AttributeValueParams>(res, 'params');
+    await attributes.removeAttributeValue(caller(res), id, valueId);
+    res.status(204).end();
   });
 
   router.delete('/attributes/:id', setup, validate({ params: IdParams, query: VersionQuery }), async (_req, res) => {

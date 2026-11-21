@@ -17,7 +17,6 @@ import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
 import { activateShop, fakeAdapter, seedSpecs } from './helpers.ts';
 
-const categoryId = randomUUID();
 const variants: ListingVariant[] = [];
 const variant = (): ListingVariant => {
   const v: ListingVariant = {
@@ -25,9 +24,9 @@ const variant = (): ListingVariant => {
     productId: randomUUID(),
     productName: 'Áo thun',
     sku: `CMR-${randomUUID().slice(0, 8)}`,
-    categoryId,
     attributesLabel: 'Đen / M',
     productCode: 'SP-TEST',
+    groupId: 'GROUP-TEST',
     attributes: [],
     archived: false,
     businessStatus: 'selling',
@@ -81,7 +80,7 @@ const edit = (listingId: string, version: number, token?: string) =>
   auth(app().post(`/api/v1/channel/shops/${shopId}/listings/${listingId}/update-content`), token).send({ version });
 
 beforeAll(async () => {
-  company = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany({ optionalModules: [] });
   const res = await auth(app().post('/api/v1/channel/shops/lazada/token')).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
   shopId = res.body.shop.id;
   await activateShop(shopId);
@@ -220,7 +219,7 @@ describe('POST /channel/shops/:id/listings/:listingId/update-content (#293)', ()
     expect(stale.body.current).toMatchObject({ id, status: 'live' });
     const sale = await addMember(company.companyId, 'sale');
     expect((await edit(id, version, sale.token)).status).toBe(403);
-    const other = await createCompany({ optionalModules: ['channel'] });
+    const other = await createCompany({ optionalModules: [] });
     const res = await auth(app().post(`/api/v1/channel/shops/${shopId}/listings/${id}/update-content`), other.ceo.token).send({ version });
     expect(res.status).toBe(404);
     expect(updateContent).not.toHaveBeenCalled();
@@ -309,3 +308,45 @@ describe('đồng bộ đọc bản sửa đang duyệt (#293)', () => {
   });
 });
 
+
+describe('update-content trên sản phẩm sàn app tạo theo cha (#295, §18.8.4)', () => {
+  /** Dòng `shop_products` `app` và hai listing `live` cùng sản phẩm sàn, hai biến thể cùng cha. */
+  async function family() {
+    const productId = randomUUID();
+    const ext = `P-${randomUUID().slice(0, 8)}`;
+    const { rows } = await testPool().query<{ id: string }>(
+      `insert into channel.shop_products (company_id, shop_id, product_id, origin, external_product_id) values ($1, $2, $3, 'app', $4) returning id`,
+      [company.companyId, shopId, productId, ext],
+    );
+    const spId = rows[0]!.id;
+    const [a, b] = [await listing({ external_product_id: ext, shop_product_id: spId }), await listing({ external_product_id: ext, shop_product_id: spId })];
+    for (const l of [a, b]) l.v.productId = productId;
+    await seed();
+    return { a, b };
+  }
+
+  it('gửi wholeProduct, tiêu đề là tên cha; phân loại anh em mang bản sửa đang duyệt', async () => {
+    const { a, b } = await family();
+    const res = await edit(a.id, a.version);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(updateContent.mock.calls[0]![2]).toMatchObject({ name: 'Áo thun', wholeProduct: true });
+    expect(await row(b.id)).toMatchObject({ status: 'live', revision_status: 'auditing' });
+  });
+
+  it('sàn ngừng bán để duyệt: phân loại anh em đang live cũng request_review', async () => {
+    const { a, b } = await family();
+    onContent = async () => ({ underReview: true });
+    expect((await edit(a.id, a.version)).status).toBe(200);
+    expect((await row(a.id)).status).toBe('under_review');
+    expect((await row(b.id)).status).toBe('under_review');
+    expect((await history(b.id)).at(-1)).toMatchObject({ from: 'live', to: 'under_review', action: 'request_review', actor_id: null });
+  });
+
+  it('listing không thuộc sản phẩm app (ghép, đẩy trước #295): không gửi wholeProduct, tiêu đề kèm nhãn biến thể', async () => {
+    const { id, version } = await listing();
+    expect((await edit(id, version)).status).toBe(200);
+    const sent = updateContent.mock.calls[0]![2];
+    expect(sent.name).toBe('Áo thun - Đen / M');
+    expect(sent.wholeProduct).toBeUndefined();
+  });
+});

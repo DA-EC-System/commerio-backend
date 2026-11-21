@@ -1,6 +1,8 @@
-// Thuộc tính và giá trị (UC-CP-01; Documents/21 5.2, 5.3, V21, V24).
+// Thuộc tính và giá trị (UC-CP-01; Documents/21 5.2, 5.3, 5.6, V21, V24). Thuộc tính nền tảng chỉ đọc; công ty thêm
+// được giá trị riêng vào thuộc tính nền tảng.
 import { withCompany } from '../../../../shared/db/client.ts';
-import { recordAudit } from '../../../core/index.ts';
+import { AppError } from '../../../../shared/errors/app-error.ts';
+import { publishEvent, recordAudit } from '../../../core/index.ts';
 import {
   attributeNameExists,
   deleteAttributeIfVersion,
@@ -11,7 +13,22 @@ import {
   updateAttributeIfVersion,
   updateValue,
 } from '../repository/attributes.ts';
-import { auditOf, type Caller, inUse, invalid, isUuid, nameTaken, notFound, pgError, versionConflict } from './errors.ts';
+import { groupsUsingAxis } from '../repository/specs.ts';
+import { allowedAttributeIds } from './group-templates.ts';
+import { uniqueValueCode } from '../domain/sku.ts';
+import {
+  auditOf,
+  type Caller,
+  inUse,
+  invalid,
+  isUuid,
+  nameTaken,
+  notFound,
+  pgError,
+  platformManaged,
+  scopeOf,
+  versionConflict,
+} from './errors.ts';
 
 /** `code` đã chuẩn hoá ở `api/schemas.ts` (bỏ trống thì sinh từ giá trị). */
 export interface AttributeInput {
@@ -19,19 +36,29 @@ export interface AttributeInput {
   values: { id?: string | undefined; value: string; code: string }[];
 }
 
-export type AttributeView = Awaited<ReturnType<typeof findAttributes>>[number];
+type AttributeRow = Awaited<ReturnType<typeof findAttributes>>[number];
+
+function toView({ companyId, values, ...a }: AttributeRow) {
+  return {
+    ...a,
+    scope: scopeOf(companyId),
+    values: values.map(({ companyId: valueCompany, ...v }) => ({ ...v, scope: scopeOf(valueCompany) })),
+  };
+}
+export type AttributeView = ReturnType<typeof toView>;
 
 const ENTITY = 'product.attributes';
+const VALUE_ENTITY = 'product.attribute_values';
 const taken = () => nameTaken('Đã có thuộc tính cùng tên');
-const snapshot = (a: AttributeInput | AttributeView) => ({ name: a.name, values: a.values.map((v) => `${v.value} (${v.code})`) });
+const snapshot = (a: AttributeInput | AttributeRow) => ({ name: a.name, values: a.values.map((v) => `${v.value} (${v.code})`) });
 
-async function findAttribute(id: string): Promise<AttributeView> {
+async function findAttribute(id: string): Promise<AttributeRow> {
   const [attribute] = isUuid(id) ? await findAttributes(id) : [];
   if (!attribute) throw notFound('thuộc tính');
   return attribute;
 }
 
-const conflict = (current: AttributeView) => versionConflict('Thuộc tính vừa được người khác sửa', current);
+const conflict = (current: AttributeRow) => versionConflict('Thuộc tính vừa được người khác sửa', toView(current));
 
 async function lostRace(id: string): Promise<never> {
   const [current] = await findAttributes(id);
@@ -47,8 +74,17 @@ function race(err: unknown): never {
   throw err;
 }
 
-export async function listAttributes(companyId: string): Promise<AttributeView[]> {
-  return withCompany(companyId, () => findAttributes());
+/**
+ * `groupId`: chỉ thuộc tính biến thể được phép của danh mục, theo thứ tự `allowedAttributes` (Documents/21 mục 5.7);
+ * danh mục không có hoặc của công ty khác 404.
+ */
+export async function listAttributes(companyId: string, opts: { groupId?: string | undefined } = {}): Promise<AttributeView[]> {
+  return withCompany(companyId, async () => {
+    const all = await findAttributes();
+    if (opts.groupId === undefined) return all.map(toView);
+    const byId = new Map(all.map((a) => [a.id, a]));
+    return (await allowedAttributeIds(opts.groupId)).flatMap((id) => (byId.has(id) ? [toView(byId.get(id)!)] : []));
+  });
 }
 
 export async function createAttribute(caller: Caller, input: AttributeInput): Promise<AttributeView> {
@@ -57,13 +93,14 @@ export async function createAttribute(caller: Caller, input: AttributeInput): Pr
     const id = await insertAttribute(caller.companyId, input.name);
     await insertValues(caller.companyId, id, input.values);
     await recordAudit({ ...auditOf(caller, 'create', ENTITY, id), label: input.name, after: snapshot(input) });
-    return findAttribute(id);
+    return toView(await findAttribute(id));
   }).catch(race);
 }
 
 export async function updateAttribute(caller: Caller, id: string, input: AttributeInput & { version: number }) {
   return withCompany(caller.companyId, async () => {
     const attribute = await findAttribute(id);
+    if (attribute.companyId === null) throw platformManaged();
     if (attribute.version !== input.version) throw conflict(attribute);
     const current = new Map(attribute.values.map((v) => [v.id, v]));
     if (input.values.some((v) => v.id !== undefined && !current.has(v.id))) {
@@ -87,23 +124,33 @@ export async function updateAttribute(caller: Caller, id: string, input: Attribu
     });
     const codes = new Set([...attribute.values.map((v) => v.code), ...input.values.map((v) => v.code)]);
     const temporary = temporaryCodes(codes, changed.length);
-    for (const [i, v] of changed.entries()) await updateValue(v.id, `~${v.id}`, temporary[i]!);
+    // Chữ tạm `~` + 19 ký tự đầu của id: vừa CHECK `attribute_values_value_length` (≤ 20, #447), vẫn khác nhau giữa các dòng.
+    for (const [i, v] of changed.entries()) await updateValue(v.id, `~${v.id.slice(0, 19)}`, temporary[i]!);
     for (const v of changed) await updateValue(v.id, v.value, v.code);
     await insertValues(caller.companyId, id, input.values.filter((v) => v.id === undefined));
 
     await recordAudit({ ...auditOf(caller, 'update', ENTITY, id), label: input.name, before: snapshot(attribute), after: snapshot(input) });
-    return findAttribute(id);
+    return toView(await findAttribute(id));
   }).catch(race);
 }
 
 export async function deleteAttribute(caller: Caller, id: string, version: number): Promise<void> {
   await withCompany(caller.companyId, async () => {
     const attribute = await findAttribute(id);
+    if (attribute.companyId === null) throw platformManaged();
     if (attribute.version !== version) throw conflict(attribute);
     if (attribute.productCount > 0) {
       throw inUse(`Không xoá được thuộc tính ${attribute.name} vì có ${attribute.productCount} sản phẩm đang dùng`);
     }
+    // Trục chuẩn của nhóm (#510, Documents/21 mục 5.5): khoá ngoại RESTRICT cũng chặn, kiểm trước để báo có nghĩa.
+    const groupCount = await groupsUsingAxis(id);
+    if (groupCount > 0) {
+      throw new AppError(409, 'in_use', `Không xoá được thuộc tính ${attribute.name} vì là trục chuẩn của ${groupCount} nhóm hàng`, {
+        groupCount,
+      });
+    }
     if (!(await deleteAttributeIfVersion(id, version))) await lostRace(id);
+    await publishEvent({ type: 'catalog.attribute_deleted', aggregateId: id, payload: { attributeId: id } });
     await recordAudit({ ...auditOf(caller, 'delete', ENTITY, id), label: attribute.name, before: snapshot(attribute) });
   }).catch(race);
 }
@@ -116,4 +163,56 @@ function temporaryCodes(taken: ReadonlySet<string>, count: number): string[] {
     if (!taken.has(code)) result.push(code);
   }
   return result;
+}
+
+const valueTaken = () => nameTaken('Đã có giá trị này');
+
+/** Thuộc tính nền tảng; thuộc tính của công ty sửa giá trị qua `PUT` (422 `errors.value`). */
+async function platformAttribute(id: string): Promise<AttributeRow> {
+  const attribute = await findAttribute(id);
+  if (attribute.companyId !== null) throw invalid({ value: 'Thuộc tính của công ty sửa giá trị trong form thuộc tính' });
+  return attribute;
+}
+
+/**
+ * Giá trị riêng của công ty trên thuộc tính nền tảng (Documents/21 mục 5.6, chốt 4). Trùng giá trị có sẵn (hai tầng):
+ * 409 `name_taken`. Mã gửi lên trùng mã có sẵn: 422 `errors.code`; mã tự sinh trùng thì thêm hậu tố số.
+ */
+export async function addAttributeValue(caller: Caller, attributeId: string, input: { value: string; code?: string | undefined }) {
+  return withCompany(caller.companyId, async () => {
+    const attribute = await platformAttribute(attributeId);
+    const value = input.value.trim();
+    if (attribute.values.some((v) => v.value.toLowerCase() === value.toLowerCase())) throw valueTaken();
+    const codes = new Set(attribute.values.map((v) => v.code));
+    if (input.code && codes.has(input.code)) throw invalid({ code: 'Mã bị trùng' });
+    const code = input.code || uniqueValueCode(value, codes);
+    const [row] = await insertValues(caller.companyId, attribute.id, [{ value, code }]);
+    await recordAudit({
+      ...auditOf(caller, 'create', VALUE_ENTITY, row!.id),
+      label: `${attribute.name}: ${value}`,
+      after: { value: `${value} (${code})` },
+    });
+    return { id: row!.id, value: row!.value, code: row!.code, scope: 'company' as const, inUse: false };
+  }).catch((err: unknown) => {
+    if (pgError(err).code === '23505') throw valueTaken();
+    throw err;
+  });
+}
+
+/** Xoá giá trị riêng; giá trị nền tảng 403 `platform_managed`, SKU đang dùng 409 `in_use`. */
+export async function removeAttributeValue(caller: Caller, attributeId: string, valueId: string): Promise<void> {
+  await withCompany(caller.companyId, async () => {
+    const attribute = await findAttribute(attributeId);
+    const value = attribute.values.find((v) => v.id === valueId);
+    if (!value) throw notFound('giá trị');
+    if (value.companyId === null) throw platformManaged();
+    if (attribute.companyId !== null) throw invalid({ value: 'Thuộc tính của công ty sửa giá trị trong form thuộc tính' });
+    if (value.inUse) throw inUse(`Không xoá được ${value.value} vì đã có biến thể dùng`);
+    await deleteValues([value.id]);
+    await recordAudit({
+      ...auditOf(caller, 'delete', VALUE_ENTITY, value.id),
+      label: `${attribute.name}: ${value.value}`,
+      before: { value: `${value.value} (${value.code})` },
+    });
+  }).catch(race);
 }

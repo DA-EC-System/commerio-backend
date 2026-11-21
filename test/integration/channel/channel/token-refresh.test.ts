@@ -105,7 +105,7 @@ const app = () => request(testApp());
 
 /** Gian hàng `active` vừa nối (connectWithToken làm mới một lần): access hạn 4 giờ, refresh token chưa tiêu. */
 async function activeShop() {
-  const company = await createCompany({ optionalModules: ['channel'] });
+  const company = await createCompany({ optionalModules: [] });
   const seller = randomUUID().replace(/-/g, '').slice(0, 12);
   sàn.valid.add(`${seller}:acc-0`);
   const res = await app()

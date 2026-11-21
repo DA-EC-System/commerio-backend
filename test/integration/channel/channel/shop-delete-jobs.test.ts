@@ -35,7 +35,7 @@ const port = new Proxy({} as ProductPort, {
 
 /** Gian hàng đã ngắt rồi xoá qua route; trả công ty, id gian hàng, id listing, id thư đã xoá cùng nó. */
 async function deletedShop() {
-  const company = await createCompany({ optionalModules: ['channel'] });
+  const company = await createCompany({ optionalModules: [] });
   const auth = (r: request.Test) => r.set('Authorization', `Bearer ${company.ceo.token}`);
   const res = await auth(request(testApp()).post('/api/v1/channel/shops/lazada/token')).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
   const shopId = res.body.shop.id as string;

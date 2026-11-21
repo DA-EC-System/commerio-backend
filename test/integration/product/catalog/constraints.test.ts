@@ -5,9 +5,9 @@ import { testPool } from '../../helpers/db.ts';
 
 const db = () => testPool();
 
-async function insertCategory(companyId: string, name: string): Promise<string> {
+async function insertGroup(companyId: string, name: string): Promise<string> {
   const res = await db().query<{ id: string }>(
-    `insert into product.categories (company_id, name, sku_pattern) values ($1, $2, 'AO-{SEQ}') returning id`,
+    'insert into product.product_groups (company_id, name) values ($1, $2) returning id',
     [companyId, name],
   );
   return res.rows[0]!.id;
@@ -31,17 +31,23 @@ const insertValue = (companyId: string, attributeId: string, value: string, code
 
 // Ràng buộc của catalog (plan chuẩn bị 4.2, 4.3; AC-9).
 describe('ràng buộc bảng catalog (AC-9)', () => {
-  it('hai danh mục "Áo" và "áo" cùng công ty bị từ chối, khác công ty thì được', async () => {
+  it('hai nhóm hàng "Áo" và "áo" cùng công ty bị từ chối, khác công ty thì được', async () => {
     const company = randomUUID();
-    await insertCategory(company, 'Áo');
-    await expect(insertCategory(company, 'áo')).rejects.toThrow(/categories_company_lower_name_uq/);
-    await expect(insertCategory(randomUUID(), 'áo')).resolves.toBeDefined();
+    await insertGroup(company, 'Áo');
+    await expect(insertGroup(company, 'áo')).rejects.toThrow(/product_groups_company_lower_name_uq/);
+    await expect(insertGroup(randomUUID(), 'áo')).resolves.toBeDefined();
   });
 
-  it('danh mục mới có số thứ tự SKU bắt đầu từ 1', async () => {
-    const id = await insertCategory(randomUUID(), 'Quần');
-    const res = await db().query('select sku_next_seq from product.categories where id = $1', [id]);
-    expect(res.rows[0]).toEqual({ sku_next_seq: 1 });
+  // #447: mẫu SKU và số {SEQ} là của công ty (một dòng mỗi công ty), không còn nằm ở nhóm hàng.
+  it('cài đặt sản phẩm của công ty mới có mẫu SKU mặc định, số thứ tự SKU bắt đầu từ 1, mỗi công ty một dòng', async () => {
+    const company = randomUUID();
+    const res = await db().query('insert into product.company_product_settings (company_id) values ($1) returning sku_pattern, sku_next_seq', [company]);
+    expect(res.rows[0]).toEqual({ sku_pattern: 'SP{SEQ:5}-{VAL}', sku_next_seq: 1 });
+    await expect(db().query('insert into product.company_product_settings (company_id) values ($1)', [company])).rejects.toMatchObject({ code: '23505' });
+    await expect(db().query('update product.company_product_settings set sku_next_seq = 0 where company_id = $1', [company])).rejects.toMatchObject({
+      code: '23514',
+      constraint: 'company_product_settings_sku_next_seq',
+    });
   });
 
   it('tên thuộc tính không trùng theo chữ thường trong một công ty', async () => {
@@ -54,7 +60,7 @@ describe('ràng buộc bảng catalog (AC-9)', () => {
     const company = randomUUID();
     const attr = await insertAttribute(company, 'Size');
     await insertValue(company, attr, 'Xanh navy', 'XANHNA');
-    await expect(insertValue(company, attr, 'xanh NAVY', 'XANHN2')).rejects.toThrow(/attribute_values_attribute_lower_value_uq/);
+    await expect(insertValue(company, attr, 'xanh NAVY', 'XANHN2')).rejects.toThrow(/attribute_values_company_lower_value_uq/);
     await expect(insertValue(company, attr, 'Xanh nhạt', 'XANHNA')).rejects.toThrow(/duplicate key/);
     const other = await insertAttribute(company, 'Màu phụ');
     await expect(insertValue(company, other, 'Xanh navy', 'XANHNA')).resolves.toBeDefined();
@@ -70,11 +76,11 @@ describe('ràng buộc bảng catalog (AC-9)', () => {
 
   it('tên sản phẩm không trùng theo chữ thường trong một công ty', async () => {
     const company = randomUUID();
-    const category = await insertCategory(company, 'Giày');
+    const group = await insertGroup(company, 'Giày');
     const insert = (name: string) =>
-      db().query('insert into product.products (company_id, category_id, name, code) values ($1, $2, $3, $4)', [
+      db().query('insert into product.products (company_id, group_id, name, code) values ($1, $2, $3, $4)', [
         company,
-        category,
+        group,
         name,
         `G-${randomUUID().slice(0, 8)}`,
       ]);
@@ -84,9 +90,9 @@ describe('ràng buộc bảng catalog (AC-9)', () => {
 
   it('mã cha không trùng trong một công ty, khác công ty thì được (#204 D5)', async () => {
     const insert = async (companyId: string, name: string) =>
-      db().query('insert into product.products (company_id, category_id, name, code) values ($1, $2, $3, $4)', [
+      db().query('insert into product.products (company_id, group_id, name, code) values ($1, $2, $3, $4)', [
         companyId,
-        await insertCategory(companyId, `Dép ${name}`),
+        await insertGroup(companyId, `Dép ${name}`),
         name,
         'DEP-0001',
       ]);
@@ -110,8 +116,8 @@ describe('ràng buộc bảng catalog (AC-9)', () => {
 describe('ràng buộc ảnh phân loại, xuất xứ, thương hiệu (#340, AC-S4)', () => {
   async function seed() {
     const company = randomUUID();
-    const color = await insertAttribute(company, `Màu ${randomUUID()}`);
-    const size = await insertAttribute(company, `Size ${randomUUID()}`);
+    const color = await insertAttribute(company, `Màu ${randomUUID().slice(0, 8)}`);
+    const size = await insertAttribute(company, `Size ${randomUUID().slice(0, 8)}`);
     const value = async (attributeId: string, v: string, code: string) =>
       (
         await db().query<{ id: string }>(
@@ -122,11 +128,11 @@ describe('ràng buộc ảnh phân loại, xuất xứ, thương hiệu (#340, A
     const white = await value(color, 'Trắng', 'TRANG');
     const black = await value(color, 'Đen', 'DEN');
     const m = await value(size, 'M', 'M');
-    const category = await insertCategory(company, `Áo ${randomUUID()}`);
+    const group = await insertGroup(company, `Áo ${randomUUID()}`);
     const product = (
       await db().query<{ id: string }>(
-        'insert into product.products (company_id, category_id, name, code) values ($1, $2, $3, $4) returning id',
-        [company, category, `Áo ${randomUUID()}`, `A-${randomUUID().slice(0, 8)}`],
+        'insert into product.products (company_id, group_id, name, code) values ($1, $2, $3, $4) returning id',
+        [company, group, `Áo ${randomUUID()}`, `A-${randomUUID().slice(0, 8)}`],
       )
     ).rows[0]!.id;
     const image = (attributeId: string, valueId: string) =>
@@ -176,5 +182,64 @@ describe('ràng buộc ảnh phân loại, xuất xứ, thương hiệu (#340, A
     await expect(set(null, 'x'.repeat(101))).rejects.toMatchObject(check('products_brand_length'));
     await expect(set('VN', 'x'.repeat(100))).resolves.toBeDefined();
     await expect(set(null, null)).resolves.toBeDefined();
+  });
+});
+
+// Thông số sản phẩm (#510, Documents/19 §3.2): ràng buộc DB của trục chuẩn và giá trị thông số.
+describe('ràng buộc thông số sản phẩm (#510)', () => {
+  async function field(companyId: string, code: string, input = 'select') {
+    const res = await db().query<{ id: string }>(
+      'insert into product.spec_fields (company_id, code, name, input) values ($1, $2, $2, $3) returning id',
+      [companyId, code, input],
+    );
+    return res.rows[0]!.id;
+  }
+  async function option(companyId: string, fieldId: string, value: string) {
+    const res = await db().query<{ id: string }>(
+      'insert into product.spec_field_options (company_id, field_id, value, position) values ($1, $2, $3, 0) returning id',
+      [companyId, fieldId, value],
+    );
+    return res.rows[0]!.id;
+  }
+  const insertSpecValue = (companyId: string, productId: string, fieldId: string, optionId: string | null, text: string | null) =>
+    db().query('insert into product.product_spec_values (company_id, product_id, field_id, option_id, value_text) values ($1, $2, $3, $4, $5)', [
+      companyId,
+      productId,
+      fieldId,
+      optionId,
+      text,
+    ]);
+
+  it('nhóm đặt trục 2 khi trục 1 trống bị CHECK chặn; hai trục trùng thuộc tính bị chặn', async () => {
+    const company = randomUUID();
+    const group = await insertGroup(company, 'Nhóm trục');
+    const a = await insertAttribute(company, 'Màu trục');
+    await expect(db().query('update product.product_groups set axis2_attribute_id = $2 where id = $1', [group, a])).rejects.toThrow(
+      /product_groups_axis_order/,
+    );
+    await expect(
+      db().query('update product.product_groups set axis1_attribute_id = $2, axis2_attribute_id = $2 where id = $1', [group, a]),
+    ).rejects.toThrow(/product_groups_axis_distinct/);
+  });
+
+  it('giá trị thông số có cả option_id lẫn value_text (hoặc không có gì) bị CHECK chặn', async () => {
+    const companyId = randomUUID();
+    const { productId } = await createVariant(companyId);
+    const f = await field(companyId, 'rb_one_of');
+    const o = await option(companyId, f, 'A');
+    await expect(insertSpecValue(companyId, productId, f, o, 'chữ')).rejects.toThrow(/product_spec_values_one_of/);
+    await expect(insertSpecValue(companyId, productId, f, null, null)).rejects.toThrow(/product_spec_values_one_of/);
+    await expect(insertSpecValue(companyId, productId, f, o, null)).resolves.toBeDefined();
+  });
+
+  it('lựa chọn của thông số khác bị khoá ngoại ghép chặn; xoá lựa chọn đang dùng bị chặn', async () => {
+    const companyId = randomUUID();
+    const { productId } = await createVariant(companyId);
+    const f1 = await field(companyId, 'rb_fk_1');
+    const f2 = await field(companyId, 'rb_fk_2');
+    const o2 = await option(companyId, f2, 'B');
+    await expect(insertSpecValue(companyId, productId, f1, o2, null)).rejects.toThrow(/psv_option_fk/);
+    await insertSpecValue(companyId, productId, f2, o2, null);
+    await expect(db().query('delete from product.spec_field_options where id = $1', [o2])).rejects.toThrow(/psv_option_fk/);
   });
 });

@@ -85,3 +85,35 @@ export function priceFilter(i: PriceFilterInput): PriceFilterResult {
     feeWarning: totalPct.gt(50) ? 'over_50' : null,
   };
 }
+
+/**
+ * Giá muốn bán tính ngược từ giá niêm yết P (#500, tạo SKU kho từ SKU sàn): `P × (1 − tổng %) − phí mỗi món` (25 §6.2,
+ * công thức thực nhận ở bước 5), rồi dò để bộ lọc (bước 2, 4) chạy với số này ra đúng P: số lớn nhất mà bộ lọc ra ≤ P.
+ * Dò theo đồng; mỗi đồng giá muốn bán đổi giá thô 1/(1 − tổng %) > 1 đồng nên với bậc làm tròn nhỏ có thể nhảy qua P, khi
+ * đó dò lại theo 0,01 đồng (cột `numeric(18,2)`). P không nằm trên lưới làm tròn (bậc, đuôi) thì bộ lọc không ra được P:
+ * lấy số nhỏ nhất cho giá ≥ P (không đề xuất giá thấp hơn giá đang bán). Tổng % không hợp lệ hoặc thực nhận ≤ 0 thì null.
+ */
+export function targetForPrice(price: string, fee: FeeInput, taxPct: Decimal.Value): string | null {
+  const totalPct = new Decimal(fee.feePct).plus(taxPct);
+  if (totalPct.isNegative() || totalPct.gte(100)) return null;
+  const p = new Decimal(price);
+  const listed = (t: Decimal) => {
+    const r = priceFilter({ target: t.toFixed(), fee, taxPct, cost: null, minMarginPct: 0 });
+    return r.ok ? new Decimal(r.price) : p;
+  };
+  const exact = p.times(new Decimal(1).minus(totalPct.div(100))).minus(fee.perItemFee);
+  const search = (unit: Decimal) => {
+    let t = exact.div(unit).floor().times(unit);
+    // Bộ lọc tăng theo giá muốn bán; vài bước là tới.
+    while (t.gt(unit) && listed(t).gt(p)) t = t.minus(unit);
+    while (listed(t.plus(unit)).lte(p)) t = t.plus(unit);
+    return t;
+  };
+  if (exact.lte(0)) return null;
+  let t = search(new Decimal(1));
+  if (listed(t).lt(p)) {
+    const cents = search(new Decimal('0.01'));
+    t = listed(cents).eq(p) ? cents : t.plus(1);
+  }
+  return t.gt(0) ? t.toFixed() : null;
+}

@@ -88,6 +88,43 @@ export async function findCategory(platform: Marketplace, externalId: string): P
   return row;
 }
 
+/** Trần số cấp khi đi ngược cây (TikTok 7 cấp; chặn vòng lặp nếu dữ liệu cây hỏng). */
+const MAX_DEPTH = 20;
+
+/**
+ * `externalId` từ gốc tới chính category cho từng id (`PlatformCategory.pathIds`, #467), đi ngược `parent_external_id` bằng
+ * CTE đệ quy, không gọi sàn. Cha chưa có trong bảng (cây chưa đồng bộ, dòng tạm của `replaceLeaf`) thì chuỗi dừng ở cấp cao
+ * nhất có trong bảng: trả chuỗi thiếu phần gốc, không lỗi. Id không có trong bảng thì không có trong kết quả.
+ */
+export async function pathIdsOf(platform: Marketplace, externalIds: readonly string[]): Promise<Map<string, string[]>> {
+  const ids = [...new Set(externalIds)];
+  if (!ids.length) return new Map();
+  const { rows } = await getDb().execute<{ origin: string; ids: string[] }>(sql`
+    with recursive chain(origin, external_id, parent_external_id, depth) as (
+      select c.external_id, c.external_id, c.parent_external_id, 0
+        from channel.platform_categories c
+       where c.platform = ${platform} and c.external_id in (select jsonb_array_elements_text(${JSON.stringify(ids)}::jsonb))
+      union all
+      select ch.origin, p.external_id, p.parent_external_id, ch.depth + 1
+        from chain ch
+        join channel.platform_categories p on p.platform = ${platform} and p.external_id = ch.parent_external_id
+       where ch.depth < ${MAX_DEPTH}
+    )
+    select origin, array_agg(external_id order by depth desc) as ids from chain group by origin`);
+  return new Map(rows.map((r) => [r.origin, r.ids]));
+}
+
+/** Đường dẫn của các category đã có trong cây đã đồng bộ (`synced_at` khác null); id khác không có trong kết quả (#467). */
+export async function syncedPathsOf(platform: Marketplace, externalIds: readonly string[]): Promise<Map<string, string>> {
+  const ids = [...new Set(externalIds)];
+  if (!ids.length) return new Map();
+  const rows = await getDb()
+    .select({ externalId: platformCategories.externalId, path: platformCategories.path })
+    .from(platformCategories)
+    .where(and(eq(platformCategories.platform, platform), inArray(platformCategories.externalId, ids), isNotNull(platformCategories.syncedAt)));
+  return new Map(rows.map((r) => [r.externalId, r.path]));
+}
+
 /** Attribute đã lưu của leaf: bắt buộc trước, thuộc tính sản phẩm trước sales, rồi theo nhãn. */
 export async function leafAttributesOf(platform: Marketplace, externalId: string): Promise<PlatformAttribute[]> {
   const rows = await getDb()
@@ -356,4 +393,31 @@ export async function oldestActiveShopOn(platform: Marketplace): Promise<{ id: s
     .orderBy(asc(shops.createdAt), asc(shops.id))
     .limit(1);
   return row;
+}
+
+/**
+ * Sales attribute đã gặp ở ít nhất một leaf của sàn: mã → một nhãn bất kỳ của mã đó (#448, route `axis-mappings`: kiểm mã
+ * hợp lệ, hiện nhãn). Bảng tham chiếu, đọc được cả trong `withCompany`.
+ */
+export async function salesLabelsOf(platform: Marketplace): Promise<Map<string, string>> {
+  const rows = await getDb()
+    .select({ code: platformCategoryAttributes.code, label: sql<string>`min(${platformCategoryAttributes.label})` })
+    .from(platformCategoryAttributes)
+    .where(and(eq(platformCategoryAttributes.platform, platform), eq(platformCategoryAttributes.kind, 'sales')))
+    .groupBy(platformCategoryAttributes.code);
+  return new Map(rows.map((r) => [r.code, r.label]));
+}
+
+/** Trạng thái và đường dẫn đã đồng bộ của các category (bảng tham chiếu); id không có dòng thì vắng trong Map (#448). */
+export async function categoryInfoOf(
+  platform: Marketplace,
+  externalIds: readonly string[],
+): Promise<Map<string, { status: 'active' | 'removed'; path: string | null }>> {
+  const ids = [...new Set(externalIds)];
+  if (!ids.length) return new Map();
+  const rows = await getDb()
+    .select({ id: platformCategories.externalId, status: platformCategories.status, path: platformCategories.path, syncedAt: platformCategories.syncedAt })
+    .from(platformCategories)
+    .where(and(eq(platformCategories.platform, platform), inArray(platformCategories.externalId, ids)));
+  return new Map(rows.map((r) => [r.id, { status: r.status as 'active' | 'removed', path: r.syncedAt ? r.path : null }]));
 }

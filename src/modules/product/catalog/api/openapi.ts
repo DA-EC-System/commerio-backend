@@ -3,16 +3,21 @@ import { z } from 'zod';
 import { problemResponse } from '../../../../shared/http/openapi.ts';
 import {
   AddVariantBody,
+  AttributesQuery,
   Attribute,
   AttributeBody,
+  AttributeValueBody,
+  AttributeValueParams,
+  GroupHiddenBody,
+  GroupListQuery,
+  SpecOptionBody,
+  SpecOptionParams,
   BusinessStatusBody,
   BusinessStatusResult,
   BulkEditPage,
   BulkEditQuery,
   BulkSaveDocBody,
   BulkSaveResult,
-  Category,
-  CategoryBody,
   CreateProductBody,
   IdParams,
   ProductDetail,
@@ -20,13 +25,23 @@ import {
   ProductPage,
   SetVariantImageBody,
   UpdateAttributeBody,
-  UpdateCategoryBody,
+  UpdateGroupBody,
   UpdateProductBody,
   UpdateVariantBody,
   Variant,
   VariantImageParams,
   VariantParams,
   VersionQuery,
+  GroupBody,
+  GroupTemplate,
+  GroupTemplateBody,
+  SpecField,
+  SpecFieldBody,
+  UpdateSpecFieldBody,
+  MoveProductsBody,
+  ProductGroup,
+  ProductSettings,
+  SettingsBody,
 } from './schemas.ts';
 
 const json = (description: string, schema: z.ZodType) => ({ description, content: { 'application/json': { schema } } });
@@ -39,57 +54,178 @@ const common = {
   403: problemResponse('Chưa chọn công ty, công ty hoặc tài khoản bị khoá, hoặc thiếu quyền (`forbidden`)'),
 };
 const invalid = { 422: problemResponse('Dữ liệu không hợp lệ (`validation_failed`, `errors` theo ô)') };
+/** Ghi vào dòng nền tảng (Documents/21 mục 5.6): ghi đè 403 chung. */
+const platform = { 403: problemResponse('Thiếu quyền (`forbidden`), hoặc dữ liệu chuẩn của nền tảng (`platform_managed`)') };
 const missing = (what: string) => ({ 404: problemResponse(`Không tìm thấy ${what} (kể cả của công ty khác)`) });
 
 /** Đường dẫn Swagger của module `catalog`, viết tương đối với /api/v1/catalog (Documents/21 5.2, 5.3). */
 export function registerCatalogOpenApi(registry: OpenAPIRegistry): void {
   const path = (route: RouteConfig) => registry.registerPath({ ...route, responses: { ...common, ...route.responses } });
 
-  // ----- Danh mục: quyền xem `catalog.product.view`, ghi `catalog.category.manage` -----
+  // ----- Nhóm hàng, cài đặt sản phẩm: xem `catalog.product.view`, ghi `catalog.group.manage` (21 mục 5.2) -----
   path({
     method: 'get',
-    path: '/categories',
-    summary: 'Danh sách danh mục kèm quy tắc SKU',
-    responses: { 200: json('Danh mục, sắp theo tên', z.array(Category)) },
+    path: '/groups',
+    summary: 'Nhóm nền tảng và nhóm của công ty (`scope`); mặc định bỏ nhóm nền tảng công ty đã ẩn',
+    request: { query: GroupListQuery },
+    responses: { 200: json('Nhóm hàng, sắp theo tên', z.object({ items: z.array(ProductGroup) })) },
   });
   path({
     method: 'post',
-    path: '/categories',
-    summary: 'Tạo danh mục',
-    request: { body: body(CategoryBody) },
-    responses: { 201: json('Danh mục vừa tạo', Category), 409: problemResponse('Tên đã dùng (`name_taken`)'), ...invalid },
+    path: '/groups',
+    summary: 'Tạo nhóm hàng; chỉ gửi tên thì `catalog.product.manage` hoặc `purchasing.request.manage` cũng được',
+    request: { body: body(GroupBody) },
+    responses: { 201: json('Nhóm vừa tạo', ProductGroup), 409: problemResponse('Tên đã dùng (`name_taken`)'), ...invalid },
   });
   path({
     method: 'put',
-    path: '/categories/:id',
-    summary: 'Sửa danh mục; quy tắc mới chỉ áp dụng cho SKU sinh sau',
-    request: { params: IdParams, body: body(UpdateCategoryBody) },
+    path: '/groups/:id',
+    summary: 'Sửa nhóm hàng. Nhóm nền tảng: chỉ `{ suggest, version }` (cài đặt của công ty)',
+    request: { params: IdParams, body: body(UpdateGroupBody) },
     responses: {
-      200: json('Danh mục sau khi sửa', Category),
+      200: json('Nhóm sau khi sửa', ProductGroup),
       409: problemResponse('`version_conflict` (kèm `current`) hoặc `name_taken`'),
-      ...missing('danh mục'),
+      ...missing('nhóm hàng'),
       ...invalid,
     },
   });
   path({
     method: 'delete',
-    path: '/categories/:id',
-    summary: 'Xoá danh mục chưa có sản phẩm nào (kể cả đã lưu trữ)',
+    path: '/groups/:id',
+    summary: 'Xoá nhóm hàng của công ty chưa có sản phẩm nào (kể cả đã lưu trữ)',
+    request: { params: IdParams, query: VersionQuery },
+    responses: { 204: noContent, ...platform, 409: problemResponse('`in_use` hoặc `version_conflict`'), ...missing('nhóm hàng'), ...invalid },
+  });
+  path({
+    method: 'put',
+    path: '/groups/:id/hidden',
+    summary: 'Ẩn hoặc hiện nhóm nền tảng cho công ty; không đụng sản phẩm đang ở nhóm. Gọi lại cùng giá trị là 200',
+    request: { params: IdParams, body: body(GroupHiddenBody) },
+    responses: { 200: json('Nhóm sau khi đổi', ProductGroup), ...missing('nhóm hàng'), 422: problemResponse('Nhóm của công ty (`errors.hidden`)') },
+  });
+  path({
+    method: 'post',
+    path: '/groups/:id/move-products',
+    summary: 'Chuyển sản phẩm (kể cả đã lưu trữ) sang nhóm khác; quyền `catalog.product.manage`',
+    request: { params: IdParams, body: body(MoveProductsBody) },
+    responses: {
+      200: json('Số sản phẩm đã chuyển', z.object({ moved: z.number().int() })),
+      ...missing('nhóm hàng nguồn'),
+      422: problemResponse('`errors.targetGroupId` (trùng nguồn, không có) hoặc `errors.productIds` (không thuộc nhóm)'),
+    },
+  });
+  // ----- Thông số sản phẩm (#510, Documents/21 mục 5.5) -----
+  path({
+    method: 'get',
+    path: '/groups/:id/template',
+    summary: 'Mẫu thông số và trục chuẩn của nhóm (form tạo sản phẩm gọi khi chọn nhóm)',
+    request: { params: IdParams },
+    responses: { 200: json('Mẫu nhóm', GroupTemplate), ...missing('nhóm hàng') },
+  });
+  path({
+    method: 'put',
+    path: '/groups/:id/template',
+    summary: 'Đặt mẫu thông số và trục chuẩn của nhóm; tăng `version`. Nhóm nền tảng: chỉ phần của công ty, sau dòng chuẩn. Không chạm sản phẩm',
+    request: { params: IdParams, body: body(GroupTemplateBody) },
+    responses: {
+      200: json('Mẫu sau khi sửa', GroupTemplate),
+      409: problemResponse('`version_conflict` (kèm `current` là mẫu mới nhất)'),
+      ...missing('nhóm hàng'),
+      422: problemResponse('`errors.axisAttributeIds` (gửi cho nhóm nền tảng), `errors["fields.<i>.fieldId"]` (không có, đã có trong mẫu chuẩn)'),
+    },
+  });
+  path({
+    method: 'get',
+    path: '/spec-fields',
+    summary: 'Thư viện thông số: nền tảng và của công ty (`scope`), xếp theo tên',
+    responses: { 200: json('Thông số', z.object({ items: z.array(SpecField) })) },
+  });
+  path({
+    method: 'post',
+    path: '/spec-fields',
+    summary: 'Tạo thông số; bỏ `code` thì sinh từ tên',
+    request: { body: body(SpecFieldBody) },
+    responses: {
+      201: json('Thông số vừa tạo', SpecField),
+      409: problemResponse('`name_taken` (`errors.name`) hoặc `code_taken` (`errors.code`)'),
+      422: problemResponse('`errors.unit` (không phải number), `errors.options` (không phải select/multiselect), `errors["options.<i>"]` trùng'),
+    },
+  });
+  path({
+    method: 'put',
+    path: '/spec-fields/:id',
+    summary: 'Sửa thông số (không đổi `code`, `input`); lựa chọn cũ vắng mặt là xoá, phát `catalog.spec_option_deleted`',
+    request: { params: IdParams, body: body(UpdateSpecFieldBody) },
+    responses: {
+      200: json('Thông số sau khi sửa', SpecField),
+      409: problemResponse('`version_conflict`, `name_taken`, hoặc `in_use` (xoá lựa chọn đang dùng, `errors["options.<i>"]`)'),
+      ...platform,
+      ...missing('thông số'),
+      422: problemResponse('`errors.unit` (đổi đơn vị khi đã có giá trị), `errors["options.<i>"]`'),
+    },
+  });
+  path({
+    method: 'delete',
+    path: '/spec-fields/:id',
+    summary: 'Xoá thông số không nhóm nào dùng, không sản phẩm nào có giá trị; phát `catalog.spec_field_deleted`',
     request: { params: IdParams, query: VersionQuery },
     responses: {
       204: noContent,
-      409: problemResponse('`in_use` hoặc `version_conflict`'),
-      ...missing('danh mục'),
+      409: problemResponse('`in_use` kèm `groupCount`, `productCount`, `groups: { id, name }[]` (≤ 20), hoặc `version_conflict`'),
+      ...platform,
+      ...missing('thông số'),
       ...invalid,
     },
+  });
+  path({
+    method: 'post',
+    path: '/spec-fields/:id/options',
+    summary: 'Thêm lựa chọn riêng của công ty vào thông số nền tảng kiểu chọn; đứng sau lựa chọn chuẩn',
+    request: { params: IdParams, body: body(SpecOptionBody) },
+    responses: {
+      201: json('Lựa chọn vừa thêm', z.object({ id: z.uuid(), value: z.string(), position: z.number().int(), scope: z.literal('company'), inUse: z.boolean() })),
+      409: problemResponse('Trùng lựa chọn có sẵn ở cả hai tầng (`name_taken`)'),
+      ...missing('thông số'),
+      422: problemResponse('Thông số của công ty hoặc không phải kiểu chọn (`errors.value`)'),
+    },
+  });
+  path({
+    method: 'delete',
+    path: '/spec-fields/:id/options/:optionId',
+    summary: 'Xoá lựa chọn riêng của công ty; phát `catalog.spec_option_deleted`',
+    request: { params: SpecOptionParams },
+    responses: {
+      204: noContent,
+      409: problemResponse('Có sản phẩm đang dùng (`in_use`)'),
+      ...platform,
+      ...missing('lựa chọn'),
+      422: problemResponse('Thông số của công ty (`errors.value`)'),
+    },
+  });
+  path({
+    method: 'get',
+    path: '/settings',
+    summary: 'Cài đặt sản phẩm của công ty: mẫu SKU, gợi ý mặc định',
+    responses: { 200: json('Cài đặt', ProductSettings) },
+  });
+  path({
+    method: 'put',
+    path: '/settings',
+    summary: 'Sửa cài đặt sản phẩm; mẫu mới chỉ áp cho SKU sinh sau',
+    request: { body: body(SettingsBody) },
+    responses: { 200: json('Cài đặt sau khi sửa', ProductSettings), 409: problemResponse('`version_conflict` (kèm `current`)'), ...invalid },
   });
 
   // ----- Thuộc tính -----
   path({
     method: 'get',
     path: '/attributes',
-    summary: 'Danh sách thuộc tính và giá trị',
-    responses: { 200: json('Thuộc tính theo thứ tự tạo', z.array(Attribute)) },
+    summary: 'Thuộc tính và giá trị: nền tảng và của công ty (`scope`)',
+    request: { query: AttributesQuery },
+    responses: {
+      200: json('Thuộc tính nền tảng trước, rồi theo thứ tự tạo; có `groupId` thì theo thứ tự `allowedAttributes` của danh mục', z.array(Attribute)),
+      404: problemResponse('`groupId` không có hoặc của công ty khác'),
+    },
   });
   path({
     method: 'post',
@@ -106,6 +242,7 @@ export function registerCatalogOpenApi(registry: OpenAPIRegistry): void {
     responses: {
       200: json('Thuộc tính sau khi sửa', Attribute),
       409: problemResponse('`version_conflict`, `name_taken`, hoặc `in_use` (bỏ giá trị đang dùng)'),
+      ...platform,
       ...missing('thuộc tính'),
       ...invalid,
     },
@@ -118,8 +255,34 @@ export function registerCatalogOpenApi(registry: OpenAPIRegistry): void {
     responses: {
       204: noContent,
       409: problemResponse('`in_use` hoặc `version_conflict`'),
+      ...platform,
       ...missing('thuộc tính'),
       ...invalid,
+    },
+  });
+  path({
+    method: 'post',
+    path: '/attributes/:id/values',
+    summary: 'Thêm giá trị riêng của công ty vào thuộc tính nền tảng; mã bỏ trống thì sinh, trùng thì thêm hậu tố số',
+    request: { params: IdParams, body: body(AttributeValueBody) },
+    responses: {
+      201: json('Giá trị vừa thêm', z.object({ id: z.uuid(), value: z.string(), code: z.string(), scope: z.literal('company'), inUse: z.boolean() })),
+      409: problemResponse('Trùng giá trị có sẵn (`name_taken`)'),
+      ...missing('thuộc tính'),
+      422: problemResponse('Thuộc tính của công ty (`errors.value`) hoặc mã trùng (`errors.code`)'),
+    },
+  });
+  path({
+    method: 'delete',
+    path: '/attributes/:id/values/:valueId',
+    summary: 'Xoá giá trị riêng của công ty trên thuộc tính nền tảng',
+    request: { params: AttributeValueParams },
+    responses: {
+      204: noContent,
+      409: problemResponse('SKU đang dùng (`in_use`)'),
+      ...platform,
+      ...missing('giá trị'),
+      422: problemResponse('Thuộc tính của công ty (`errors.value`)'),
     },
   });
 
@@ -141,14 +304,14 @@ export function registerCatalogOpenApi(registry: OpenAPIRegistry): void {
   path({
     method: 'post',
     path: '/products',
-    summary: 'Tạo sản phẩm; SKU sinh theo quy tắc của danh mục, theo thứ tự biến thể',
+    summary: 'Tạo sản phẩm; SKU sinh theo mẫu SKU của công ty, theo thứ tự biến thể; trục, giá trị mới tạo cùng lúc',
     request: { body: body(CreateProductBody) },
     responses: { 201: json('Sản phẩm vừa tạo', ProductDetail), 409: problemResponse('Tên đã dùng (`name_taken`)'), ...invalid },
   });
   path({
     method: 'put',
     path: '/products/:id',
-    summary: 'Sửa tên, mô tả, ảnh, thuộc tính gắn ảnh, xuất xứ, thương hiệu; không đổi danh mục và biến thể',
+    summary: 'Sửa tên, mô tả, ảnh, thuộc tính gắn ảnh, xuất xứ, thương hiệu, nhóm hàng (SKU giữ nguyên); không đổi biến thể',
     description:
       '`imageAttributeId` phải là một trục phân loại của sản phẩm; đổi sang thuộc tính khác hoặc `null` thì gỡ mọi ảnh phân loại ' +
       'cũ (không xoá tệp). `originCountry` cắt khoảng trắng, viết hoa; `originCountry`, `brand` rỗng lưu null.',
@@ -251,8 +414,8 @@ export function registerCatalogOpenApi(registry: OpenAPIRegistry): void {
     summary: 'Lấy SKU để sửa hàng loạt, kèm giá trị gợi ý (không tự lưu)',
     description:
       'Chỉ SKU chưa lưu trữ của sản phẩm chưa lưu trữ. `incomplete=true`: còn ít nhất một ô giá muốn bán, cân nặng, dài, rộng, cao bỏ trống. ' +
-      '`suggestions` chỉ có cho ô đang trống: giá muốn bán = giá nhập × hệ số lãi của danh mục (làm tròn lên theo bước của danh mục), ' +
-      'không có thì chép từ SKU anh em; ngưỡng tồn theo tốc độ bán 30 ngày hoặc mặc định danh mục; cân nặng, kích thước, giá chuẩn chép từ SKU anh em. ' +
+      '`suggestions` chỉ có cho ô đang trống: giá muốn bán = giá nhập × hệ số lãi (nhóm hàng, trống thì cài đặt công ty) (làm tròn lên theo bước của danh mục), ' +
+      'không có thì chép từ SKU anh em; ngưỡng tồn theo tốc độ bán 30 ngày hoặc ngưỡng mặc định (nhóm, trống thì công ty); cân nặng, kích thước, giá chuẩn chép từ SKU anh em. ' +
       '`source.lastCost` là null khi thiếu quyền `inventory.cost.view`.',
     request: { query: BulkEditQuery },
     responses: { 200: json('Trang SKU kèm gợi ý', BulkEditPage), ...invalid },

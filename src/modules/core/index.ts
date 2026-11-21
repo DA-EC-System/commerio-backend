@@ -4,7 +4,7 @@ import { type ModuleContext, type ModuleDefinition, withContext } from '../../sh
 import { platformModule } from './platform/index.ts';
 import { identityModule } from './identity/index.ts';
 import { findAccountById, findAccountSummaries, staffModule } from './staff/index.ts';
-import { accessModule } from './access/index.ts';
+import { accessModule, BUILTIN_ROLES } from './access/index.ts';
 import { auditModule } from './audit/index.ts';
 import { filesModule } from './files/index.ts';
 import { notificationModule } from './notification/index.ts';
@@ -26,6 +26,7 @@ function staffContext<C extends ModuleContext>(ctx: C) {
     ...ctx,
     accountSummaries: findAccountSummaries,
     platformAccount: findAccountById,
+    ceoRoleId: BUILTIN_ROLES.ceo.id,
   };
 }
 

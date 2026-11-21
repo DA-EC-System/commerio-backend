@@ -18,7 +18,6 @@ import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
 import { activateShop, fakeAdapter, seedSpecs } from './helpers.ts';
 
-const categoryId = randomUUID();
 const variants: ListingVariant[] = [];
 const newVariant = (): ListingVariant => {
   const v: ListingVariant = {
@@ -26,9 +25,9 @@ const newVariant = (): ListingVariant => {
     productId: randomUUID(),
     productName: 'Cốc sứ',
     sku: `CMR-${randomUUID().slice(0, 8)}`,
-    categoryId,
     attributesLabel: 'Trắng',
     productCode: 'SP-TEST',
+    groupId: 'GROUP-TEST',
     attributes: [],
     archived: false,
     businessStatus: 'selling',
@@ -148,8 +147,8 @@ async function mapped(extra: Partial<RemoteSku> = {}) {
 }
 
 beforeAll(async () => {
-  company = await createCompany({ optionalModules: ['channel'] });
-  other = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany({ optionalModules: [] });
+  other = await createCompany({ optionalModules: [] });
   sale = await addMember(company.companyId, 'sale');
   warehouse = await addMember(company.companyId, 'warehouse');
   const res = await as(app().post('/api/v1/channel/shops/lazada/token')).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });

@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V106**, 18 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
+Phiên bản **V142**, 22 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
 **Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
 
@@ -22,6 +22,33 @@ Cột:
 Ràng buộc và index:
 
 - unique (`platform`, `day`, `company_id`) NULLS NOT DISTINCT `api_usage_platform_day_company_uq`
+
+## `channel.axis_mappings`
+
+Ánh xạ thuộc tính phân loại của công ty sang sales attribute của sàn (#448, Documents/19 §3.3, Documents/21 §18.8.3 nguồn 2): mỗi (thuộc tính, sàn) một danh sách mã theo `priority` (1 là ưu tiên nhất). Thuộc tính có `platform_kind` không cần dòng: dùng mặc định của adapter; có dòng thì dòng thắng. `attribute_id` trỏ `product.attributes`, không có khoá ngoại chéo schema. RLS (migration `*_anh-xa-truc-rls`).
+
+Khai ở `src/modules/channel/channel/repository/schema.ts` · module con `channel` · theo công ty (`company_id`)
+
+Cột:
+
+- `id` uuid · khoá chính · mặc định `gen_random_uuid()`
+- `company_id` uuid · null → `core.companies` (theo công ty)
+  NULL: ánh xạ nền tảng của thuộc tính chuẩn, dùng chung mọi công ty, chỉ migration ghi; có giá trị: của công ty.
+- `attribute_id` uuid · not null → `product.attributes.id` (tham chiếu, không có khoá ngoại)
+- `platform` enum `channel.marketplace` · not null: `lazada` | `shopee` | `tiktok` | `mock`
+- `attribute_code` text · not null
+  Mã sales attribute của sàn (`platform_category_attributes.code`, `kind = 'sales'`).
+- `priority` smallint · not null
+- `created_at` timestamptz · not null · mặc định `now()`
+- `updated_at` timestamptz · not null · mặc định `now()`
+
+Ràng buộc và index:
+
+- unique (`company_id`, `attribute_id`, `platform`, `attribute_code`) `axis_mappings_code_uq`
+- unique (`company_id`, `attribute_id`, `platform`, `priority`) `axis_mappings_priority_uq`
+- unique index (`attribute_id`, `platform`, `attribute_code`) `axis_mappings_platform_code_uq` where `company_id IS NULL`
+- unique index (`attribute_id`, `platform`, `priority`) `axis_mappings_platform_priority_uq` where `company_id IS NULL`
+- check `axis_mappings_priority`: `priority >= 1`
 
 ## `channel.conversation_notes`
 
@@ -106,7 +133,7 @@ Cột:
 - `shop_id` uuid · not null → `channel.shops.id` (khoá ngoại)
 - `mode` enum `channel.listing_mode` · not null · mặc định `'mapped'`: `mapped` | `unmanaged`
 - `variant_id` uuid · null → `product.product_variants.id` (tham chiếu, không có khoá ngoại)
-- `external_product_id` text · null: mã bên ngoài (sàn, cổng thanh toán)
+- `external_product_id` text · null → `channel.shop_products.external_product_id` (khoá ngoại)
 - `external_sku_id` text · null: mã bên ngoài (sàn, cổng thanh toán)
 - `seller_sku` text · null
 - `status` enum `channel.listing_status` · not null · mặc định `'pushing'`: `pushing` | `push_failed` | `under_review` | `rejected` | `live` | `hidden` | `platform_hold` | `delisted`
@@ -131,6 +158,8 @@ Cột:
   Lỗi lần đẩy gần nhất của riêng SKU này (§18.4): `{ code, message, at }`, null khi đã đồng bộ.
 - `price_sync_error` jsonb · null
 - `last_pushed_at` timestamptz · null
+- `last_price_pushed_at` timestamptz · null
+  Lần sàn nhận giá app đẩy gần nhất (#360). So giá sàn bị sửa ngoài app chờ 15 phút sau mốc này; không dùng `last_pushed_at` vì lần đẩy tồn cũng ghi mốc đó, SKU đổi tồn mỗi chu kỳ sẽ không bao giờ được so giá.
 - `external_image_urls` text[] · null: mã bên ngoài (sàn, cổng thanh toán)
   Ảnh đã đưa lên sàn (URL trên sàn), dùng lại cho lần đẩy sau.
 - `listed_price` numeric(18,2) · null
@@ -155,6 +184,8 @@ Cột:
   Bản sửa nội dung chờ sàn duyệt (`pendingRevision`, #293): ghi khi `update_content` mà sàn vẫn bán bản cũ; đồng bộ xoá khi qua duyệt, ghi `failed` kèm lý do khi trượt. Giữ khi ẩn, sàn khoá; xoá khi rời các trạng thái đó.
 - `revision_reject_reason` text · null
 - `revision_at` timestamptz · null
+- `category_change` jsonb · null
+  Lượt đổi category trên sàn (`categoryChange`, commerio-backend#467): `{ status, toCategoryId, toCategoryPath, code, message, attempts, at }`, null khi không có hoặc sàn đã nhận mà không lệch (trạng thái duyệt ở `revision_*`). Xoá khi gỡ.
 - `content_source` enum `channel.listing_content_source` · not null · mặc định `'platform'`: `app` | `platform`
   Mặc định `platform` (không rõ nguồn thì không ghi đè nội dung người bán); mọi chỗ tạo listing ghi rõ giá trị.
 - `remote_title_at_match` text · null
@@ -164,6 +195,8 @@ Cột:
 - `remote_title_changed_at` timestamptz · null
 - `replaces_listing_id` uuid · null → `channel.listings.id` (khoá ngoại)
   Dòng `delisted` mà dòng này thay (đẩy lại sau khi gỡ, kết nối lại; Documents/19, 25 §6.1).
+- `shop_product_id` uuid · null → `channel.shop_products.id` (khoá ngoại)
+  Sản phẩm sàn của listing (#295, `shop_products`): có `external_product_id` thì bắt buộc, và hai mã sàn phải bằng nhau (khoá ngoại ghép). Lần đẩy đầu của cha trỏ dòng `app` còn chưa có mã sàn.
 - `created_at` timestamptz · not null · mặc định `now()`
 - `updated_at` timestamptz · not null · mặc định `now()`
 - `version` integer · not null · mặc định `1`
@@ -174,6 +207,7 @@ Ràng buộc và index:
 - unique index (`shop_id`, `external_sku_id`) `listings_shop_external_sku_uq` where `external_sku_id is not null and status <> 'delisted'`
 - unique index (`shop_id`, `pending_external_sku_id`) `listings_shop_pending_external_sku_uq` where `pending_external_sku_id is not null`
 - index (`variant_id`) `listings_variant_id_index`
+- index (`shop_product_id`) `listings_shop_product_id_index`
 - check `listings_mode`: `(mode = 'mapped') = (variant_id is not null)`
 - check `listings_unmanaged_approved`: `mode = 'mapped' or approved_by is not null or pending_requested_by is not null`
 - check `listings_pending_mapping`: `(pending_mode is null and pending_variant_id is null and pending_requested_by is null and pending_requested_at is null)
@@ -191,9 +225,11 @@ Ràng buộc và index:
         and (revision_status is null or status in ('live', 'hidden', 'platform_hold'))`
 - check `listings_remote_title`: `(remote_title_at_match is not null or (remote_title_en_at_match is null and remote_title_matched_at is null))
         and (remote_title_changed_at is null or remote_title_matched_at is not null)`
+- check `listings_category_change`: `category_change is null or (status <> 'delisted' and category_change ->> 'status' in ('queued', 'failed', 'mismatch'))`
 - check `listings_reject_reason`: `status <> 'rejected' or reject_reason is not null`
 - check `listings_push_attempts`: `push_attempts >= 0`
 - check `listings_prices`: `listed_price >= 0 and manual_price >= 0`
+- trigger `listings_attach_shop_product`: `BEFORE INSERT OR UPDATE OF external_product_id, shop_product_id → channel.listings_attach_shop_product()`, ở `db/migrations/20261120221509_san-pham-san-du-lieu.sql`
 
 Trỏ vào bảng này:
 
@@ -346,7 +382,7 @@ Cột:
 - `margin_pct` numeric(7,2) · null
 - `below_floor` boolean · null
 - `trigger` text · not null
-  Vì sao có lần tính: đẩy lần đầu, đổi giá muốn bán, kích hoạt cấu hình (đổi giá vốn không tạo lần tính).
+  Vì sao có lần tính: đẩy lần đầu, đổi giá muốn bán, kích hoạt cấu hình, giá vốn tăng làm giá đang bán dưới giá thấp nhất (`cost`, #225: `target_net` là max(giá muốn bán, giá thấp nhất làm tròn lên đồng)).
 - `status` enum `channel.price_calc_status` · not null · mặc định `'pending_confirm'`: `pending_confirm` | `confirmed` | `pushed` | `superseded`
 - `confirmed_by` uuid · null → `core.accounts` (người thao tác)
 - `confirmed_at` timestamptz · null
@@ -361,7 +397,7 @@ Ràng buộc và index:
 - check `price_calculations_floor`: `not below_floor or status in ('pending_confirm', 'superseded')`
 - check `price_calculations_confirmed`: `status not in ('confirmed', 'pushed') or confirmed_by is not null`
 - check `price_calculations_cost_floor`: `(cost is null) = (below_floor is null)`
-- check `price_calculations_trigger`: `trigger in ('push', 'target_changed', 'config_activated')`
+- check `price_calculations_trigger`: `trigger in ('push', 'target_changed', 'config_activated', 'cost')`
 
 Trỏ vào bảng này:
 
@@ -385,6 +421,13 @@ Cột:
 - `value_map` jsonb · not null · mặc định `'{}'::jsonb`
 - `source` text · not null
 - `category_status` text · not null · mặc định `'ok'`
+- `field_sources` jsonb · not null · mặc định `'{}'::jsonb`
+  Nguồn từng attribute trong `attributes` (#497): `push`, `match`, `user`.
+- `remote_facts` jsonb · null
+  Bản sàn đang ghi ở lần đọc gần nhất khi ghép SKU (#497); bản có `remote_read_at` sau thắng.
+- `remote_read_at` timestamptz · null
+- `remote_shop_id` uuid · null → `channel.shops.id` (khoá ngoại, ON DELETE set null)
+  Gian hàng đã đọc; xoá gian hàng thì null, tên còn trong `remote_facts.shopName`.
 - `created_at` timestamptz · not null · mặc định `now()`
 - `updated_at` timestamptz · not null · mặc định `now()`
 - `version` integer · not null · mặc định `1`
@@ -396,6 +439,7 @@ Ràng buộc và index:
 - check `product_specs_source`: `source in ('push', 'match')`
 - check `product_specs_category_status`: `category_status in ('ok', 'changed', 'removed')`
 - check `product_specs_version`: `version >= 0`
+- check `product_specs_remote`: `(remote_facts is null) = (remote_read_at is null)`
 
 ## `channel.raw_orders`
 
@@ -443,6 +487,8 @@ Cột:
   Tên tiếng Anh trên sàn (Lazada `name_en`, #396); null khi sàn không có.
 - `state` text · not null
 - `quantity` integer · not null
+- `price` numeric(18,2) · null
+  Giá gốc trên sàn lúc đọc (`RemoteSku.price`: Lazada `skus[].price`, TikTok `tax_exclusive_price`), để hộp ghép so với giá app (#460). null khi sàn không trả hoặc bản sao đọc trước #460.
 - `seen_at` timestamptz · not null · mặc định `now()`
   Lần gần nhất đọc thấy SKU này trên sàn.
 
@@ -451,10 +497,11 @@ Ràng buộc và index:
 - unique index (`shop_id`, `external_sku_id`) `remote_skus_shop_external_sku_uq`
 - check `remote_skus_state`: `state in ('review', 'live', 'rejected', 'hold', 'inactive')`
 - check `remote_skus_quantity`: `quantity >= 0`
+- check `remote_skus_price`: `price >= 0`
 
 ## `channel.shop_category_permissions`
 
-Quyền đăng category của một gian hàng, chỉ TikTok dùng (`permission_statuses`, #400 A17). Ghi từ gợi ý và lần kiểm trước khi đẩy, `checked_at` quá 7 ngày thì kiểm lại. RLS `company_isolation` (migration `*_category-san-quyen`).
+Quyền đăng category của một gian hàng, cho sàn có quyền category theo gian hàng (adapter khai, #400 A17). Ghi từ gợi ý và lần kiểm trước khi đẩy, `checked_at` quá 7 ngày thì kiểm lại. RLS `company_isolation` (migration `*_category-san-quyen`).
 
 Khai ở `src/modules/channel/channel/repository/schema.ts` · module con `channel` · theo công ty (`company_id`)
 
@@ -472,6 +519,45 @@ Ràng buộc và index:
 - khoá chính (`shop_id`, `external_category_id`)
 - check `shop_category_permissions_status`: `status in ('available', 'invite_only', 'non_main_category', 'prohibited')`
 - khoá ngoại viết tay (`shop_id`, `company_id`) → `channel.shops` (`id`, `company_id`), ON DELETE cascade, ở `db/migrations/20261119053555_category-san-quyen.sql`
+
+## `channel.shop_products`
+
+Một sản phẩm cha trên một gian hàng ứng với một sản phẩm trên sàn (commerio-backend#295, Documents/19 câu chốt Q1, 21 §18.8.4). `app`: app tạo bằng lần đẩy gom biến thể (`product_id` bắt buộc, mã sàn null tới khi sàn tạo xong); `match`: sản phẩm sàn có sẵn mà listing trỏ tới (ghép SKU, dữ liệu đẩy trước #295), `product_id` null vì một sản phẩm người bán có thể chứa SKU của nhiều sản phẩm Commerio. Luật "một cha một sản phẩm sàn" ép ở unique một phần theo `origin = 'app'`. `failed`: lần tạo của dòng `app` bị sàn từ chối (gom lại, §18.8.4), lỗi ở `push_error`. `delisted`: sản phẩm sàn đã bị thay (gom lại) hoặc sàn đã xoá. RLS `company_isolation`.
+
+Khai ở `src/modules/channel/channel/repository/schema.ts` · module con `channel` · theo công ty (`company_id`)
+
+Cột:
+
+- `id` uuid · khoá chính · mặc định `gen_random_uuid()`
+- `company_id` uuid · not null → `core.companies` (theo công ty)
+- `shop_id` uuid · not null → `channel.shops.id` (khoá ngoại)
+- `product_id` uuid · null → `product.products.id` (tham chiếu, không có khoá ngoại)
+- `external_product_id` text · null: mã bên ngoài (sàn, cổng thanh toán)
+- `origin` enum `channel.shop_product_origin` · not null: `app` | `match`
+- `status` enum `channel.shop_product_status` · not null · mặc định `'active'`: `active` | `delisted` | `failed`
+- `push_error` jsonb · null
+  Lỗi của lần tạo gần nhất (`{ code, message, at }`), chỉ dòng `app`.
+- `push_started_at` timestamptz · null
+  Lúc bấm đẩy của lượt tạo đang chạy (dòng `app`): khoá chống tạo trùng `cm-sp-<id>-<mốc>` giữ qua các lần thử.
+- `create_attempted_at` timestamptz · null
+  Lần gọi tạo gần nhất (như `listings.create_attempted_at`, #399): phân biệt sản phẩm của lượt trước với sản phẩm người bán.
+- `created_at` timestamptz · not null · mặc định `now()`
+- `updated_at` timestamptz · not null · mặc định `now()`
+- `version` integer · not null · mặc định `1`
+
+Ràng buộc và index:
+
+- unique (`id`, `external_product_id`) `shop_products_id_external_uq`
+- unique index (`shop_id`, `external_product_id`) `shop_products_shop_external_uq` where `external_product_id is not null and status = 'active'`
+- unique index (`shop_id`, `product_id`) `shop_products_shop_app_product_uq` where `origin = 'app' and status = 'active'`
+- check `shop_products_origin`: `(origin = 'app') = (product_id is not null)`
+- check `shop_products_match_external`: `origin = 'app' or external_product_id is not null`
+- check `shop_products_failed`: `status <> 'failed' or (origin = 'app' and external_product_id is null and push_error is not null)`
+
+Trỏ vào bảng này:
+
+- `channel.listings.shop_product_id` (khoá ngoại)
+- `channel.listings.shop_product_id, external_product_id` (khoá ngoại)
 
 ## `channel.shop_reauth_mails`
 
@@ -588,8 +674,10 @@ Trỏ vào bảng này:
 
 - `channel.listings.shop_id` (khoá ngoại)
 - `channel.price_calculations.shop_id` (khoá ngoại)
+- `channel.product_specs.remote_shop_id` (khoá ngoại)
 - `channel.raw_orders.shop_id` (khoá ngoại)
 - `channel.remote_skus.shop_id` (khoá ngoại)
+- `channel.shop_products.shop_id` (khoá ngoại)
 - `channel.shop_reauth_mails.shop_id` (khoá ngoại)
 - `channel.shop_category_permissions.shop_id, company_id` (khoá ngoại viết tay)
 - `product.stock_documents.shop_id` (tham chiếu, không có khoá ngoại)
@@ -603,7 +691,62 @@ Trỏ vào bảng này:
 - `finance.settlement_batches.shop_id` (tham chiếu, không có khoá ngoại)
 - `finance.settlement_statements.shop_id` (tham chiếu, không có khoá ngoại)
 - `channel.message_channels.shop_id` (tham chiếu, không có khoá ngoại)
-- `insight.daily_channel_summary.shop_id` (tham chiếu, không có khoá ngoại)
+
+## `channel.spec_field_mappings`
+
+Ánh xạ một thông số của công ty (`catalog.spec_fields`, uuid thường) sang attribute của một sàn (#509, Documents/19 mục 3.3, 21 §18.8.1). Một thông số có thể ứng với nhiều mã trên cùng sàn (mã đổi theo category): lúc đẩy lấy mã có `priority` nhỏ nhất mà leaf có; một mã của sàn chỉ nhận từ một thông số. Gợi ý ánh xạ tính lúc đọc, không lưu (§18.8.1). RLS.
+
+Khai ở `src/modules/channel/channel/repository/schema.ts` · module con `channel` · theo công ty (`company_id`)
+
+Cột:
+
+- `id` uuid · khoá chính · mặc định `gen_random_uuid()`
+- `company_id` uuid · null → `core.companies` (theo công ty)
+  NULL: ánh xạ nền tảng của thông số chuẩn, dùng chung mọi công ty, chỉ migration ghi; có giá trị: của công ty.
+- `field_id` uuid · not null → `product.spec_fields.id` (tham chiếu, không có khoá ngoại)
+- `platform` enum `channel.marketplace` · not null: `lazada` | `shopee` | `tiktok` | `mock`
+- `attribute_code` text · not null
+  Mã attribute của sàn: TikTok `attribute_id`, Lazada `name`.
+- `priority` integer · not null
+- `created_at` timestamptz · not null · mặc định `now()`
+- `updated_at` timestamptz · not null · mặc định `now()`
+
+Ràng buộc và index:
+
+- unique (`company_id`, `field_id`, `platform`, `attribute_code`) `spec_field_mappings_code_uq`
+- unique (`company_id`, `field_id`, `platform`, `priority`) `spec_field_mappings_priority_uq`
+- unique (`company_id`, `platform`, `attribute_code`) `spec_field_mappings_attribute_uq`
+- unique (`field_id`, `platform`, `attribute_code`) `spec_field_mappings_field_code_uq`
+- unique index (`field_id`, `platform`, `priority`) `spec_field_mappings_platform_priority_uq` where `company_id IS NULL`
+- unique index (`platform`, `attribute_code`) `spec_field_mappings_platform_attribute_uq` where `company_id IS NULL`
+- check `spec_field_mappings_priority`: `priority >= 1`
+
+Trỏ vào bảng này:
+
+- `channel.spec_option_mappings.field_id, platform, attribute_code` (khoá ngoại viết tay)
+
+## `channel.spec_option_mappings`
+
+Ánh xạ một lựa chọn của thông số sang lựa chọn chuẩn của sàn, theo đúng mã attribute (#509). `company_id` là tầng của lựa chọn: NULL là lựa chọn chuẩn (nền tảng, chỉ migration ghi); công ty là lựa chọn riêng, kể cả lựa chọn riêng thêm vào thông số chuẩn (dòng mã là dòng nền tảng). Khoá ngoại `spec_option_mappings_field_fk` `(field_id, platform, attribute_code)` → `spec_field_mappings_field_code_uq` `ON DELETE CASCADE` (bỏ mã thì bỏ luôn ánh xạ lựa chọn của mã đó) không kèm `company_id`, vì lựa chọn riêng trỏ dòng mã nền tảng. Khoá ngoại đặt ở migration viết tay `*_anh-xa-hai-tang-du-lieu`, không khai ở đây: drizzle sinh câu thêm khoá ngoại trước câu tạo unique nó trỏ tới. RLS.
+
+Khai ở `src/modules/channel/channel/repository/schema.ts` · module con `channel` · theo công ty (`company_id`)
+
+Cột:
+
+- `id` uuid · khoá chính · mặc định `gen_random_uuid()`
+- `company_id` uuid · null → `core.companies` (theo công ty)
+- `field_id` uuid · not null → `channel.spec_field_mappings.field_id` (khoá ngoại viết tay, ON DELETE cascade)
+- `option_id` uuid · not null → `product.spec_field_options.id` (tham chiếu, không có khoá ngoại)
+- `platform` enum `channel.marketplace` · not null → `channel.spec_field_mappings.platform` (khoá ngoại viết tay, ON DELETE cascade): `lazada` | `shopee` | `tiktok` | `mock`
+- `attribute_code` text · not null → `channel.spec_field_mappings.attribute_code` (khoá ngoại viết tay, ON DELETE cascade)
+- `platform_option_id` text · not null
+- `created_at` timestamptz · not null · mặc định `now()`
+- `updated_at` timestamptz · not null · mặc định `now()`
+
+Ràng buộc và index:
+
+- unique (`option_id`, `platform`, `attribute_code`) `spec_option_mappings_option_uq`
+- khoá ngoại viết tay (`field_id`, `platform`, `attribute_code`) → `channel.spec_field_mappings` (`field_id`, `platform`, `attribute_code`), ON DELETE cascade, ở `db/migrations/20261121042909_anh-xa-hai-tang-du-lieu.sql`
 
 ## `channel.tags`
 

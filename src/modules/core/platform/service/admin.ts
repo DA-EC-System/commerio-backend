@@ -23,7 +23,7 @@ interface Paging {
 }
 const pageWindow = (p: Paging) => ({ limit: p.pageSize, offset: (p.page - 1) * p.pageSize });
 
-function toCompany(r: CompanyAdminRow) {
+export function toCompany(r: CompanyAdminRow) {
   return {
     id: r.id,
     name: r.name,
@@ -39,12 +39,23 @@ function toCompany(r: CompanyAdminRow) {
   };
 }
 
-const actionOf = (r: PlatformAuditRow): PlatformAuditAction =>
-  r.action === 'create' ? 'company.registered' : r.after?.status === 'locked' ? 'company.locked' : 'company.unlocked';
+/** Cùng điều kiện với `ACTION_SQL` (repository): gỡ mã số thuế xét trước, không rơi vào nhánh mở khoá (#459). */
+function actionOf(r: PlatformAuditRow): PlatformAuditAction {
+  if (r.action === 'create') return 'company.registered';
+  if (r.operation === 'release_tax_code') return 'company.tax_code_released';
+  return r.after?.status === 'locked' ? 'company.locked' : 'company.unlocked';
+}
+
+const REASON_KEY: Partial<Record<PlatformAuditAction, string>> = {
+  'company.locked': 'lockReason',
+  'company.tax_code_released': 'reason',
+};
 
 function toAuditLog(r: PlatformAuditRow) {
   const action = actionOf(r);
-  const reason = action === 'company.locked' && typeof r.after?.lockReason === 'string' ? r.after.lockReason : undefined;
+  const key = REASON_KEY[action];
+  const value = key ? r.after?.[key] : undefined;
+  const reason = typeof value === 'string' ? value : undefined;
   return {
     id: r.id,
     action,

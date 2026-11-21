@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V106** (`20261120065639_doi-ghep-da-dung`): 90 bảng trong 6 schema, 67 khoá ngoại, 77 cột tham chiếu không có khoá ngoại. Lịch sử từng phiên bản: [VERSIONS.md](VERSIONS.md).
+Phiên bản **V142** (`20261121071042_doi-ghep-da-dung`): 101 bảng trong 6 schema, 83 khoá ngoại, 81 cột tham chiếu không có khoá ngoại. Lịch sử từng phiên bản: [VERSIONS.md](VERSIONS.md).
 
 Nguồn: snapshot của migration mới nhất, comment trong `src/modules/<lớn>/<con>/repository/schema.ts`, khoá ngoại, trigger, index, EXCLUDE viết tay trong migration. Cột, kiểu, ràng buộc, quan hệ của từng bảng ở `db/schema/<schema>.md`.
 
@@ -17,14 +17,13 @@ Nguồn: snapshot của migration mới nhất, comment trong `src/modules/<lớ
 
 ## Đã bỏ
 
-- `order.orders.cancelling` (cột): Cột cờ cũ (trước #417), thay bằng `cancel_pending`. Giữ một bản deploy cho image cũ còn chạy lúc đổi image (job migrate chạy trước) và để lùi image: trigger `orders_sync_cancel_pending` (`*_dang-huy-chuyen-co`) giữ hai cột bằng nhau, code mới không đọc, không ghi. PR sau bỏ trigger và cột.
 - `finance.ledger_entries.replaces_entry_id` (cột): Cặp thay ước tính đã chép sang `ledger_replacements` (#231), cột này không ghi nữa.
 - `finance.payment_vouchers` (bảng): Gỡ ở #235: không còn code ghi, chưa drop. Xoá shop vẫn đếm dòng cũ (`shop-purge.ts`).
 - `finance.sales_invoice_lines` (bảng): Gỡ ở #235 cùng `sales_invoices`: không còn code ghi, chưa drop.
 - `finance.sales_invoices` (bảng): Gỡ ở #235: không còn code ghi, chưa drop. Xoá shop vẫn đếm dòng cũ (`shop-purge.ts`).
 - `channel.webhook_events` (bảng): Không dùng: MVP không nhận push của sàn (#133, #135), kéo định kỳ là đường nhận đơn duy nhất. Xoá ở migration sau.
 
-## `core` · Lõi · lớp 1 · 16 bảng
+## `core` · Lõi · lớp 1 · 17 bảng
 
 Chi tiết: [schema/core.md](schema/core.md)
 
@@ -41,26 +40,34 @@ Chi tiết: [schema/core.md](schema/core.md)
 - `core.permissions` (access): Danh mục quyền (Documents/21 mục 8).
 - `core.processed_events` (platform): Sự kiện consumer đã xử lý, chống xử lý trùng (D7).
 - `core.refresh_tokens` (identity): Refresh token, chỉ lưu bản băm SHA-256.
+- `core.registrations` (identity): Lần đăng ký công ty đang chờ mã xác minh email (#459, Documents/21 mục 2.1).
 - `core.role_permissions` (access)
 - `core.roles` (access): Vai trò có sẵn có `company_id` trống, dùng chung mọi công ty; vai trò tuỳ biến thuộc một công ty.
 - `core.state_transitions` (platform): Lịch sử chuyển trạng thái của mọi thực thể có máy trạng thái (N4, Documents/21 mục 14.1: `statusHistory`), chỉ thêm.
 
-## `product` · Sản phẩm · lớp 2 · 20 bảng
+## `product` · Sản phẩm · lớp 2 · 27 bảng
 
 Chi tiết: [schema/product.md](schema/product.md)
 
 - `product.attribute_values` (catalog): Giá trị thuộc tính; `code` là phần ghép vào {VAL} của SKU (19-D27, D36).
-- `product.attributes` (catalog)
-- `product.categories` (catalog): Danh mục và quy tắc SKU (Documents/21 5.1).
+- `product.attributes` (catalog): Thuộc tính (trục phân loại), hai tầng: 23 thuộc tính biến thể chuẩn (`platform_kind`) là dòng nền tảng (#531).
+- `product.company_group_settings` (catalog): Cài đặt của một công ty trên nhóm nền tảng (dữ liệu chung, Documents/19 D12): ẩn nhóm không bán, gợi ý giá và ngưỡng tồn riêng.
+- `product.company_product_settings` (catalog): Cài đặt sản phẩm của công ty (D11): mẫu SKU, số {SEQ} kế tiếp, gợi ý mặc định.
 - `product.doc_counters` (inventory): Bộ đếm số chứng từ của cả module lớn `product` (phiếu kho, đề nghị nhập, phiếu nhận, phiếu trả NCC): cấp số bằng `UPDATE … SET next_number = next_number + 1 RETURNING` trong giao dịch.
 - `product.goods_receipt_lines` (purchasing): Dòng phiếu nhận: số NCC báo giao, số đạt (vào tồn thực), số lỗi giữ lại (vào chờ xử lý), số trả tại chỗ.
 - `product.goods_receipts` (purchasing): Một đợt NCC giao hàng cho một đề nghị.
+- `product.group_allowed_attributes` (catalog): Thuộc tính biến thể được phép của danh mục (#531, Documents/21 mục 5.7, 19 §3.2): chỉ để gợi ý và lọc ô chọn, không ràng buộc `variant_attribute_values` (sản phẩm dùng thuộc tính ngoài danh sách vẫn…
+- `product.group_spec_fields` (catalog): Mẫu thông số của nhóm hàng: thông số nào, bắt buộc hay không, thứ tự.
 - `product.product_attribute_value_images` (catalog): Ảnh phân loại theo giá trị của thuộc tính gắn ảnh (#340, Documents/19 §3.2): áo 3 màu × 4 size có 3 dòng.
+- `product.product_groups` (catalog): Nhóm hàng (Documents/19 D11, 21 mục 5.2): một cấp, không gắn sàn, không gắn SKU.
 - `product.product_images` (catalog): Ảnh sản phẩm theo thứ tự, `position` 0 là ảnh đại diện (#303); `file_id` ở module files, không đặt khoá ngoại chéo schema.
+- `product.product_spec_values` (catalog): Giá trị thông số của sản phẩm cha: select một dòng `option_id`, multiselect mỗi lựa chọn một dòng, text/number/date một dòng `value_text`.
 - `product.product_variants` (catalog): Biến thể (SKU); SKU không cấp lại kể cả sau khi lưu trữ (Documents/21 P5).
-- `product.products` (catalog): Sản phẩm; không đổi danh mục sau khi tạo (Documents/21 P6).
+- `product.products` (catalog): Sản phẩm; đổi nhóm hàng được, SKU không đổi theo (Documents/21 P6, 19/11/2026).
 - `product.purchase_request_lines` (purchasing): Dòng đề nghị.
 - `product.purchase_requests` (purchasing): Một lần xin nhập hàng của một NCC.
+- `product.spec_field_options` (catalog): Lựa chọn của thông số select/multiselect, mỗi lựa chọn một dòng (để khoá ngoại từ giá trị và ánh xạ sàn theo lựa chọn).
+- `product.spec_fields` (catalog): Thư viện thông số của công ty (Documents/19 §3.2, 21 §5.5), dùng chung mọi nhóm hàng.
 - `product.stock_document_lines` (inventory): Dòng phiếu kho.
 - `product.stock_documents` (inventory): Phiếu kho.
 - `product.stock_levels` (inventory): Các con số lưu của SKU (25 §7.1, Documents/21 mục 15.1).
@@ -112,11 +119,12 @@ Chi tiết: [schema/finance.md](schema/finance.md)
 - `finance.unmatched_receipts` (finance): Tiền về không gán được vào đơn (không có mã, lệch tiền, đơn đã huỷ); gán hoặc hoàn sau (UC-PF-07).
 - `finance.webhook_events` (payment): Webhook cổng đã nhận (sau khi kiểm chữ ký), chống xử lý lặp.
 
-## `channel` · Kênh bán · lớp 5 · 18 bảng
+## `channel` · Kênh bán · lớp 5 · 22 bảng
 
 Chi tiết: [schema/channel.md](schema/channel.md)
 
 - `channel.api_usage` (channel): Số lời gọi sàn trong một ngày (giờ Việt Nam) (#102 A7, #215).
+- `channel.axis_mappings` (channel): Ánh xạ thuộc tính phân loại của công ty sang sales attribute của sàn (#448, Documents/19 §3.3, Documents/21 §18.8.3 nguồn 2): mỗi (thuộc tính, sàn) một danh sách mã theo `priority` (1 là ưu tiên nhất…
 - `channel.conversation_notes` (inbox): Ghi chú nội bộ trên hội thoại, khách không thấy.
 - `channel.conversation_tags` (inbox)
 - `channel.conversations` (inbox)
@@ -129,17 +137,19 @@ Chi tiết: [schema/channel.md](schema/channel.md)
 - `channel.product_specs` (channel): Thông tin sàn của một sản phẩm cha, một bộ mỗi sàn, mọi gian hàng của sàn dùng chung (#400, Documents/19 mục 3.3).
 - `channel.raw_orders` (channel): Dữ liệu gốc của đơn sàn mỗi lần cập nhật; `order_id` có khi đã tạo đơn trong `order`.
 - `channel.remote_skus` (channel): Bản sao danh sách SKU của gian hàng trên sàn (#220 đợt 2, Documents/21 §18.3 "đọc từ lần đồng bộ gần nhất"): trang ghép, kiểm SKU khi ghép và số SKU chưa ghép đọc từ đây, không gọi sàn mỗi lần.
-- `channel.shop_category_permissions` (channel): Quyền đăng category của một gian hàng, chỉ TikTok dùng (`permission_statuses`, #400 A17).
+- `channel.shop_category_permissions` (channel): Quyền đăng category của một gian hàng, cho sàn có quyền category theo gian hàng (adapter khai, #400 A17).
+- `channel.shop_products` (channel): Một sản phẩm cha trên một gian hàng ứng với một sản phẩm trên sàn (commerio-backend#295, Documents/19 câu chốt Q1, 21 §18.8.4).
 - `channel.shop_reauth_mails` (channel): Thư báo gian hàng sắp hết hoặc đã mất uỷ quyền đã xếp (#312, Documents/19).
 - `channel.shops` (channel): Gian hàng sàn đã kết nối, định danh bằng (sàn, mã shop của sàn); kết nối lại cùng shop dùng lại bản ghi.
+- `channel.spec_field_mappings` (channel): Ánh xạ một thông số của công ty (`catalog.spec_fields`, uuid thường) sang attribute của một sàn (#509, Documents/19 mục 3.3, 21 §18.8.1).
+- `channel.spec_option_mappings` (channel): Ánh xạ một lựa chọn của thông số sang lựa chọn chuẩn của sàn, theo đúng mã attribute (#509).
 - `channel.tags` (inbox)
 - `channel.webhook_events` (channel) **đã bỏ**: Webhook sàn đã nhận, chống xử lý lặp theo `notification_id`.
 
-## `insight` · Phân tích · lớp 5 · 4 bảng
+## `insight` · Phân tích · lớp 5 · 3 bảng
 
 Chi tiết: [schema/insight.md](schema/insight.md)
 
-- `insight.daily_channel_summary` (report): Số liệu theo ngày và gian hàng (V28, D18), dựng lại bằng tính lại từ module nguồn (D7).
 - `insight.document_chunks` (assistant): Đoạn tài liệu và embedding 1536 chiều; `role_ids` chép từ `document_roles` để lọc lúc tìm kiếm.
 - `insight.document_roles` (assistant): Vai trò được hỏi trợ lý về tài liệu này.
 - `insight.documents` (assistant): Tài liệu nội bộ trợ lý AI dùng để trả lời; tách đoạn và tạo embedding ở worker.

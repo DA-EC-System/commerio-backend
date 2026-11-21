@@ -19,7 +19,8 @@ import {
   TAKE_OVER_FROM,
 } from '../domain/listing.ts';
 import { type RemoteTitleChanged, remoteTitleChanged, sentBaseline } from '../domain/remote-title.ts';
-import { awaitingAllocation } from '../domain/shop.ts';
+import { awaitingAllocation, holdsStock } from '../domain/shop.ts';
+import { type StockHeldReason, stockToPushOf } from '../domain/stock-to-push.ts';
 import {
   currentListingRows,
   deleteListing,
@@ -27,19 +28,25 @@ import {
   findListingRow,
   type ListingPatch,
   type ListingRow,
+  listingsOfShopProduct,
+  remoteProductListings,
 } from '../repository/listings.ts';
+import { syncedPathsOf } from '../repository/platform-categories.ts';
 import { findRemoteSkuRow, remoteSkuRowsOf } from '../repository/remote-skus.ts';
-import type { SyncError } from '../repository/schema.ts';
-import type { ShopRow } from '../repository/shops.ts';
+import type { CategoryChange, SyncError } from '../repository/schema.ts';
+import { listShopRows, type ShopRow } from '../repository/shops.ts';
 import { insertListing, updateListing } from './listing-writes.ts';
 import type { ProductPort } from './product-port.ts';
 import { insertConfirmed, type NewPriceCalculation } from '../repository/price-calculations.ts';
 import { countRemoteSkusOfProduct } from '../repository/remote-skus.ts';
 import { currentPrices, type ListingPrice, listingPrices } from './listing-prices.ts';
 import { firstPushCalculations } from './repricing.ts';
+import { evaluatePrices } from './price-inputs.ts';
+import type { PriceFilterResult } from '../domain/price-filter.ts';
 import { pushAttributes, specChecks, specStatusOf } from './product-specs.ts';
 import { keepsPlatformContent, listingText, pushBlock, pushSpec, specBlock } from './push-block.ts';
-import { PUSH_IMAGE_MAX, sendListingPush } from './shop-jobs.ts';
+import { PUSH_IMAGE_MAX, sendListingPush, sendProductPush } from './shop-jobs.ts';
+import { findAppShopProduct, findShopProduct, insertAppShopProduct, setShopProductPushStarted } from '../repository/shop-products.ts';
 import { MarketplaceError } from './marketplaces/index.ts';
 import { type Actor, onMarketplace, ownShop, platformOf, shopSession } from './shops.ts';
 
@@ -76,8 +83,25 @@ export interface ChannelListing {
   pendingRevision: { status: 'auditing' | 'failed'; rejectReason: string | null; at: Date } | null;
   /** Ai tạo nội dung sản phẩm trên sàn (#399). */
   contentSource: ListingRow['contentSource'];
+  /** Lượt đổi category trên sàn (`apply-category`, #467). */
+  categoryChange: CategoryChangeView | null;
   version: number;
 }
+
+export interface CategoryChangeView {
+  status: CategoryChange['status'];
+  toCategoryId: string;
+  toCategoryPath: string | null;
+  code: string | null;
+  message: string | null;
+  attempts: number;
+  at: Date;
+}
+
+const toCategoryChange = (c: CategoryChange | null): CategoryChangeView | null =>
+  c
+    ? { status: c.status, toCategoryId: c.toCategoryId, toCategoryPath: c.toCategoryPath, code: c.code, message: c.message, attempts: c.attempts, at: new Date(c.at) }
+    : null;
 
 export interface ListingRowView extends ListingPrice {
   variantId: string;
@@ -91,6 +115,15 @@ export interface ListingRowView extends ListingPrice {
   listing: ChannelListing | null;
   /** Tên trên sàn khác tên lúc ghép (#396, 21 §18.3); tính từ bản sao SKU sàn lúc đọc. */
   remoteTitleChanged: RemoteTitleChanged | null;
+  /** Category của listing trên sàn (#467), null khi chưa có listing hay chưa biết category. */
+  externalCategoryId: string | null;
+  /** Đường dẫn của `externalCategoryId` của listing trong cây đã đồng bộ (#467); null khi chưa có category hay chưa có trong cây. */
+  externalCategoryPath: string | null;
+  /** Bằng `listing.categoryChange` (21 §18.5 ghi trên cả `ListingRow`), null khi chưa có listing. */
+  categoryChange: CategoryChangeView | null;
+  /** Số tồn lần đẩy tới sẽ gửi (21 §18.9 R3, `domain/stock-to-push.ts`); null khi chưa đẩy được tồn. */
+  stockToPush: number | null;
+  stockHeldReason: StockHeldReason | null;
 }
 
 /**
@@ -151,6 +184,7 @@ export function toListing(r: ListingRow, names: ReadonlyMap<string, string> = ne
     pendingRevision:
       r.revisionStatus && r.revisionAt ? { status: r.revisionStatus, rejectReason: r.revisionRejectReason, at: r.revisionAt } : null,
     contentSource: r.contentSource,
+    categoryChange: toCategoryChange(r.categoryChange),
     version: r.version,
   };
 }
@@ -168,12 +202,47 @@ function shownPriceSync(l: ListingRow, price: number | null): ListingRow['priceS
 /** Mọi biến thể đang bán kèm giá chuẩn và listing trên gian hàng này. Gọi trong `withCompany`. */
 export async function listListings(port: ProductPort, shopId: string): Promise<{ items: ListingRowView[] }> {
   const shop = await ownShop(shopId);
-  const catalog = await port.variants();
+  return { items: await shopListingRows(port, shop, await port.variants()) };
+}
+
+/** Dòng listing của trang sản phẩm: thêm gian hàng của dòng (21 §18.5 `ProductListingRow`, #467). */
+export interface ProductListingRowView extends ListingRowView {
+  shopId: string;
+  shopName: string;
+  platform: string;
+}
+
+/**
+ * Listing của một sản phẩm ở mọi gian hàng chưa ngắt (21 §18.5 `GET /channel/products/:productId/listings`, #467): mỗi
+ * biến thể chưa lưu trữ × mỗi gian hàng, tính như route theo gian hàng nhưng chỉ cho biến thể của sản phẩm này. Sản phẩm
+ * không có hoặc của công ty khác (không biến thể nào, kể cả lưu trữ): 404. Không gọi sàn. Gọi trong `withCompany`.
+ */
+export async function listProductListings(port: ProductPort, productId: string): Promise<{ items: ProductListingRowView[] }> {
+  const catalog = await port.variants(undefined, { productIds: [productId] });
+  if (!catalog.length) throw new AppError(404, 'not_found', 'Không tìm thấy sản phẩm');
+  const items: ProductListingRowView[] = [];
+  // Cùng một kết nối của giao dịch: đọc tuần tự từng gian hàng.
+  for (const shop of (await listShopRows()).filter((s) => s.status !== 'disconnected')) {
+    const rows = await shopListingRows(port, shop, catalog);
+    items.push(...rows.map((r) => ({ ...r, shopId: shop.id, shopName: shop.shopName, platform: shop.platform })));
+  }
+  return { items };
+}
+
+type CatalogVariant = Awaited<ReturnType<ProductPort['variants']>>[number];
+
+/**
+ * Dòng listing của các biến thể chưa lưu trữ trong `catalog` trên một gian hàng. `catalog` gồm cả biến thể lưu trữ của các
+ * sản phẩm đang xét (kiểm spec theo mọi biến thể, như request đẩy và `PUT` spec).
+ */
+async function shopListingRows(port: ProductPort, shop: ShopRow, catalog: readonly CatalogVariant[]): Promise<ListingRowView[]> {
   const variants = catalog.filter((v) => !v.archived);
   const prices = await port.standardPrices(variants.map((v) => v.id));
   // Chỉ ảnh đầu (ảnh đại diện), một lần cho mọi sản phẩm.
   const thumbnails = await port.productImageUrls([...new Set(variants.map((v) => v.productId))], 1);
-  const rows = await currentListingRows(shop.id);
+  // Chỉ listing của các biến thể đang xét: trang sản phẩm không tính giá, tên, category cho cả gian hàng.
+  const ids = new Set(catalog.map((v) => v.id));
+  const rows = (await currentListingRows(shop.id)).filter((l) => ids.has(l.variantId!));
   const names = await requesterNames(rows);
   const byVariant = new Map(rows.map((l) => [l.variantId, l]));
   const shopPrices = await listingPrices(shop.id, variants.map((v) => v.id), rows, prices);
@@ -181,28 +250,50 @@ export async function listListings(port: ProductPort, shopId: string): Promise<{
   // Trạng thái spec theo sản phẩm (#400 §18.5), theo lô: một câu spec, mỗi category một lần đọc.
   // Mọi biến thể (kể cả lưu trữ) của sản phẩm đang hiện, cùng tập với request đẩy và `PUT` spec (review BE2 P2-6).
   const shown = new Set(variants.map((v) => v.productId));
-  const specs = await specChecks(shop, platformOf(shop.platform).adapter, catalog.filter((v) => shown.has(v.productId)));
+  const specs = await specChecks(port, shop, platformOf(shop.platform).adapter, catalog.filter((v) => shown.has(v.productId)));
   const titles = new Map(
     (await remoteSkuRowsOf(shop.id, rows.flatMap((l) => (l.remoteTitleChangedAt && l.externalSkuId ? [l.externalSkuId] : [])))).map((r) => [r.externalSkuId, r]),
   );
-  return {
-    items: variants.map((v) => {
-      const listing = byVariant.get(v.id);
-      const price = shopPrices.get(v.id)!;
-      return {
-        variantId: v.id,
-        productId: v.productId,
-        productName: v.productName,
-        sku: v.sku,
-        attributesLabel: v.attributesLabel,
-        thumbnailUrl: thumbnails.get(v.productId)?.[0] ?? null,
-        specStatus: specStatusOf(specs.get(v.productId)),
-        ...price,
-        listing: listing ? { ...toListing(listing, names), priceSync: shownPriceSync(listing, price.price) } : null,
-        remoteTitleChanged: listing?.externalSkuId ? remoteTitleChanged(listing, titles.get(listing.externalSkuId)) : null,
-      };
-    }),
-  };
+  // Category trên sàn của listing (#467): một câu cho mọi listing, tra cây đã đồng bộ, không gọi sàn.
+  const categoryPaths = await syncedPathsOf(shop.platform, rows.flatMap((l) => (l.externalCategoryId ? [l.externalCategoryId] : [])));
+  // Tồn sẽ đẩy (R3): cùng nguồn với việc đẩy tồn, một lần cho cả bảng, không gọi sàn.
+  const variantIds = variants.map((v) => v.id);
+  const available = await port.availableOf(variantIds);
+  const counted = port.countedOf ? await port.countedOf(variantIds) : new Set(variantIds);
+  const holdStock = holdsStock(shop);
+  return variants.map((v) => {
+    const listing = byVariant.get(v.id);
+    const price = shopPrices.get(v.id)!;
+    return {
+      variantId: v.id,
+      productId: v.productId,
+      productName: v.productName,
+      sku: v.sku,
+      attributesLabel: v.attributesLabel,
+      thumbnailUrl: thumbnails.get(v.productId)?.[0] ?? null,
+      specStatus: specStatusOf(specs.get(v.productId)),
+      ...price,
+      listing: listing ? { ...toListing(listing, names), priceSync: shownPriceSync(listing, price.price) } : null,
+      remoteTitleChanged: listing?.externalSkuId ? remoteTitleChanged(listing, titles.get(listing.externalSkuId)) : null,
+      externalCategoryId: listing?.externalCategoryId ?? null,
+      externalCategoryPath: listing?.externalCategoryId ? (categoryPaths.get(listing.externalCategoryId) ?? null) : null,
+      categoryChange: listing ? toCategoryChange(listing.categoryChange) : null,
+      ...stockToPushView(listing, { holdStock, counted: counted.has(v.id), available: available.get(v.id) }),
+    };
+  });
+}
+
+/**
+ * Cột "Tồn sẽ đẩy" (21 §18.9 R3). Listing "không quản tồn", hoặc sàn đổi ngoài app chờ CEO quyết (trừ ẩn bằng tồn 0)
+ * thì không đẩy tồn và không có lý do giữ của hợp đồng: `null`, `null`. Chưa có listing: số lần đăng đầu sẽ đẩy.
+ */
+function stockToPushView(
+  listing: ListingRow | undefined,
+  input: { holdStock: boolean; counted: boolean; available: number | undefined },
+): { stockToPush: number | null; stockHeldReason: StockHeldReason | null } {
+  const zeroHidden = listing?.status === 'hidden' && listing.hiddenBy === 'zero_stock';
+  if (listing && (listing.mode !== 'mapped' || (listing.outsideChangeKind && !zeroHidden))) return { stockToPush: null, stockHeldReason: null };
+  return stockToPushOf({ zeroHidden, ...input });
 }
 
 /**
@@ -230,7 +321,15 @@ export async function moveListing(
     row.id,
     { version: row.version, status: row.status },
     // Bản sửa nội dung chỉ còn ở trạng thái sàn vẫn duyệt nó (#293, CHECK `listings_revision`).
-    { ...(to !== 'hidden' && NO_OUTSIDE_CHANGE), ...patch, ...(dropPending && NO_PENDING), ...(!REVISION_KEPT.includes(to) && NO_REVISION), status: to },
+    {
+      ...(to !== 'hidden' && NO_OUTSIDE_CHANGE),
+      ...patch,
+      ...(dropPending && NO_PENDING),
+      ...(!REVISION_KEPT.includes(to) && NO_REVISION),
+      // Gỡ là trạng thái cuối: lượt đổi category không còn đối tượng (CHECK `listings_category_change`, #467).
+      ...(to === 'delisted' && { categoryChange: null }),
+      status: to,
+    },
   );
   if (!updated) throw new AppError(409, 'version_conflict', 'Listing vừa được cập nhật, thử lại');
   await recordTransition({ entityType: ENTITY, entityId: row.id, from: row.status, to, action, actorId, reason });
@@ -282,7 +381,7 @@ export async function pushListings(
   port: ProductPort,
   actor: Actor,
   shopId: string,
-  input: { variantIds: string[] },
+  input: { variantIds: string[]; listPrices?: Record<string, number> },
 ): Promise<{ results: PushResult[] }> {
   const inCompany = <T>(fn: () => Promise<T>) => withCompany(actor.companyId, fn);
   // Thứ tự kiểm theo §18.6.11: chưa `active`, chờ kiểm kê, chờ phân hàng (hoặc lượt đơn mở chưa xong), rồi mới tới token.
@@ -300,19 +399,26 @@ export async function pushListings(
     return {
       variants,
       prices: await port.standardPrices(ids),
-      specs: await specChecks(shop, adapter, await port.variants(undefined, { productIds })),
+      specs: await specChecks(port, shop, adapter, await port.variants(undefined, { productIds })),
       current: new Map(await Promise.all(ids.map(async (id) => [id, await findListingRow(shop.id, id)] as const))),
       images: await port.productImageUrls(productIds, PUSH_IMAGE_MAX),
       sizeCharts: (await port.productSizeChartUrls?.(productIds)) ?? new Map<string, string>(),
     };
   });
+  // Giá người bán gõ lúc đăng (21 §18.9 R1) là giá ghi đè tay (25 §6.2 bước 6): áp ngay, không thành giá chờ, vẫn qua bước 5.
+  const manual = new Map(ids.flatMap((id) => (input.listPrices?.[id] === undefined ? [] : [[id, String(input.listPrices[id])] as const])));
   // Lần đẩy đầu dùng giá bộ lọc của gian hàng (#225 phần 2); listing đã có giá ghi đè hay giá gian hàng giữ giá đó.
   const firstPush = ids.filter((id) => {
     const l = current.get(id);
-    return !l || l.status === 'delisted' || (l.manualPrice === null && l.priceCalcId === null);
+    return !manual.has(id) && (!l || l.status === 'delisted' || (l.manualPrice === null && l.priceCalcId === null));
   });
-  const calcs = await inCompany(() => firstPushCalculations(shop.id, firstPush));
+  const [calcs, manualChecks] = await inCompany(async () => [
+    await firstPushCalculations(shop.id, firstPush),
+    manual.size ? (await evaluatePrices(shop.id, manual)).results : new Map<string, PriceFilterResult>(),
+  ] as const);
   const results: PushResult[] = [];
+  // SKU chưa có sản phẩm trên sàn gom theo cha (#295, §18.8.4): một sản phẩm sàn nhiều phân loại mỗi gian hàng.
+  const groups = new Map<string, NewSku[]>();
   for (const variantId of ids) {
     const v = variants.get(variantId);
     const existing = current.get(variantId);
@@ -336,9 +442,10 @@ export async function pushListings(
     const imageUrls = images.get(v.productId) ?? [];
     const sizeChartUrl = sizeCharts.get(v.productId) ?? null;
     const calc = calcs.get(v.id);
+    const manualPrice = manual.get(v.id);
     const block = pushBlock(
       v,
-      calc ? new Decimal(calc.roundedPrice) : (prices.get(v.id) ?? null),
+      manualPrice ? new Decimal(manualPrice) : calc ? new Decimal(calc.roundedPrice) : (prices.get(v.id) ?? null),
       // Đẩy lại SKU người bán chỉ bật lại trên sàn: không xét spec (cùng vị từ với việc nền).
       pushSpec(keepsPlatformContent(existing), specs.get(v.productId)),
       Boolean(existing?.externalImageUrls?.length || imageUrls.length),
@@ -352,9 +459,94 @@ export async function pushListings(
       results.push(blocked(variantId, existing, 'below_floor', 'Giá theo bộ lọc giá của gian hàng có thực nhận dưới giá thấp nhất; sửa giá muốn bán hoặc cấu hình phí'));
       continue;
     }
-    results.push(await enqueue(actor, shop.id, v.id, v.sku, existing, imageUrls, sizeChartUrl, calc));
+    // Như `assertAboveFloor` của `PUT .../price`: tổng phí từ 100% trở lên cũng là dưới giá thấp nhất.
+    const check = manualChecks.get(v.id);
+    if (check && (!check.ok || check.belowFloor)) {
+      results.push(blocked(variantId, existing, 'below_floor', 'Giá niêm yết có thực nhận dưới giá thấp nhất; nhập giá cao hơn'));
+      continue;
+    }
+    const price = { calc, manualPrice };
+    if (!existing?.externalProductId) {
+      groups.set(v.productId, [...(groups.get(v.productId) ?? []), { variantId: v.id, sku: v.sku, existing, ...price }]);
+      continue;
+    }
+    results.push(await enqueue(actor, shop.id, v.id, v.sku, existing, imageUrls, sizeChartUrl, price));
+  }
+  for (const [productId, rows] of groups) {
+    results.push(...(await enqueueProduct(actor, shop.id, productId, rows, images.get(productId) ?? [], sizeCharts.get(productId) ?? null)));
   }
   return { results };
+}
+
+interface NewSku {
+  variantId: string;
+  sku: string;
+  existing: ListingRow | undefined;
+  calc: NewPriceCalculation | undefined;
+  manualPrice: string | undefined;
+}
+
+/**
+ * Các SKU chưa có sản phẩm trên sàn của một cha (#295, Documents/21 §18.8.4), một giao dịch: lấy dòng `shop_products` `app`
+ * đang `active` của cha (chưa có thì tạo; unique một phần giữ một dòng mỗi cha), đặt mốc lượt mới, chuyển từng SKU sang
+ * `pushing` trỏ dòng đó, xếp một việc `channel.product_push`. Cha đã có mã sàn thì việc thêm phân loại; chưa có thì tạo sản
+ * phẩm, gồm cả SKU còn `pushing` của lượt trước (việc cũ thấy mốc khác thì bỏ). Đua cùng SKU hay cùng cha: `push_in_progress`.
+ */
+async function enqueueProduct(
+  actor: Actor,
+  shopId: string,
+  productId: string,
+  rows: readonly NewSku[],
+  imageUrls: string[],
+  sizeChartUrl: string | null,
+): Promise<PushResult[]> {
+  const pushStartedAt = new Date();
+  try {
+    const listed = await withCompany(actor.companyId, async () => {
+      const sp = (await findAppShopProduct(shopId, productId, { lock: true })) ?? (await insertAppShopProduct(actor.companyId, shopId, productId));
+      await setShopProductPushStarted(sp.id, pushStartedAt);
+      const out: ListingRow[] = [];
+      for (const r of rows) {
+        const priceCalcId = r.calc ? (await insertConfirmed(r.calc, actor.accountId, pushStartedAt)).id : undefined;
+        const lot = { pushStartedAt, shopProductId: sp.id, ...(priceCalcId && { priceCalcId }), ...(r.manualPrice && { manualPrice: r.manualPrice }) };
+        if (r.existing && r.existing.status !== 'delisted') {
+          out.push(await moveListing(r.existing, 'push', actor, { ...lot, pushAttempts: 0, pushError: null, rejectReason: null }));
+          continue;
+        }
+        const row = await insertListing({
+          companyId: actor.companyId,
+          shopId,
+          variantId: r.variantId,
+          sellerSku: r.existing?.sellerSku ?? r.sku,
+          status: 'pushing',
+          replacesListingId: r.existing?.id ?? null,
+          priceCalcId: priceCalcId ?? null,
+          contentSource: 'app',
+          ...lot,
+        });
+        await recordTransition({ entityType: ENTITY, entityId: row.id, from: null, to: 'pushing', action: 'push', actorId: actor.accountId });
+        out.push(row);
+      }
+      await sendProductPush({
+        companyId: actor.companyId,
+        shopId,
+        shopProductId: sp.id,
+        pushStartedAt: pushStartedAt.toISOString(),
+        imageUrls,
+        ...(sizeChartUrl && { sizeChartUrl }),
+      });
+      return out;
+    });
+    return listed.map((row) => ({ variantId: row.variantId!, listingId: row.id, status: row.status, code: null, message: null }));
+  } catch (err) {
+    const constraint = pgError(err).constraint;
+    const raced =
+      (err instanceof AppError && err.code === 'version_conflict') ||
+      constraint === 'listings_shop_variant_uq' ||
+      constraint === 'shop_products_shop_app_product_uq';
+    if (raced) return rows.map((r) => inProgress(r.variantId, r.existing));
+    throw err;
+  }
 }
 
 const WAITING_MESSAGE = {
@@ -391,16 +583,17 @@ async function enqueue(
   existing: ListingRow | undefined,
   imageUrls: string[],
   sizeChartUrl: string | null,
-  calc?: NewPriceCalculation,
+  { calc, manualPrice }: { calc?: NewPriceCalculation; manualPrice?: string } = {},
 ): Promise<PushResult> {
   const pushStartedAt = new Date();
   try {
     const row = await withCompany(actor.companyId, async () => {
       let row: ListingRow;
       const priceCalcId = calc ? (await insertConfirmed(calc, actor.accountId, pushStartedAt)).id : undefined;
+      const price = { ...(priceCalcId && { priceCalcId }), ...(manualPrice && { manualPrice }) };
       if (existing && existing.status !== 'delisted') {
         // Lượt mới: đếm lại số lần thử, xoá lỗi và lý do từ chối của lượt trước.
-        row = await moveListing(existing, 'push', actor, { pushStartedAt, pushAttempts: 0, pushError: null, rejectReason: null, ...(priceCalcId && { priceCalcId }) });
+        row = await moveListing(existing, 'push', actor, { pushStartedAt, pushAttempts: 0, pushError: null, rejectReason: null, ...price });
       } else {
         row = await insertListing({
           companyId: actor.companyId,
@@ -414,6 +607,7 @@ async function enqueue(
           externalImageUrls: existing?.externalImageUrls ?? null,
           replacesListingId: existing?.id ?? null,
           priceCalcId: priceCalcId ?? null,
+          manualPrice: manualPrice ?? null,
           // #399: bản gỡ còn mã sàn thì đẩy lại đúng sản phẩm đó, chủ nội dung giữ như cũ; không có thì app tạo mới.
           contentSource: existing?.externalSkuId ? existing.contentSource : 'app',
         });
@@ -436,7 +630,12 @@ async function enqueue(
   }
 }
 
-/** Gỡ khỏi sàn (§18.3): tắt sản phẩm trên sàn rồi chuyển `delisted`, giữ ghép để đẩy lại. */
+/**
+ * Gỡ khỏi sàn (§18.3, §18.8.4): sản phẩm sàn còn SKU khác (listing chưa gỡ cùng mã sản phẩm, hoặc bản sao SKU sàn) và adapter
+ * có `removeVariants` thì gỡ riêng phân loại đó (TikTok bỏ khỏi `skus`, có duyệt lại; Lazada xoá SKU) và bỏ mã sàn khỏi listing,
+ * nên đẩy lại là thêm phân loại; SKU cuối cùng thì tắt trên sàn như cũ, giữ mã sàn để đẩy lại là bật lại (adapter báo
+ * `last_variant` khi bản sao đếm thừa thì cũng tắt). Rồi chuyển `delisted`.
+ */
 export async function delistListing(actor: Actor, shopId: string, variantId: string, version: number): Promise<ChannelListing> {
   const { adapter, accessToken } = await withCompany(actor.companyId, () => shopSession(shopId));
   const row = await withCompany(actor.companyId, () => findListingRow(shopId, variantId));
@@ -446,11 +645,32 @@ export async function delistListing(actor: Actor, shopId: string, variantId: str
   }
   assertTransition(listingMachine, row.status, 'delist', { actor, view: toListing(row) });
   const { externalProductId, externalSkuId } = row;
+  let removed = false;
   if (externalProductId && externalSkuId) {
-    await onMarketplace(() => adapter.deactivate(accessToken, externalProductId, externalSkuId));
+    const remove = adapter.removeVariants;
+    const hasSiblings = await withCompany(actor.companyId, async () => {
+      const siblings = (await remoteProductListings([{ shopId: row.shopId, externalProductId }])).filter((l) => l.id !== row.id && l.externalSkuId);
+      return siblings.length > 0 || (await countRemoteSkusOfProduct(row.shopId, externalProductId)) > 1;
+    });
+    // Bản sao SKU sàn có thể cũ (gỡ phân loại trước đó chưa phản ánh): sàn báo đây là SKU cuối thì tắt như SKU cuối.
+    if (remove && hasSiblings) {
+      removed = await onMarketplace(async () => {
+        try {
+          await remove(accessToken, externalProductId, [externalSkuId]);
+          return true;
+        } catch (err) {
+          if (!(err instanceof MarketplaceError && err.platformCode === 'last_variant')) throw err;
+          await adapter.deactivate(accessToken, externalProductId, externalSkuId);
+          return false;
+        }
+      });
+    } else {
+      await onMarketplace(() => adapter.deactivate(accessToken, externalProductId, externalSkuId));
+    }
   }
+  const dropped = removed ? { externalProductId: null, externalSkuId: null, externalImageUrls: null } : {};
   const updated = await withCompany(actor.companyId, () =>
-    moveListing(row, 'delist', actor, { hiddenBy: null, platformStock: 0 }),
+    moveListing(row, 'delist', actor, { hiddenBy: null, platformStock: 0, ...dropped }),
   );
   return toListing(updated, await withCompany(actor.companyId, () => requesterNames([updated])));
 }
@@ -467,7 +687,7 @@ export async function updateListingContent(
   listingId: string,
   version: number,
 ): Promise<ChannelListing> {
-  const { shop, adapter, accessToken, row, productId, v, map, responsible } = await withCompany(actor.companyId, async () => {
+  const { shop, adapter, accessToken, row, productId, v, map, wholeProduct, responsible } = await withCompany(actor.companyId, async () => {
     const session = await shopSession(shopId);
     const row = isUuid(listingId) ? await findListingById(listingId) : undefined;
     if (!row || row.shopId !== session.shop.id) throw new AppError(404, 'not_found', 'Không có listing này trên gian hàng');
@@ -487,18 +707,27 @@ export async function updateListingContent(
     }
     const [v] = await port.variants([row.variantId]);
     if (!v || v.archived) throw new AppError(404, 'not_found', 'Biến thể không còn bán');
-    const spec = (await specChecks(session.shop, session.adapter, await port.variants(undefined, { productIds: [v.productId] }))).get(v.productId);
+    const spec = (await specChecks(port, session.shop, session.adapter, await port.variants(undefined, { productIds: [v.productId] }))).get(v.productId);
     const bySpec = specBlock(spec);
     if (bySpec && bySpec.code !== 'category_not_permitted') throw new AppError(409, bySpec.code, bySpec.message);
-    const map = { externalCategoryId: spec!.externalCategoryId, attributes: pushAttributes(session.adapter, spec!.attributes, spec!.row, spec!.product) };
-    return { ...session, row, productId: row.externalProductId, v, map, responsible: await responsibleOrgOf(session.shop.companyId) };
+    const map = { externalCategoryId: spec!.externalCategoryId, attributes: pushAttributes(spec!.attributes, spec!.resolved) };
+    // Sản phẩm sàn app tạo theo cha (#295): sửa cả sản phẩm, tiêu đề là tên cha như lúc đẩy.
+    const sp = row.shopProductId ? await findShopProduct(row.shopProductId) : undefined;
+    const wholeProduct = sp?.origin === 'app' ? sp.id : null;
+    return { ...session, row, productId: row.externalProductId, v, map, wholeProduct, responsible: await responsibleOrgOf(session.shop.companyId) };
   });
   const update = adapter.updateContent;
   if (!update) throw new AppError(422, 'marketplace_unsupported', 'Sàn này chưa hỗ trợ sửa nội dung sản phẩm đang bán');
-  const text = listingText(v);
+  const text = wholeProduct ? { name: v.productName, description: v.description ?? v.productName } : listingText(v);
   const { underReview } = await onMarketplace(async () => {
     try {
-      return await update(accessToken, productId, { externalCategoryId: map.externalCategoryId, ...text, attributes: map.attributes, responsible });
+      return await update(accessToken, productId, {
+        externalCategoryId: map.externalCategoryId,
+        ...text,
+        attributes: map.attributes,
+        responsible,
+        ...(wholeProduct && { wholeProduct: true }),
+      });
     } catch (err) {
       // Sản phẩm sàn nhiều SKU: mã riêng của route (§18.5), không phải lỗi chung của sàn.
       if (err instanceof MarketplaceError && err.platformCode === 'shared_remote_product') {
@@ -515,8 +744,32 @@ export async function updateListingContent(
     const remote = fresh.externalSkuId ? await findRemoteSkuRow(shop.id, fresh.externalSkuId) : undefined;
     let updated = await moveListing(fresh, 'update_content', actor, { ...revision, ...sentBaseline(text.name, remote, new Date()) });
     if (underReview) updated = await moveListing(updated, 'request_review', null);
+    if (wholeProduct) await applyToSiblings(shop.id, wholeProduct, fresh.id, text.name, revision, underReview);
     return toListing(updated, await requesterNames([updated]));
   });
+}
+
+/**
+ * Sửa nội dung cả sản phẩm sàn (#295): các phân loại khác của cùng sản phẩm cũng mang tên mới trên sàn, nên đặt lại mốc tên
+ * (không bật "Tên trên sàn đã đổi"), ghi cùng bản sửa đang duyệt; sàn ngừng bán để duyệt thì listing `live` cũng
+ * `request_review`. Listing đang `pushing` (lượt thêm phân loại) bỏ qua: lượt đẩy tự đặt mốc khi xong. Đổi `version` giữa
+ * chừng thì bỏ dòng đó, lượt đồng bộ sau đọc lại trạng thái sàn.
+ */
+async function applyToSiblings(
+  shopId: string,
+  shopProductId: string,
+  selfId: string,
+  name: string,
+  revision: ListingPatch,
+  underReview: boolean,
+): Promise<void> {
+  const at = new Date();
+  for (const sib of await listingsOfShopProduct(shopProductId)) {
+    if (sib.id === selfId || !sib.externalSkuId || !['live', 'hidden', 'under_review'].includes(sib.status)) continue;
+    const remote = await findRemoteSkuRow(shopId, sib.externalSkuId);
+    const patched = await updateListing(sib.id, { version: sib.version, status: sib.status }, { ...revision, ...sentBaseline(name, remote, at) });
+    if (patched && underReview && patched.status === 'live') await moveListing(patched, 'request_review', null);
+  }
 }
 
 /**
@@ -563,7 +816,7 @@ export async function takeOverContent(
     if (!v || v.archived) throw new AppError(404, 'not_found', 'Biến thể không còn bán');
     const imageUrls = (await port.productImageUrls([v.productId], PUSH_IMAGE_MAX)).get(v.productId) ?? [];
     const sizeChartUrl = (await port.productSizeChartUrls?.([v.productId]))?.get(v.productId) ?? null;
-    const spec = (await specChecks(shop, platformOf(shop.platform).adapter, await port.variants(undefined, { productIds: [v.productId] }))).get(v.productId);
+    const spec = (await specChecks(port, shop, platformOf(shop.platform).adapter, await port.variants(undefined, { productIds: [v.productId] }))).get(v.productId);
     const own = (await currentPrices([variantId], [row], await port.standardPrices([variantId]))).get(variantId)!;
     const block = pushBlock(v, own.price === null ? null : new Decimal(own.price), spec, imageUrls.length > 0, Boolean(sizeChartUrl));
     if (block) throw new AppError(409, block.code, block.message, current);

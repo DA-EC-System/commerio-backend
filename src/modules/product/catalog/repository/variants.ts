@@ -1,10 +1,10 @@
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
-import { getDb } from '../../../../shared/db/client.ts';
+import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { getDb, requireCompanyId } from '../../../../shared/db/client.ts';
 import { orderedNow } from './attributes.ts';
 import {
   attributes,
   attributeValues,
-  categories,
+  productGroups,
   productAttributeValueImages,
   products,
   productVariants,
@@ -27,10 +27,19 @@ export async function skuTaken(sku: string): Promise<boolean> {
 }
 
 /** Biến thể và tổ hợp giá trị; `valueIds` đã theo thứ tự thuộc tính của sản phẩm (`position`). */
-export async function insertVariant(companyId: string, productId: string, sku: string, valueIds: readonly string[], order: number) {
+/** `sourceRequestLineId`: dòng đề nghị nhập sinh ra SKU (#243), chặn xoá hẳn sản phẩm. */
+export async function insertVariant(
+  companyId: string,
+  productId: string,
+  sku: string,
+  valueIds: readonly string[],
+  order: number,
+  sourceRequestLineId: string | null = null,
+  prices: Partial<Record<'standardPrice' | 'targetNetPrice', string | null> & Record<'weightG' | 'lengthMm' | 'widthMm' | 'heightMm', number | null>> = {},
+) {
   const [row] = await getDb()
     .insert(productVariants)
-    .values({ companyId, productId, sku, createdAt: orderedNow(order) })
+    .values({ companyId, productId, sku, sourceRequestLineId, createdAt: orderedNow(order), ...prices })
     .returning({ id: productVariants.id });
   if (valueIds.length) {
     await getDb()
@@ -109,7 +118,7 @@ export async function updateVariantIfVersion(id: string, version: number, patch:
 }
 
 /**
- * Biến thể kèm sản phẩm, danh mục và giá trị thuộc tính theo `position`; theo thứ tự tạo. Đúng 2 câu (inventory gọi khi
+ * Biến thể kèm sản phẩm, nhóm hàng và giá trị thuộc tính theo `position`; theo thứ tự tạo. Đúng 2 câu (inventory gọi khi
  * đang khoá dòng tồn). `image`: tệp ảnh phân loại theo giá trị của SKU ở thuộc tính gắn ảnh (#340), null khi chưa có.
  */
 export async function findVariants(filter: { productId?: string; productIds?: readonly string[]; ids?: readonly string[] } = {}) {
@@ -133,12 +142,12 @@ export async function findVariants(filter: { productId?: string; productIds?: re
       description: products.description,
       originCountry: products.originCountry,
       brand: products.brand,
-      categoryId: categories.id,
-      categoryName: categories.name,
+      groupId: productGroups.id,
+      groupName: productGroups.name,
     })
     .from(productVariants)
     .innerJoin(products, eq(products.id, productVariants.productId))
-    .innerJoin(categories, eq(categories.id, products.categoryId))
+    .innerJoin(productGroups, eq(productGroups.id, products.groupId))
     .where(
       and(
         filter.productId ? eq(productVariants.productId, filter.productId) : undefined,
@@ -153,6 +162,10 @@ export async function findVariants(filter: { productId?: string; productIds?: re
       variantId: variantAttributeValues.variantId,
       attributeId: attributes.id,
       attributeName: attributes.name,
+      platformKind: attributes.platformKind,
+      // Tầng của thuộc tính và giá trị (Documents/21 mục 5.6): channel chỉ cho công ty ánh xạ dòng của mình.
+      scope: sql<'platform' | 'company'>`case when ${attributes.companyId} is null then 'platform' else 'company' end`,
+      valueScope: sql<'platform' | 'company'>`case when ${attributeValues.companyId} is null then 'platform' else 'company' end`,
       valueId: attributeValues.id,
       value: attributeValues.value,
       code: attributeValues.code,
@@ -205,4 +218,15 @@ export async function lockProductVariants(productId: string): Promise<void> {
     .where(eq(productVariants.productId, productId))
     .orderBy(asc(productVariants.id))
     .for('update');
+}
+
+/** Công ty đang chọn có variant chưa lưu trữ nào chưa (#461 onboarding, Documents/21 mục 11.3). */
+export async function hasCatalogData(): Promise<boolean> {
+  const companyId = requireCompanyId('hasCatalogData');
+  const [row] = await getDb()
+    .select({ one: sql`1` })
+    .from(productVariants)
+    .where(and(eq(productVariants.companyId, companyId), isNull(productVariants.archivedAt)))
+    .limit(1);
+  return !!row;
 }

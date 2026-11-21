@@ -78,6 +78,9 @@ const SAMPLES: { [T in EventType]: EventPayload<T> } = {
   'channel.shop_reauth_mail': { mailId: id(), shopId: id() },
   'catalog.variant_status_changed': { variantId: id(), productId: id(), from: 'selling', to: 'paused', changedAt: at },
   'catalog.variant_price_changed': { variantId: id(), productId: id(), from: null, to: '150000.00', changedAt: at },
+  'catalog.spec_field_deleted': { fieldId: id() },
+  'catalog.spec_option_deleted': { fieldId: id(), optionIds: [id()] },
+  'catalog.attribute_deleted': { attributeId: id() },
 };
 
 describe('danh mục sự kiện (AC-11)', () => {

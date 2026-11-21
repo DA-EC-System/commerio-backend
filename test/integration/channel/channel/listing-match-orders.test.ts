@@ -99,7 +99,7 @@ const rowOf = async (externalSkuId: string) =>
 
 beforeAll(async () => {
   setProductPort(null);
-  company = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany({ optionalModules: [] });
   sale = await addMember(company.companyId, 'sale');
   const res = await as(app().post('/api/v1/channel/shops/lazada/token'), company.ceo.token).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
   shopId = res.body.shop.id;

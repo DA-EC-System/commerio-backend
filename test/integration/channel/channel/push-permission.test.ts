@@ -70,9 +70,9 @@ async function productWithSpec(leaf: string, brand: string | null = null) {
     productId: randomUUID(),
     productName: 'Giày sneaker nam vải canvas đế cao su',
     sku: `PP-${randomUUID().slice(0, 8)}`,
-    categoryId: randomUUID(),
     attributesLabel: '',
     productCode: 'SP-TEST',
+    groupId: 'GROUP-TEST',
     attributes: [],
     archived: false,
     businessStatus: 'selling',
@@ -110,7 +110,7 @@ async function permissionOf(leaf: string) {
 }
 
 beforeAll(async () => {
-  company = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany({ optionalModules: [] });
   const res = await request(testApp())
     .post('/api/v1/channel/shops/tiktok/token')
     .set('Authorization', `Bearer ${company.ceo.token}`)

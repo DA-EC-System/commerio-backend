@@ -23,7 +23,7 @@ import { lastPermissionCheck, upsertPermissions } from '../repository/product-sp
 import { findShopRow, type ShopRow } from '../repository/shops.ts';
 import { updateListing } from './listing-writes.ts';
 import { currentPrices } from './listing-prices.ts';
-import { activateOnMarketplace, remoteSkuOf, type Session } from './listing-sync.ts';
+import { activateOnMarketplace, countedOf, remoteSkuOf, type Session } from './listing-sync.ts';
 import { moveListing, pushFailureOf } from './listings.ts';
 import { type MarketplaceAdapter, MarketplaceError, type NewProduct, PRECHECK_CODES, type SizeChartRule } from './marketplaces/index.ts';
 import { evaluatePrices } from './price-inputs.ts';
@@ -41,7 +41,7 @@ export const PUSH_ATTEMPTS = 5;
 /** Lệch giờ cho phép giữa app và sàn khi so giờ sàn tạo sản phẩm có sẵn với giờ của lần gọi tạo trước (`create_attempted_at`, #399). */
 export const CLOCK_SKEW_MS = 5 * 60_000;
 
-const errorOf = (code: string, message: string): SyncError => ({ code, message, at: new Date().toISOString() });
+export const errorOf = (code: string, message: string): SyncError => ({ code, message, at: new Date().toISOString() });
 
 /**
  * Chạy một việc đẩy. Listing không còn `pushing` (việc chạy lại sau khi đã xong, đồng bộ vừa `fail`) thì bỏ. Kết quả:
@@ -71,7 +71,7 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
   // Spec của sản phẩm (#400): attribute leaf thiếu hay quá 7 ngày thì lấy lại trước khi kiểm (A16, ngoài giao dịch; sàn lỗi mà
   // còn bản cũ thì kiểm theo bản cũ, chưa có bản nào thì kiểm theo category, trục và để sàn quyết).
   const specOf = async (v: ListingVariant) =>
-    (await specChecks(shop, adapter, await port.variants(undefined, { productIds: [v.productId] }))).get(v.productId);
+    (await specChecks(port, shop, adapter, await port.variants(undefined, { productIds: [v.productId] }))).get(v.productId);
   const first = await inCompany(async () => {
     const [v] = await port.variants([variantId]);
     return v ? specOf(v) : undefined;
@@ -102,15 +102,18 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
       quantity: (await port.availableOf([variantId])).get(variantId) ?? 0,
       // SKU chưa tin được (#223, 21 §18.6.6): sàn bắt buộc có số lượng nên gửi 0, listing chờ đẩy tồn tới khi lấy đơn xong.
       untrusted: (await untrustedVariants()).has(variantId),
+      // SKU chưa có số tồn (#460): tạo mới gửi 0 (sàn chưa có gì để đè), đẩy lại sản phẩm đã có thì không gửi tồn.
+      counted: (await countedOf(port, [variantId])).has(variantId),
       responsible: await responsibleOrgOf(shop.companyId),
     };
   });
   if (!data || data.v.archived) return finish(job, row, 'fail', { pushError: errorOf('not_found', 'Biến thể không còn bán') });
-  const { v, map, price, untrusted, responsible, shopPrice, belowFloor } = data;
+  const { v, map, price, untrusted, counted, responsible, shopPrice, belowFloor } = data;
   if (belowFloor) {
     return finish(job, row, 'fail', { pushError: errorOf('below_floor', 'Giá theo bộ lọc giá của gian hàng có thực nhận dưới giá thấp nhất') });
   }
-  const quantity = untrusted ? 0 : data.quantity;
+  const holdStock = untrusted || !counted;
+  const quantity = holdStock ? 0 : data.quantity;
   const sizeChartRule = map && !keepContent ? await sizeChartRuleOf(adapter, accessToken, map) : null;
   const block = pushBlock(
     v,
@@ -136,7 +139,7 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
       job.sizeChartUrl && sizeChartRule !== 'unsupported' ? await adapter.uploadImage(accessToken, job.sizeChartUrl, 'size_chart') : null;
     const product: NewProduct = {
       externalCategoryId: map!.externalCategoryId,
-      attributes: pushAttributes(adapter, map!.attributes, map!.row, map!.product),
+      attributes: pushAttributes(map!.attributes, map!.resolved),
       responsible,
       brand: v.brand ?? null,
       ...listingText(v),
@@ -156,8 +159,12 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
     // Mốc lần gọi tạo gần nhất (#399): ghi đè mỗi lần, commit trước khi gọi sàn để lần thử sau thấy mốc dù lần gọi này lỗi hay ném.
     // `row` giữ giá trị của lần gọi trước.
     if (!reshelve) await inCompany(() => markCreateAttempted(row.id));
+    // Đẩy lại sản phẩm đã có trên sàn (#460, 25 §6.4): SKU chưa có số hay chưa tin được thì không gửi tồn, giữ số trên sàn;
+    // đẩy lại luôn để `stockSync = pending`, lượt đẩy tồn áp luật của `pushDue`.
+    const update: NewProduct = { ...product };
+    if (holdStock) delete update.quantity;
     let result = reshelve
-      ? { externalProductId: row.externalProductId!, externalSkuId: row.externalSkuId!, ...(await adapter.updateProduct!(accessToken, row.externalProductId!, row.externalSkuId!, product)) }
+      ? { externalProductId: row.externalProductId!, externalSkuId: row.externalSkuId!, ...(await adapter.updateProduct!(accessToken, row.externalProductId!, row.externalSkuId!, update)) }
       : await adapter.createProduct(accessToken, product);
     // Sàn đã có SKU cùng SellerSku (#346, Documents/21 §18.6.4): SKU đó thuộc listing khác thì không ghi đè; không thì ghi
     // nội dung, giá của app lên như đẩy lại.
@@ -189,7 +196,7 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
         });
       }
       if (adapter.updateProduct) {
-        result = { externalProductId, externalSkuId, ...(await adapter.updateProduct(accessToken, externalProductId, externalSkuId, product)) };
+        result = { externalProductId, externalSkuId, ...(await adapter.updateProduct(accessToken, externalProductId, externalSkuId, update)) };
         rewritten = true;
       }
     }
@@ -215,6 +222,7 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
       priceSync: result.existing && !rewritten ? 'pending' : 'synced',
       priceSyncError: null,
       lastPushedAt: at,
+      ...(priceSent && { lastPricePushedAt: at }),
       // Tạo mới gửi kèm tồn; đẩy lại thì TikTok không gửi tồn (Edit Product giữ tồn cũ): để đồng bộ đẩy.
       // SKU chưa tin được: sàn nhận 0, chờ đẩy tồn thật (lấy đơn xong trọn thì `channel.stock_push` chạy lại).
       ...(rewritten || result.existing
@@ -247,7 +255,7 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
  * Ghi kết quả của lượt đẩy. Listing đã đổi trong lúc gọi sàn (đồng bộ vừa `fail` vì quá 30 phút, gian hàng ngắt): không
  * ném, chỉ ghi mã sàn vừa tạo nếu listing chưa có, để lần đẩy sau sửa đúng sản phẩm đó thay vì tạo thêm.
  */
-async function finish(job: ListingPushJob, row: ListingRow, action: ListingAction, patch: ListingPatch, reason: string | null = null): Promise<void> {
+export async function finish(job: Pick<ListingPushJob, 'companyId' | 'shopId'>, row: ListingRow, action: ListingAction, patch: ListingPatch, reason: string | null = null): Promise<void> {
   await withCompany(job.companyId, async () => {
     try {
       const reasonText = reason ?? (action === 'fail' ? (patch.pushError?.message ?? null) : null);
@@ -289,7 +297,7 @@ async function reactivate(session: Session, row: ListingRow): Promise<ListingAct
   throw new MarketplaceError('rejected', 'still_inactive', `Sàn chưa bật lại sản phẩm (trạng thái ${state})`);
 }
 
-async function uploadAll(adapter: MarketplaceAdapter, accessToken: string, urls: readonly string[]): Promise<string[]> {
+export async function uploadAll(adapter: MarketplaceAdapter, accessToken: string, urls: readonly string[]): Promise<string[]> {
   const out: string[] = [];
   for (const url of urls) out.push(await adapter.uploadImage(accessToken, url));
   return out;
@@ -310,7 +318,7 @@ export const PERMISSION_TTL_MS = 7 * 24 * 60 * 60_000;
  * đẩy lại đọc cả cây. Cây đọc được mà không leaf nào có quyền thì không có mốc, lần sau đọc lại. Sàn lỗi thì bỏ qua: không có
  * dòng thì không chặn, sàn quyết.
  */
-async function refreshPermission(shop: ShopRow, adapter: MarketplaceAdapter, accessToken: string, externalCategoryId: string): Promise<void> {
+export async function refreshPermission(shop: ShopRow, adapter: MarketplaceAdapter, accessToken: string, externalCategoryId: string): Promise<void> {
   if (!adapter.categoryPermissionsPerShop || !adapter.categoryTree) return;
   const last = await withCompany(shop.companyId, () => lastPermissionCheck(shop.id));
   if (last && last.getTime() > Date.now() - PERMISSION_TTL_MS) return;
@@ -331,7 +339,7 @@ async function refreshPermission(shop: ShopRow, adapter: MarketplaceAdapter, acc
   await withCompany(shop.companyId, () => upsertPermissions(shop.companyId, shop.id, items, new Date()));
 }
 
-async function sizeChartRuleOf(
+export async function sizeChartRuleOf(
   adapter: MarketplaceAdapter,
   accessToken: string,
   map: { externalCategoryId: string; sizeChartRule: SizeChartRule | null },

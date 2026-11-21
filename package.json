@@ -25,6 +25,7 @@
     "check": "npm run lint && npm run typecheck && npm run depcruise && npm test",
     "db:generate": "node scripts/db/generate.ts",
     "db:docs": "node scripts/db/docs.ts",
+    "db:erd": "node scripts/db/erd.ts",
     "db:regen": "node scripts/db/regen.ts",
     "db:ci-check": "node scripts/db/ci-check.ts",
     "db:migrate": "node --env-file-if-exists=.env scripts/db/migrate.ts",
@@ -36,6 +37,7 @@
     "smoke:lazada": "node --env-file-if-exists=.env scripts/smoke/lazada.ts",
     "smoke:tiktok": "node --env-file-if-exists=.env scripts/smoke/tiktok.ts",
     "smoke:r2": "node --env-file-if-exists=.env scripts/smoke/r2.ts",
+    "smoke:variants": "node --env-file-if-exists=.env scripts/smoke/variants.ts",
     "mock:lazada": "node --env-file-if-exists=.env scripts/lazada-mock/index.ts",
     "infra:up": "docker compose -f deploy/compose.yaml up -d",
     "infra:down": "docker compose -f deploy/compose.yaml down"
@@ -73,6 +75,7 @@
     "@types/swagger-ui-express": "^4.1.8",
     "dependency-cruiser": "^18.6.0",
     "drizzle-kit": "^0.31.11",
+    "elkjs": "^0.9.3",
     "eslint": "^10.12.0",
     "supertest": "^7.3.1",
     "testcontainers": "^12.2.1",

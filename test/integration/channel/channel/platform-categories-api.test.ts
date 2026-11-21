@@ -8,6 +8,7 @@ import type { PlatformAttribute } from '#src/modules/channel/channel/domain/prod
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
+import { setModuleEnabled } from '../../helpers/state.ts';
 import { login, testApp } from '../../helpers/http.ts';
 import { activateShop, fakeAdapter } from './helpers.ts';
 
@@ -80,7 +81,7 @@ async function tiktokShop(token: string) {
 
 describe('quyền (AC-S1)', () => {
   it('401 không token; 403 chưa chọn công ty; Kho 403; phân hệ channel tắt 403; sàn không có adapter 422', async () => {
-    const company = await createCompany({ optionalModules: ['channel'] });
+    const company = await createCompany({ optionalModules: [] });
     expect((await get('/platforms/lazada/categories')).status).toBe(401);
 
     const { token: bare } = await login(company.ceo.email);
@@ -96,6 +97,8 @@ describe('quyền (AC-S1)', () => {
     }
 
     const off = await createCompany();
+    // Kênh bán là phân hệ lõi từ #459; vẫn kiểm cổng phân hệ bằng dòng tắt trong DB.
+    await setModuleEnabled(off.companyId, 'channel', false);
     const disabled = await get('/platforms/lazada/categories', off.ceo.token);
     expect(disabled.status).toBe(403);
     expect(disabled.body.type).toBe('/problems/module_disabled');
@@ -113,7 +116,7 @@ describe('quyền (AC-S1)', () => {
 
 describe('cây (AC-4)', () => {
   it('tìm và theo cấp đọc DB, không gọi sàn; search 1 ký tự 422', async () => {
-    const { ceo } = await createCompany({ optionalModules: ['channel'] });
+    const { ceo } = await createCompany({ optionalModules: [] });
     const before = { ...calls };
     const res = await get(`/platforms/lazada/categories?search=${encodeURIComponent('áo thun')}`, ceo.token);
     expect(res.status).toBe(200);
@@ -132,7 +135,7 @@ describe('cây (AC-4)', () => {
 
 describe('chi tiết leaf (AC-5, AC-S2, AC-S6)', () => {
   it('TikTok: token gian hàng shopId, luật bảng kích cỡ lưu bảng, defaultValue từ hồ sơ công ty; lần hai không gọi sàn', async () => {
-    const { companyId, ceo } = await createCompany({ optionalModules: ['channel'] });
+    const { companyId, ceo } = await createCompany({ optionalModules: [] });
     const { shopId } = await tiktokShop(ceo.token);
     const leaf = catId();
     const n = calls.tiktokAttrs.length;
@@ -170,7 +173,7 @@ describe('chi tiết leaf (AC-5, AC-S2, AC-S6)', () => {
   });
 
   it('Lazada không cần gian hàng; TikTok không gian hàng active 409; shopId công ty khác 404, sai dạng 422', async () => {
-    const { ceo } = await createCompany({ optionalModules: ['channel'] });
+    const { ceo } = await createCompany({ optionalModules: [] });
     const lz = await get(`/platforms/lazada/categories/${catId()}`, ceo.token);
     expect(lz.status, JSON.stringify(lz.body)).toBe(200);
     expect(lz.body.attributes).toEqual([expect.objectContaining({ code: 'brand', tier: 'product', defaultValue: null })]);
@@ -179,7 +182,7 @@ describe('chi tiết leaf (AC-5, AC-S2, AC-S6)', () => {
     expect(none.status).toBe(409);
     expect(none.body.type).toBe('/problems/shop_not_connected');
 
-    const other = await createCompany({ optionalModules: ['channel'] });
+    const other = await createCompany({ optionalModules: [] });
     const { shopId: theirs } = await tiktokShop(other.ceo.token);
     const foreign = await get(`/platforms/tiktok/categories/${catId()}?shopId=${theirs}`, ceo.token);
     expect(foreign.status).toBe(404);
@@ -196,5 +199,61 @@ describe('chi tiết leaf (AC-5, AC-S2, AC-S6)', () => {
     expect(calls.lazadaAttrs).toBe(before);
     const junk = await testPool().query("select 1 from channel.platform_categories where platform = 'lazada' and external_id in ('abc', '12a')");
     expect(junk.rows).toEqual([]);
+  });
+});
+
+describe('cây kèm quyền của gian hàng (#448)', () => {
+  it('TikTok shopId: leaf có permission đã kiểm hoặc null, nhánh null; không gửi shopId thì không có trường; Lazada null', async () => {
+    const { ceo, companyId } = await createCompany({ optionalModules: [] });
+    const { shopId } = await tiktokShop(ceo.token);
+    const parent = catId();
+    const leafOk = catId();
+    const leafUnchecked = catId();
+    const sfx = randomUUID().slice(0, 6);
+    await testPool().query(
+      `insert into channel.platform_categories (platform, external_id, parent_external_id, name, is_leaf, path, path_search, synced_at)
+       values ('tiktok', $1, null, 'Nhánh ${sfx}', false, 'Nhánh ${sfx}', 'nhanh ${sfx}', now()),
+              ('tiktok', $2, $1, 'Lá A', true, 'Nhánh ${sfx} > Lá A', 'nhanh ${sfx} > la a', now()),
+              ('tiktok', $3, $1, 'Lá B', true, 'Nhánh ${sfx} > Lá B', 'nhanh ${sfx} > la b', now())`,
+      [parent, leafOk, leafUnchecked],
+    );
+    await testPool().query(
+      `insert into channel.shop_category_permissions (company_id, shop_id, external_category_id, status, checked_at) values ($1, $2, $3, 'invite_only', now())`,
+      [companyId, shopId, leafOk],
+    );
+    const res = await get(`/platforms/tiktok/categories?parentId=${parent}&shopId=${shopId}`, ceo.token);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    PlatformCategoryPage.parse(res.body);
+    const byId = Object.fromEntries(res.body.items.map((i: { externalId: string }) => [i.externalId, i]));
+    expect(byId[leafOk].permission).toBe('invite_only');
+    expect(byId[leafUnchecked].permission).toBeNull();
+
+    const roots = await get(`/platforms/tiktok/categories?search=${encodeURIComponent(`nhanh ${sfx}`)}&shopId=${shopId}`, ceo.token);
+    expect(roots.body.items.every((i: { isLeaf: boolean; permission: unknown }) => i.isLeaf && 'permission' in i)).toBe(true);
+
+    const plain = await get(`/platforms/tiktok/categories?parentId=${parent}`, ceo.token);
+    expect(plain.body.items.every((i: object) => !('permission' in i))).toBe(true);
+
+    // Lazada: gian hàng Lazada thì quyền luôn null.
+    const lz = await request(app)
+      .post('/api/v1/channel/shops/lazada/token')
+      .set('Authorization', `Bearer ${ceo.token}`)
+      .send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
+    if (lz.status < 300) {
+      const lzRes = await get(`/platforms/lazada/categories?search=${encodeURIComponent('áo thun')}&shopId=${lz.body.shops[0].shop.id}`, ceo.token);
+      expect(lzRes.status).toBe(200);
+      expect(lzRes.body.items.every((i: { permission: unknown }) => i.permission === null)).toBe(true);
+    }
+  });
+
+  it('shopId của công ty khác hoặc khác sàn: 404; sai dạng: 422', async () => {
+    const a = await createCompany({ optionalModules: [] });
+    const b = await createCompany({ optionalModules: [] });
+    const { shopId } = await tiktokShop(a.ceo.token);
+    expect((await get(`/platforms/tiktok/categories?shopId=${shopId}`, b.ceo.token)).status).toBe(404);
+    expect((await get(`/platforms/lazada/categories?shopId=${shopId}`, a.ceo.token)).status).toBe(404);
+    const bad = await get('/platforms/tiktok/categories?shopId=khong-phai-uuid', a.ceo.token);
+    expect(bad.status).toBe(422);
+    expect(bad.body.errors).toHaveProperty('shopId');
   });
 });

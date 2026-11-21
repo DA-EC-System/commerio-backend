@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V106**, 11 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
+Phiên bản **V142**, 11 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
 **Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
 
@@ -171,10 +171,9 @@ Cột:
   Cờ lưu. Cờ suy ra được (chưa ghép SKU, sắp trễ hạn, có yêu cầu trả, lệch COD) không lưu (Documents/19 D4).
 - `attention_note` text · null
 - `cancel_requested` boolean · not null · mặc định `false`
+  Khách xin huỷ, chờ Sale trả lời. Chỉ bật khi đơn còn mở (CHECK `orders_cancel_requested_open`).
 - `cancel_pending` boolean · not null · mặc định `false`
-  Đã gửi lệnh huỷ cả đơn lên sàn (Sale huỷ, Sale đồng ý khách xin huỷ), chờ sàn huỷ hết món. Cờ `cancelling` của API suy ra lúc đọc: cột này, hoặc sàn đã huỷ cả đơn mà còn kiện chờ mở để huỷ (`cancellingSql` ở `repository/orders.ts`).
-- `cancelling` boolean · not null · mặc định `false`
-  **Đã bỏ:** Cột cờ cũ (trước #417), thay bằng `cancel_pending`. Giữ một bản deploy cho image cũ còn chạy lúc đổi image (job migrate chạy trước) và để lùi image: trigger `orders_sync_cancel_pending` (`*_dang-huy-chuyen-co`) giữ hai cột bằng nhau, code mới không đọc, không ghi. PR sau bỏ trigger và cột.
+  Đã gửi lệnh huỷ cả đơn lên sàn (Sale huỷ, Sale đồng ý khách xin huỷ), chờ sàn huỷ hết món. Cờ `cancelling` của API suy ra lúc đọc: cột này, hoặc sàn đã huỷ cả đơn mà còn kiện chờ mở để huỷ (`cancellingSql` ở `repository/orders.ts`). Chỉ bật khi đơn còn mở (CHECK `orders_cancel_pending_open`).
 - `platform_cancelled` boolean · not null · mặc định `false`
 - `shop_disconnected` boolean · not null · mặc định `false`
 - `shipping_address` jsonb · null
@@ -203,12 +202,13 @@ Ràng buộc và index:
 - index (`customer_id`) `orders_customer_id_index`
 - index (`conversation_id`) `orders_conversation_id_index`
 - index (`status`) `orders_status_index`
+- check `orders_cancel_pending_open`: `not cancel_pending or status in ('unpaid', 'processing')`
+- check `orders_cancel_requested_open`: `not cancel_requested or status in ('unpaid', 'processing')`
 - check `orders_outcome`: `(status = 'completed') = (outcome is not null)`
 - check `orders_cod`: `source = 'marketplace' or not is_cod`
 - check `orders_amounts`: `subtotal >= 0 and total >= 0 and shipping_fee >= 0`
 - check `orders_payment_method`: `(source = 'marketplace') = (payment_method is null)`
 - check `orders_marketplace_ref`: `source <> 'marketplace' or (shop_id is not null and external_order_id is not null)`
-- trigger `orders_sync_cancel_pending`: `before insert or update → order.orders_sync_cancel_pending()`, ở `db/migrations/20261119071502_dang-huy-chuyen-co.sql`
 - trigger `orders_ship_by_packages`: `AFTER UPDATE OF ship_by, kiểm lúc commit → order.assert_package_ship_by()`, ở `db/migrations/20261119074938_han-ban-giao-kien.sql`
 
 Trỏ vào bảng này:
@@ -436,6 +436,10 @@ Cột:
 - `dispute_in_progress` boolean · not null · mặc định `false`
 - `return_to` text · null
 - `external_updated_at` timestamptz · null: mã bên ngoài (sàn, cổng thanh toán)
+- `respond_by` timestamptz · null
+  Hạn người bán phải trả lời của sàn (TikTok `seller_next_action_response`), chỉ để hiện (#392).
+- `refund_approval` text · null
+  Báo sàn đồng ý hoàn tiền sau kiểm hàng hoàn (#392, sàn có `approveReturnRefund`): `pending` chờ channel gọi sàn, `done` sàn đã qua bước đó, `withheld` phiếu có khiếu nại nên không báo. Null: sàn không có bước này.
 - `reject_reason_id` text · null: mã bên ngoài (sàn, cổng thanh toán)
 - `reject_reason_label` text · null
 - `received_at` timestamptz · null
@@ -452,12 +456,14 @@ Ràng buộc và index:
 - unique (`shop_id`, `external_return_id`) `return_requests_shop_id_external_return_id_unique`
 - index (`order_id`) `return_requests_order_id_index`
 - index (`status`) `return_requests_status_index`
+- index (`shop_id`) `return_requests_refund_approval_pending_idx` where `refund_approval = 'pending'`
 - check `return_requests_return_to`: `return_to is null or return_to in ('warehouse', 'merchant')`
 - check `return_requests_received`: `status not in ('received') or received_at is not null`
 - check `return_requests_refunded`: `refunded = (refunded_at is not null)`
 - check `return_requests_closed`: `(status = 'closed') = (close_result is not null)`
 - check `return_requests_marketplace_ref`: `source <> 'marketplace' or (shop_id is not null and external_return_id is not null)`
 - check `return_requests_refund`: `refund_amount >= 0`
+- check `return_requests_refund_approval`: `refund_approval is null or (refund_approval in ('pending', 'done', 'withheld') and status = 'closed' and source = 'marketplace')`
 
 Trỏ vào bảng này:
 

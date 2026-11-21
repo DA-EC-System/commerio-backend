@@ -15,15 +15,14 @@ import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
 import { activateShop, fakeAdapter, seedSpecs } from './helpers.ts';
 
-const categoryId = randomUUID();
 const variant = (sku: string): ListingVariant => ({
   id: randomUUID(),
   productId: randomUUID(),
   productName: 'Áo',
   sku,
-  categoryId,
   attributesLabel: '',
   productCode: 'SP-TEST',
+  groupId: 'GROUP-TEST',
   attributes: [],
   archived: false,
   businessStatus: 'selling',
@@ -114,7 +113,7 @@ async function listing(variantId: string) {
 }
 
 beforeAll(async () => {
-  company = await createCompany({ optionalModules: ['channel'] });
+  company = await createCompany({ optionalModules: [] });
   const res = await auth(app().post('/api/v1/channel/shops/lazada/token')).send({
     accessToken: `tok-${randomUUID().slice(0, 12)}`,
   });

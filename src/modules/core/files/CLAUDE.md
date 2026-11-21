@@ -39,11 +39,15 @@ Chứng từ là `{ type: '<tên bảng>', id }` (vd `goods_receipts`). Bên g�
 2. Trong `withCompany`: `attachmentProblem(fileIds)` trả câu lỗi cho ô tệp của chứng từ (`null` là được). Tệp phải thuộc công ty (RLS), xin vé với `purpose: 'attachment'`, đã PUT xong, không lặp, tối đa 10. Bên gọi đặt câu đó vào ô của mình (`errors.attachments` ở phiếu nhận, `errors.attachmentIds` ở yêu cầu trả). Hàm chung là `fileProblem(fileIds, purpose, max)` (catalog gọi với `product_image`, tối đa 9, #303): kiểm thêm kiểu, cỡ theo luật **hiện hành** của `purpose` (`rejectUpload`), chặn tệp xin vé trước khi đổi luật; câu lỗi theo `purpose` (`PROBLEM_TEXT`, ảnh sản phẩm khớp mock FE).
 3. `replaceAttachments(entity, fileIds, actorId)` thay toàn bộ theo thứ tự gửi. Gỡ tệp không xoá tệp.
 
-Đọc: `attachmentsOf(entity)` trả `{ fileId, name, url, contentType }[]`; `url` là link GET ký sẵn 15 phút, ép `Content-Type` theo kiểu đã lưu, `Content-Disposition` ảnh `inline`, PDF `attachment` (tên tệp UTF-8). `hasAttachments(entity)`, `attachmentIdsOf(entity)` cho bằng chứng và nhật ký. `publicFileUrls(fileIds)` (#303): link cố định `<S3_PUBLIC_URL>/<storage_key>` của tệp ở bucket công khai (ảnh sản phẩm), không gọi mạng; thiếu `S3_PUBLIC_URL` thì chuỗi rỗng, không 503.
+Đọc: `attachmentsOf(entity)` trả `{ fileId, name, url, contentType }[]`; `url` là link GET ký sẵn 15 phút, ép `Content-Type` theo kiểu đã lưu, `Content-Disposition` ảnh `inline`, PDF `attachment` (tên tệp UTF-8). `hasAttachments(entity)`, `attachmentIdsOf(entity)` cho bằng chứng và nhật ký. `detachAll(entityType, ids)` (#437): gỡ tệp của chứng từ bị xoá hẳn (yêu cầu trả khi xoá gian hàng), không xoá tệp. `fileLinks(fileIds)` (#437): link ký 15 phút của các tệp theo thứ tự id, khi cần đưa tệp đi trước lúc gắn (ảnh minh chứng yêu cầu trả lên sàn); không lưu, không log link. `publicFileUrls(fileIds)` (#303): link cố định `<S3_PUBLIC_URL>/<storage_key>` của tệp ở bucket công khai (ảnh sản phẩm), không gọi mạng; thiếu `S3_PUBLIC_URL` thì chuỗi rỗng, không 503.
 
 **`X-Content-Type-Options: nosniff`**: R2 không trả header này và link ký sẵn không thêm được. Tệp nằm ở tên miền của R2, khác origin của app (cookie refresh `HttpOnly` gắn với tên miền app), kiểu tệp đã ký lúc tải lên và ép lại lúc tải xuống. Ảnh công khai ở `S3_PUBLIC_URL` thêm được bằng Transform Rule của Cloudflare nếu cần.
 
-Test thay kho bằng `setHeadObject(fake)` (`service/storage.ts`), trả về kho thật bằng `setHeadObject(null)`.
+## Ảnh từ ngoài vào kho (#498, `service/remote-images.ts`, export từ `core/index.ts`)
+
+`ingestRemoteImage(companyId, url, purpose)` → id tệp hoặc `null`: channel gọi khi ghép SKU sàn để đưa ảnh, ảnh bảng size của sản phẩm trên sàn vào kho (catalog gắn khi sản phẩm còn trống). Gọi **ngoài** giao dịch. Tải bằng `safeDownload` (`src/shared/net/safe-download.ts`: địa chỉ công khai, ghim địa chỉ, 15 giây) với trần của `purpose` (ảnh sản phẩm 1 MB, vượt thì huỷ kết nối); kiểu `image/jpg` (Lazada, đo 20/11/2026) đổi thành `image/jpeg`; kiểm `rejectUpload` và trần `STORAGE_QUOTA_BYTES` như cấp vé; không đổi cỡ, không nén. Ghi dòng `core.files` (`uploaded_by` null: hệ thống; tên tệp là đoạn cuối đường dẫn, bỏ phần `~…` của link TikTok) → `putObject` lên bucket theo `purpose` → ghi `uploaded_at`. Lỗi nào cũng trả `null`, log `warn` kèm `host`, lý do; không log URL (link sàn có thể mang chữ ký). PUT lỗi thì dòng nằm lại chưa có `uploaded_at`, như vé chưa dùng.
+
+Test thay kho bằng `setHeadObject(fake)`, `setPutObject(fake)` (`service/storage.ts`), trả về kho thật bằng `null`; cho tải từ server cục bộ bằng `setRemoteImageOptions({ allowAddress: () => true })`.
 
 ## Bất biến
 
@@ -54,5 +58,4 @@ Test thay kho bằng `setHeadObject(fake)` (`service/storage.ts`), trả về kh
 
 ## Chưa làm
 
-- Dọn tệp xin vé mà không gắn vào đâu (P9, tách khỏi #303 thành issue riêng): cần đánh dấu tệp đã gắn phía `files` (vd `core.files.attached_at`), vì `core` không đọc bảng `product.product_images`; tệp còn được bất kỳ sản phẩm hay chứng từ nào tham chiếu là đang dùng.
-- Gắn tệp cho yêu cầu trả (#202) dùng các hàm trên.
+- Dọn tệp xin vé mà không gắn vào đâu (P9, tách khỏi #303 thành issue riêng): cần đánh dấu tệp đã gắn phía `files` (vd `core.files.attached_at`), vì `core` không đọc bảng `product.product_images`; tệp còn được bất kỳ sản phẩm hay chứng từ nào tham chiếu là đang dùng. Ảnh `ingestRemoteImage` tải về mà catalog không gắn (người dùng thêm ảnh giữa lúc tải, #498) cũng là tệp không gắn và vẫn tính vào `STORAGE_QUOTA_BYTES` tới khi có việc dọn này.

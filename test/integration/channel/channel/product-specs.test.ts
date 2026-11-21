@@ -59,7 +59,7 @@ beforeAll(async () => {
      values ('lazada', $1, 'Áo thun', true, 'Áo > Áo thun', 'ao > ao thun', now()), ('lazada', $2, 'Áo', false, 'Áo', 'ao', now())`,
     [leaf, branch],
   );
-  const c = await createCompany({ optionalModules: ['channel'] });
+  const c = await createCompany({ optionalModules: [] });
   ceo = { token: c.ceo.token, companyId: c.companyId };
   productId = (await createVariant(c.companyId)).productId;
 });
@@ -73,7 +73,7 @@ describe('spec sàn của sản phẩm', () => {
   it('chưa có spec: spec null, missing rỗng', async () => {
     const res = await get();
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ spec: null, missing: [] });
+    expect(res.body).toEqual({ spec: null, resolved: {}, missing: [], remote: null, suggestedAxisMap: null, suggestedValueMap: null, variantCapabilities: null });
   });
 
   it('AC-7: thiếu attribute bắt buộc 422 theo ô; lần đầu tự lấy attribute leaf (A16); đọc lại vẫn rỗng', async () => {
@@ -96,12 +96,12 @@ describe('spec sàn của sản phẩm', () => {
     expect(notLeaf.body.errors.externalCategoryId).toBeDefined();
   });
 
-  it('AC-6, AC-9, AC-S4: lưu theo nhãn tiếng Anh thành mã lựa chọn, bỏ tier product, đọc lại đúng; ghi nhật ký; không gọi sàn lần hai', async () => {
+  it('AC-6, AC-9, AC-S4: lưu theo nhãn tiếng Anh thành mã lựa chọn, thương hiệu khác catalog là ghi đè (E179), đọc lại đúng; ghi nhật ký; không gọi sàn lần hai', async () => {
     const res = await put({ externalCategoryId: leaf, attributes: { material: 'cotton en', brand: 'X' }, version: null });
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     ProductSpecView.parse(res.body);
-    expect(res.body.spec).toMatchObject({ externalCategoryId: leaf, attributes: { material: '11' }, version: 1, source: 'push', categoryPath: 'Áo > Áo thun' });
-    expect(res.body.spec.attributes.brand).toBeUndefined();
+    expect(res.body.spec).toMatchObject({ externalCategoryId: leaf, attributes: { material: '11', brand: 'X' }, version: 1, source: 'push', categoryPath: 'Áo > Áo thun' });
+    expect(res.body.resolved.brand).toEqual({ value: 'X', source: 'override', fieldId: null });
     expect(res.body.missing).toEqual([]);
     expect(attrCalls).toBe(1);
     expect((await get()).body.spec.version).toBe(1);
@@ -122,7 +122,7 @@ describe('spec sàn của sản phẩm', () => {
   });
 
   it('AC-S2: sản phẩm công ty khác, id sai dạng: 404', async () => {
-    const other = await createCompany({ optionalModules: ['channel'] });
+    const other = await createCompany({ optionalModules: [] });
     expect((await get(other.ceo.token)).status).toBe(404);
     expect((await put({ externalCategoryId: leaf, attributes: { material: '11' }, version: null }, other.ceo.token)).status).toBe(404);
     expect((await get(ceo.token, 'khong-phai-uuid')).status).toBe(404);
@@ -140,6 +140,59 @@ describe('spec sàn của sản phẩm', () => {
     const saved = await put({ externalCategoryId: leaf, attributes: { material: '11' }, version: 0 }, ceo.token, v.productId);
     expect(saved.status, JSON.stringify(saved.body)).toBe(200);
     expect(saved.body.spec.version).toBe(1);
+  });
+
+  it('#497: nguồn từng attribute: giữ giá trị thì giữ nguồn (bản cũ chưa có nguồn thì theo source), đổi thì user', async () => {
+    const spec = async (attributes: string, fieldSources: string) => {
+      const v = await createVariant(ceo.companyId);
+      await testPool().query(
+        `insert into channel.product_specs (company_id, product_id, platform, external_category_id, attributes, field_sources, source, version)
+         values ($1, $2, 'lazada', $3, $4, $5, 'match', 1)`,
+        [ceo.companyId, v.productId, leaf, attributes, fieldSources],
+      );
+      return v.productId;
+    };
+    const kept = await spec('{"material":"11"}', '{"material":"match"}');
+    const res = await put({ externalCategoryId: leaf, attributes: { material: 'Cotton' }, version: 1 }, ceo.token, kept);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.spec.fieldSources).toEqual({ material: 'match' });
+    const legacy = await spec('{"material":"11"}', '{}');
+    expect((await put({ externalCategoryId: leaf, attributes: { material: '11' }, version: 1 }, ceo.token, legacy)).body.spec.fieldSources).toEqual({
+      material: 'match',
+    });
+    const changed = await spec('{"material":"99"}', '{"material":"match"}');
+    expect((await put({ externalCategoryId: leaf, attributes: { material: '11' }, version: 1 }, ceo.token, changed)).body.spec.fieldSources).toEqual({
+      material: 'user',
+    });
+  });
+
+  it('#497: remote là bản sàn đang ghi; tên gian hàng hiện tại, gian hàng đã xoá thì tên lúc đọc', async () => {
+    const v = await createVariant(ceo.companyId);
+    const { rows } = await testPool().query<{ id: string }>(
+      `insert into channel.shops (company_id, platform, external_shop_id, shop_name) values ($1, 'lazada', $2, 'Tên mới') returning id`,
+      [ceo.companyId, randomUUID().slice(0, 12)],
+    );
+    const facts = {
+      shopName: 'Tên cũ',
+      originCountry: 'VN',
+      brand: null,
+      description: 'Áo thun',
+      sizeChartUrl: null,
+      imageUrls: ['https://cdn.example/a.jpg'],
+      variants: [{ variantId: v.variantId, weightG: 200, lengthMm: 300, widthMm: 200, heightMm: 20 }],
+    };
+    const readAt = new Date('2026-11-20T10:00:00Z');
+    await testPool().query(
+      `insert into channel.product_specs (company_id, product_id, platform, external_category_id, attributes, source, version, remote_facts, remote_read_at, remote_shop_id)
+       values ($1, $2, 'lazada', $3, '{}', 'match', 1, $4, $5, $6)`,
+      [ceo.companyId, v.productId, leaf, facts, readAt, rows[0]!.id],
+    );
+    const res = await get(ceo.token, v.productId);
+    expect(res.status).toBe(200);
+    ProductSpecView.parse(res.body);
+    expect(res.body.remote).toEqual({ ...facts, shopId: rows[0]!.id, shopName: 'Tên mới', readAt: readAt.toISOString() });
+    await testPool().query('update channel.product_specs set remote_shop_id = null where product_id = $1', [v.productId]);
+    expect((await get(ceo.token, v.productId)).body.remote).toMatchObject({ shopId: null, shopName: 'Tên cũ' });
   });
 
   it('AC-S1: Sale đọc được, lưu bị 403 trước 422; sàn không có adapter 422', async () => {

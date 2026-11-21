@@ -22,9 +22,9 @@ const variant = (sku: string, productName: string, attributesLabel = ''): Listin
   productId: randomUUID(),
   productName,
   sku,
-  categoryId: randomUUID(),
   attributesLabel,
   productCode: 'SP-TEST',
+  groupId: 'GROUP-TEST',
   attributes: [],
   archived: false,
   businessStatus: 'selling',
@@ -82,7 +82,7 @@ afterAll(() => {
 
 /** Gian hàng `connecting` của công ty đã có gian hàng xong thiết lập (được `push`); `vListed` đã có listing ở gian hàng. */
 async function connectingShop() {
-  const c = await createCompany({ optionalModules: ['channel'] });
+  const c = await createCompany({ optionalModules: [] });
   await testPool().query(
     "insert into channel.shops (company_id, platform, external_shop_id, shop_name, status, order_cutoff_at) values ($1, 'lazada', $2, 'Cũ', 'active', now())",
     [c.companyId, randomUUID()],
@@ -133,6 +133,9 @@ describe('gợi ý ghép theo SKU và theo tên (AC-22)', () => {
       // Ảnh đầu tiên và trạng thái sàn đi thẳng từ adapter (#282); adapter không trả ảnh thì null.
       imageUrl: 'https://img.test/ao.jpg',
       status: 'live',
+      // SKU người bán đã là SKU kho nên không tạo được (#500).
+      canCreate: false,
+      cannotCreateReason: 'sku_taken',
     });
     expect(rows[1]).toMatchObject({ match: 'name', variantId: vName.id, sku: 'CMR-2', available: 9 });
     expect(rows[1]!.score).toBeGreaterThanOrEqual(0.4);
