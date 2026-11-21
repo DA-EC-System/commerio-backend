@@ -33,7 +33,7 @@ import { MarketplaceError, PRECHECK_CODES, type MarketplaceAdapter } from './mar
 import { prepareNewProduct } from './new-product.ts';
 import type { ProductPort } from './product-port.ts';
 import { specChecks } from './product-specs.ts';
-import { pushBlock } from './push-block.ts';
+import { pushBlock, variantImageGaps } from './push-block.ts';
 import { PUSH_IMAGE_MAX, type ProductRegroupJob, sendProductRegroup, sendStockPush } from './shop-jobs.ts';
 import { type Actor, loseShopAuth, ownShop, platformOf, shopSession } from './shops.ts';
 
@@ -115,11 +115,12 @@ export async function requestRegroup(port: ProductPort, actor: Actor, shopId: st
     ]);
     const own = await currentPrices(rows.map((r) => r.variantId!), rows, prices);
     const variants = new Map(catalog.map((v) => [v.id, v]));
+    const gap = variantImageGaps(adapter, catalog).get(productId) ?? null;
     const blocked = rows.flatMap((r) => {
       const v = variants.get(r.variantId!);
       if (!v || v.archived) return [{ variantId: r.variantId!, code: 'not_found' }];
       const price = own.get(v.id)?.price ?? null;
-      const block = pushBlock(v, price === null ? null : new Decimal(price), specs.get(productId), (imageUrls.get(productId) ?? []).length > 0, sizeCharts.has(productId));
+      const block = pushBlock(v, price === null ? null : new Decimal(price), specs.get(productId), (imageUrls.get(productId) ?? []).length > 0, sizeCharts.has(productId), gap);
       return block ? [{ variantId: v.id, code: block.code }] : [];
     });
     if (blocked.length) throw new AppError(409, 'push_blocked', 'Có SKU chưa đủ điều kiện đẩy lên sàn', { rows: blocked });

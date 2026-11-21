@@ -1017,6 +1017,11 @@ export interface MarketplaceAdapter {
      */
     opts: { reasonId?: string; comment?: string; kind?: 'return' | 'refund'; images?: readonly { name: string; url: string }[] },
   ): Promise<void>;
+  /**
+   * Sàn đòi đủ ảnh cho mọi giá trị của thuộc tính biến thể đã gắn ảnh (#295, Documents/21 §18.5 `variant_images_missing`):
+   * ảnh theo giá trị có một phần thì chặn đẩy trước khi gọi sàn. Không khai là sàn không đòi.
+   */
+  readonly requiresAllVariantImages?: boolean;
   /** Kiểu ảnh sàn nhận làm minh chứng khi từ chối yêu cầu trả (#437); không khai là sàn chưa nhận ảnh qua app. */
   readonly returnImageTypes?: readonly string[];
   /** Báo sàn kho đã nhận hàng trả lúc quét, chưa kiểm hàng (#202, §20.1; Lazada `confirmDelivery`). */
