@@ -23,7 +23,7 @@ Integration chạy migration và test bằng role `commerio_migrator` (`NOSUPERU
 | `rls.ts` | `asCompany(companyId, fn)`: chạy như request trong công ty (role `commerio_app`), rồi rollback |
 | `locks.ts` | `raceBehindLock(lock, blocked, start)`: dựng chạy đua tất định. Mở giao dịch chạy `lock(holder)` (vd `select … for update`, chèn chưa commit), gửi các request đua trong `start`, chờ tới khi đúng `blocked` phiên bị chặn sau giao dịch đó (đếm cả phiên xếp hàng sau phiên bị chặn), rồi commit và trả kết quả của `start` |
 | `state.ts` | `lockCompany`, `suspendMembership`, `setModuleEnabled`, `revokePermission` (chỉ cho vai trò tuỳ biến) |
-| `catalog.ts` | `createVariant(companyId, { sku?, groupName? })` → `{ variantId, productId, groupId, sku }` (mỗi lần một nhóm hàng và sản phẩm mới, ghi trong `withCompany`; không truyền `groupName` trùng trong một công ty, kể cả 12 nhóm có sẵn của công ty mới như "Phụ kiện") |
+| `catalog.ts` | `createVariant(companyId, { sku?, groupName? })` → `{ variantId, productId, groupId, sku }` (mỗi lần một nhóm hàng và sản phẩm mới, ghi trong `withCompany`; không truyền `groupName` trùng trong một công ty, kể cả 27 danh mục chuẩn như "Khác") |
 | `sales.ts` | `createOrder(companyId, { lines: { variantId, quantity, unitPrice }[], paymentMethod?, source? })` → `{ orderId, code, total }` (ghi bảng sales trong `withCompany`, chép SKU, tên sản phẩm từ biến thể; đơn tay mặc định `prepaid`, đơn sàn không có phương thức; không tạo `payment.order_payments`) |
 
 Helper đóng băng trong lúc các nhánh làm song song; helper riêng của một module đặt ở `integration/<lớn>/<con>/helpers.ts`.

@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V141** (`20261121060224_can-nang-kich-thuoc-tran`): 100 bảng trong 6 schema, 81 khoá ngoại, 81 cột tham chiếu không có khoá ngoại. Lịch sử từng phiên bản: [VERSIONS.md](VERSIONS.md).
+Phiên bản **V143** (`20261121061623_can-nang-kich-thuoc-tran`): 101 bảng trong 6 schema, 83 khoá ngoại, 81 cột tham chiếu không có khoá ngoại. Lịch sử từng phiên bản: [VERSIONS.md](VERSIONS.md).
 
 Nguồn: snapshot của migration mới nhất, comment trong `src/modules/<lớn>/<con>/repository/schema.ts`, khoá ngoại, trigger, index, EXCLUDE viết tay trong migration. Cột, kiểu, ràng buộc, quan hệ của từng bảng ở `db/schema/<schema>.md`.
 
@@ -45,17 +45,18 @@ Chi tiết: [schema/core.md](schema/core.md)
 - `core.roles` (access): Vai trò có sẵn có `company_id` trống, dùng chung mọi công ty; vai trò tuỳ biến thuộc một công ty.
 - `core.state_transitions` (platform): Lịch sử chuyển trạng thái của mọi thực thể có máy trạng thái (N4, Documents/21 mục 14.1: `statusHistory`), chỉ thêm.
 
-## `product` · Sản phẩm · lớp 2 · 26 bảng
+## `product` · Sản phẩm · lớp 2 · 27 bảng
 
 Chi tiết: [schema/product.md](schema/product.md)
 
 - `product.attribute_values` (catalog): Giá trị thuộc tính; `code` là phần ghép vào {VAL} của SKU (19-D27, D36).
-- `product.attributes` (catalog): Thuộc tính (trục phân loại), hai tầng: Màu sắc, Kích cỡ, Dung tích, Hương vị là dòng nền tảng.
+- `product.attributes` (catalog): Thuộc tính (trục phân loại), hai tầng: 23 thuộc tính biến thể chuẩn (`platform_kind`) là dòng nền tảng (#531).
 - `product.company_group_settings` (catalog): Cài đặt của một công ty trên nhóm nền tảng (dữ liệu chung, Documents/19 D12): ẩn nhóm không bán, gợi ý giá và ngưỡng tồn riêng.
 - `product.company_product_settings` (catalog): Cài đặt sản phẩm của công ty (D11): mẫu SKU, số {SEQ} kế tiếp, gợi ý mặc định.
 - `product.doc_counters` (inventory): Bộ đếm số chứng từ của cả module lớn `product` (phiếu kho, đề nghị nhập, phiếu nhận, phiếu trả NCC): cấp số bằng `UPDATE … SET next_number = next_number + 1 RETURNING` trong giao dịch.
 - `product.goods_receipt_lines` (purchasing): Dòng phiếu nhận: số NCC báo giao, số đạt (vào tồn thực), số lỗi giữ lại (vào chờ xử lý), số trả tại chỗ.
 - `product.goods_receipts` (purchasing): Một đợt NCC giao hàng cho một đề nghị.
+- `product.group_allowed_attributes` (catalog): Thuộc tính biến thể được phép của danh mục (#531, Documents/21 mục 5.7, 19 §3.2): chỉ để gợi ý và lọc ô chọn, không ràng buộc `variant_attribute_values` (sản phẩm dùng thuộc tính ngoài danh sách vẫn…
 - `product.group_spec_fields` (catalog): Mẫu thông số của nhóm hàng: thông số nào, bắt buộc hay không, thứ tự.
 - `product.product_attribute_value_images` (catalog): Ảnh phân loại theo giá trị của thuộc tính gắn ảnh (#340, Documents/19 §3.2): áo 3 màu × 4 size có 3 dòng.
 - `product.product_groups` (catalog): Nhóm hàng (Documents/19 D11, 21 mục 5.2): một cấp, không gắn sàn, không gắn SKU.

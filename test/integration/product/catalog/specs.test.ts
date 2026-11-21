@@ -153,7 +153,7 @@ describe('mẫu nhóm (#510)', () => {
   });
 
   it('tạo nhóm chép mẫu của nhóm khác; không có quyền catalog.group.manage → 403', async () => {
-    const source = await groupNamed('Mỹ phẩm & làm đẹp');
+    const source = await groupNamed('Mỹ phẩm & chăm sóc da');
     const res = await api(token).post('/groups', { name: uniq('Mỹ phẩm 2'), copyTemplateFromGroupId: source.id });
     ok(res, 201);
     const src = GroupTemplate.parse((await api(token).get(`/groups/${source.id}/template`)).body);
