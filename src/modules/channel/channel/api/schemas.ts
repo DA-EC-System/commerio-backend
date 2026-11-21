@@ -29,7 +29,7 @@ export const CallbackBody = z
       .record(z.string().max(64), z.string().max(2000))
       .refine((p) => Object.keys(p).length <= 20, 'Tối đa 20 tham số')
       .optional()
-      .meta({ description: 'Mọi query trên URL callback trừ `state`; adapter tự đọc (Lazada: `code`)' }),
+      .meta({ description: 'Mọi query trên URL callback trừ `state`; adapter của sàn tự đọc' }),
     code: z.string().trim().min(1).max(2000).optional().meta({
       deprecated: true,
       description: 'Body cũ `{ code, state }`, coi như `params = { code }`; bỏ sau khi FE gửi `params` (21 §18.6.3)',
@@ -85,7 +85,7 @@ export const Shop = z
     id: z.uuid(),
     companyId: z.uuid(),
     platform: z.string().meta({ description: 'Mã sàn (`ShopPlatform.platform`)' }),
-    externalShopId: z.string().meta({ description: 'Mã shop của sàn (Lazada: `seller_id`)' }),
+    externalShopId: z.string().meta({ description: 'Mã gian hàng (người bán) phía sàn' }),
     shopName: z.string(),
     region: z.string().nullable(),
     status: z.enum(['connecting', 'active', 'needs_reauth', 'disconnected']),
@@ -93,7 +93,7 @@ export const Shop = z
     refreshExpiresAt: iso.nullable(),
     authExpiresAt: iso
       .nullable()
-      .meta({ description: 'Hạn uỷ quyền seller chọn trên sàn; null khi sàn không có hạn riêng ngoài refreshExpiresAt (Lazada, TikTok)' }),
+      .meta({ description: 'Hạn uỷ quyền seller chọn trên sàn; null khi sàn không có hạn riêng ngoài refreshExpiresAt' }),
     tokenExpiringSoon: z
       .boolean()
       .meta({ description: 'Đang active và hạn gần hơn trong authExpiresAt, refreshExpiresAt còn dưới 3 ngày' }),
@@ -295,11 +295,11 @@ export const ShopConnectionResult = z
     }),
     remoteProductCount: z.number().int().nullable().meta({
       description:
-        'Số sản phẩm người bán có trên sàn lúc nối, không tính sản phẩm đã xoá trên sàn. Nghĩa cố định cho mọi sàn, sàn nào cũng trả; BE lấy bằng tổng sàn trả sẵn, không đọc hết danh sách (Lazada: `total_products` của GetProducts, `filter=all`; TikTok: `total_count` của Search Products). `null` chỉ khi BE chưa đọc được: adapter của sàn chưa có cách đếm, sàn lỗi (kể cả hết hạn mức gọi, sàn không trả lời) hoặc quá 10 giây. BE không trả 0 thay cho lỗi; việc nối vẫn xong (21 §18.7.4)',
+        'Số sản phẩm người bán có trên sàn lúc nối, không tính sản phẩm đã xoá trên sàn. Nghĩa cố định cho mọi sàn, sàn nào cũng trả; BE lấy bằng tổng sàn trả sẵn, không đọc hết danh sách. `null` chỉ khi BE chưa đọc được: adapter của sàn chưa có cách đếm, sàn lỗi (kể cả hết hạn mức gọi, sàn không trả lời) hoặc quá 10 giây. BE không trả 0 thay cho lỗi; việc nối vẫn xong (21 §18.7.4)',
     }),
     remoteSkuCount: z.number().int().nullable().meta({
       description:
-        'Số phân loại người bán có trên sàn lúc nối. Phân loại là SKU của sàn; sản phẩm không chia phân loại tính là 1. Không tính phân loại của sản phẩm đã xoá. Nghĩa cố định cho mọi sàn. `null` khi BE chưa biết: sàn không trả tổng số phân loại và BE chưa đọc hết danh sách (Lazada lúc nối luôn `null`; TikTok `null` khi tổng sản phẩm của gian hàng, kể cả sản phẩm đã xoá, vượt một trang (100)), hoặc khi `remoteProductCount` là `null`. BE không suy số phân loại từ số sản phẩm (21 §18.7.4)',
+        'Số phân loại người bán có trên sàn lúc nối. Phân loại là SKU của sàn; sản phẩm không chia phân loại tính là 1. Không tính phân loại của sản phẩm đã xoá. Nghĩa cố định cho mọi sàn. `null` khi BE chưa biết: sàn không trả tổng số phân loại và BE chưa đọc hết danh sách (adapter khai theo sàn), hoặc khi `remoteProductCount` là `null`. BE không suy số phân loại từ số sản phẩm (21 §18.7.4)',
     }),
   })
   .strict()
@@ -393,7 +393,7 @@ export const ChannelListing = z
     rejectReason: z.string().nullable(),
     pushError: syncError.meta({
       description:
-        'Lỗi của lượt đẩy (21 §18.6.4): `marketplace_rejected`, `marketplace_unavailable` (`message` là câu của sàn); `shop_not_eligible`, `listing_check_failed` (TikTok, kiểm trước khi tạo sản phẩm, #305); `shop_not_connected` (gian hàng ngắt khi việc chạy); `sku_exists_on_platform` (#399: SellerSku đã có trên sàn từ trước lượt đẩy, sản phẩm của người bán; dùng Ghép SKU); mã chặn theo dòng (`not_found`, `sku_not_ready`, `price_missing`…) khi dữ liệu đổi giữa lúc xếp việc và lúc chạy',
+        'Lỗi của lượt đẩy (21 §18.6.4): `marketplace_rejected`, `marketplace_unavailable` (`message` là câu của sàn); `shop_not_eligible`, `listing_check_failed` (sàn kiểm trước khi tạo sản phẩm, #305); `shop_not_connected` (gian hàng ngắt khi việc chạy); `sku_exists_on_platform` (#399: SellerSku đã có trên sàn từ trước lượt đẩy, sản phẩm của người bán; dùng Ghép SKU); mã chặn theo dòng (`not_found`, `sku_not_ready`, `price_missing`…) khi dữ liệu đổi giữa lúc xếp việc và lúc chạy',
     }),
     pushAttempts: z.number().int().meta({ description: 'Số lần đã gọi sàn trong lượt đẩy hiện tại (đặt về 0 khi bấm đẩy)' }),
     hiddenBy: z.enum(['platform', 'zero_stock']).nullable(),
@@ -428,7 +428,7 @@ export const RemoteTitleChanged = z
   .object({
     from: z.string().meta({ description: 'Tên trên sàn lúc ghép (hoặc lần app đẩy, sửa nội dung, lần xác nhận gần nhất)' }),
     to: z.string().meta({ description: 'Tên trong bản sao SKU sàn hiện tại' }),
-    fromEn: z.string().nullable().meta({ description: 'Tên tiếng Anh lúc ghép (Lazada `name_en`); null khi sàn không có' }),
+    fromEn: z.string().nullable().meta({ description: 'Tên tiếng Anh lúc ghép; null khi sàn không có' }),
     toEn: z.string().nullable().meta({ description: 'Tên tiếng Anh hiện tại; null khi sàn không có' }),
     detectedAt: iso.meta({ description: 'Lần đọc bản sao đầu tiên thấy tên khác' }),
   })
@@ -452,11 +452,11 @@ export const RemoteSkuList = z
           externalProductId: z.string(),
           externalSkuId: z.string(),
           sellerSku: z.string(),
-          title: z.string().meta({ description: 'Tên trên sàn người mua VN thấy (Lazada `attributes.name`)' }),
+          title: z.string().meta({ description: 'Tên trên sàn người mua VN thấy' }),
           titleEn: z
             .string()
             .nullable()
-            .meta({ description: 'Tên tiếng Anh (Lazada `attributes.name_en`, Seller Center giao diện tiếng Anh hiện tên này); null khi sàn không có (#396)' }),
+            .meta({ description: 'Tên tiếng Anh (Seller Center giao diện tiếng Anh hiện tên này); null khi sàn không có (#396)' }),
           matchedVariantId: z.uuid().nullable(),
           mode: z.enum(['mapped', 'unmanaged']).nullable().meta({ description: 'Ghép hiện hành; null khi chưa ghép (kể cả đang chờ CEO duyệt "không quản tồn")' }),
           listingId: z.uuid().nullable().meta({ description: 'Listing chưa gỡ của SKU sàn này (kể cả dòng chỉ chờ duyệt "không quản tồn"); null khi chưa có. CEO dùng để gọi `mapping/approve|reject`' }),
@@ -686,7 +686,7 @@ export const ShopSetupPreview = z
           platformStock: z.number().int(),
           imageUrl: z.string().nullable().meta({
             description:
-              'URL ảnh đầu tiên của sản phẩm trên sàn, chỉ để hiện; null khi sàn không trả hoặc BE không đọc được (TikTok: quá 50 sản phẩm đọc chi tiết, Get Product lỗi). URL ảnh TikTok có thể hết hạn: không lưu (21 §18.7.5)',
+              'URL ảnh đầu tiên của sản phẩm trên sàn, chỉ để hiện; null khi sàn không trả hoặc BE không đọc được (vd quá 50 sản phẩm phải đọc chi tiết, đọc chi tiết lỗi). URL ảnh có thể hết hạn: không lưu (21 §18.7.5)',
           }),
           status: z.enum(['live', 'review', 'rejected', 'hold', 'inactive']).meta({
             description: 'Trạng thái sản phẩm trên sàn đã chuẩn hoá: `live` đang bán, `review` chờ sàn duyệt, `rejected` sàn từ chối, `hold` sàn khoá, `inactive` người bán tắt hoặc nháp (21 §18.7.5)',
@@ -805,7 +805,7 @@ export const PlatformCategoriesQuery = z
   .meta({ id: 'PlatformCategoriesQuery' });
 export const LeafDetailQuery = z
   .object({
-    shopId: z.uuid('Gian hàng không hợp lệ').optional().meta({ description: 'Gian hàng đang mở trang đẩy (sàn cần token, TikTok)' }),
+    shopId: z.uuid('Gian hàng không hợp lệ').optional().meta({ description: 'Gian hàng đang mở trang đẩy (sàn cần token gian hàng)' }),
   })
   .meta({ id: 'PlatformLeafQuery' });
 
@@ -830,7 +830,7 @@ export const PlatformCategoryPage = z
           .enum(['available', 'invite_only', 'non_main_category', 'prohibited'])
           .nullable()
           .optional()
-          .meta({ description: 'Chỉ có khi gửi `shopId`; quyền của gian hàng với leaf (null: chưa kiểm, Lazada, hoặc không phải leaf)' }),
+          .meta({ description: 'Chỉ có khi gửi `shopId`; quyền của gian hàng với leaf (null: chưa kiểm, sàn không có quyền theo gian hàng, hoặc không phải leaf)' }),
       }).strict(),
     ),
     syncedAt: iso.nullable().meta({ description: 'Lần đồng bộ cây gần nhất; null khi sàn chưa có dòng nào' }),
@@ -840,7 +840,7 @@ export const PlatformCategoryPage = z
 
 export const PlatformAttribute = z
   .object({
-    code: z.string().meta({ description: 'Lazada `name`, TikTok id attribute' }),
+    code: z.string().meta({ description: 'Mã attribute phía sàn' }),
     label: z.string(),
     kind: z.enum(['sales', 'property']),
     input: z.enum(['select', 'multiselect', 'text', 'number', 'date', 'image', 'cascade']),
@@ -915,7 +915,7 @@ export const ProductSpecSchema = z
 export const VariantCapabilitiesSchema = z
   .object({
     maxAxes: z.number().int().min(0),
-    customAxisName: z.boolean().meta({ description: 'false: sàn từ chối tên trục tự đặt (Lazada)' }),
+    customAxisName: z.boolean().meta({ description: 'false: sàn từ chối tên trục tự đặt' }),
     salesRequired: z.array(z.string()).meta({ description: 'Sales attribute bắt buộc phải có trong `axisMap`' }),
     addVariant: z.boolean().meta({ description: 'true: thêm được phân loại vào sản phẩm sàn đã có; false thì SKU bị chặn ở lần đẩy đầu chặn cả cha (§18.8.4)' }),
   })

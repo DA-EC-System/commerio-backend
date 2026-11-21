@@ -514,7 +514,7 @@ export const platformCategoryAttributes = channelSchema.table(
 );
 
 /**
- * Quyền đăng category của một gian hàng, chỉ TikTok dùng (`permission_statuses`, #400 A17). Ghi từ gợi ý và lần kiểm trước
+ * Quyền đăng category của một gian hàng, cho sàn có quyền category theo gian hàng (adapter khai, #400 A17). Ghi từ gợi ý và lần kiểm trước
  * khi đẩy, `checked_at` quá 7 ngày thì kiểm lại. RLS `company_isolation` (migration `*_category-san-quyen`).
  */
 export const shopCategoryPermissions = channelSchema.table(

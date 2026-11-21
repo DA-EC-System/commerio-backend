@@ -3,7 +3,14 @@
 <!-- Sinh tự động bởi `npm run db:docs` từ db/migrations. Không sửa tay. -->
 
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
-Mới nhất: **V137**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+Mới nhất: **V138**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+
+## V138 · 21/11/2026 · quyen-sao-ke-san-chung
+
+`db/migrations/20261121051107_quyen-sao-ke-san-chung.sql` · viết tay
+
+- viết tay: dữ liệu
+- Bỏ tên sàn khỏi nhãn quyền người dùng thấy ở màn vai trò ("Thiết kế cho nhiều sàn").
 
 ## V137 · 21/11/2026 · anh-xa-hai-tang-du-lieu
 

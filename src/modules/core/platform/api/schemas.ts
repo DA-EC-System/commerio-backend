@@ -177,7 +177,7 @@ export const CompanyProfile = z
     responsibleAddress: z.string().nullable().meta({ description: 'Địa chỉ tổ chức chịu trách nhiệm; null = `address`' }),
     effectiveResponsible: z
       .object({ name: z.string(), address: z.string().nullable() })
-      .meta({ description: 'Giá trị điền lên sàn (TikTok 101489, 101490)' }),
+      .meta({ description: 'Giá trị điền lên attribute sàn tương ứng (theo ánh xạ)' }),
     version: z.number().int(),
   })
   .meta({ id: 'CompanyProfile' });
