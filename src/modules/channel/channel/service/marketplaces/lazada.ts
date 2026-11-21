@@ -38,7 +38,7 @@ import {
   type ReserveCall,
   reserveOrThrow,
   type SellerInfo,
-  type ShopCapabilities,
+  type DeclaredCapabilities,
   type ShopConnection,
   type SettlementTxn,
   type TokenSet,
@@ -85,7 +85,7 @@ export function lazadaCascade(data: unknown): CascadeLevel {
 const flatAttributes = (attrs: Record<string, string | string[]>): Record<string, string> =>
   Object.fromEntries(Object.entries(attrs).map(([k, v]) => [k, Array.isArray(v) ? v.join(',') : v]));
 /** Documents/21 §18.6.3: Lazada duyệt listing, ẩn bằng tắt, tách kiện từng đơn vị, hạn trả tính theo ngày của gian hàng. */
-const LAZADA_CAPABILITIES: ShopCapabilities = { listingReview: true, hideBy: 'deactivate', splitLevel: 'unit', returnWindow: 'days' };
+const LAZADA_CAPABILITIES: DeclaredCapabilities = { listingReview: true, hideBy: 'deactivate', splitLevel: 'unit', returnWindow: 'days' };
 // Mã token sai hoặc hết hạn (lazada.md §6): gian hàng cần nối lại, không thử lại.
 const AUTH_CODES = new Set(['IllegalAccessToken', 'IllegalRefreshToken', 'InvalidCode', 'InvalidRefreshToken']);
 /**

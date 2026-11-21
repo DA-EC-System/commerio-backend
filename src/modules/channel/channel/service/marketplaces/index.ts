@@ -91,7 +91,7 @@ export function platformEntries(): PlatformEntry[] {
         connectable,
         reason: connectable ? null : `Môi trường này chưa cấu hình kết nối ${adapter.name}`,
         methods,
-        capabilities: adapter.capabilities,
+        capabilities: capabilitiesFrom(adapter),
       };
     });
   const planned = PLANNED.filter((p) => !Object.hasOwn(adapters, p.platform)).map(
@@ -101,11 +101,30 @@ export function platformEntries(): PlatformEntry[] {
 }
 
 /** Không có adapter (sàn bị gỡ): giả định thận trọng thay vì 500 (#200 A9). */
-const CAUTIOUS: ShopCapabilities = { listingReview: true, hideBy: 'zero_stock', splitLevel: 'none', returnWindow: 'platform_status' };
+const CAUTIOUS: ShopCapabilities = {
+  listingReview: true,
+  hideBy: 'zero_stock',
+  splitLevel: 'none',
+  returnWindow: 'platform_status',
+  productSpec: false,
+  contentUpdate: false,
+  repackOnReopen: false,
+};
+
+/** Phần adapter khai cộng ba cờ suy từ hàm adapter có cài (Documents/21 §18.6.2): không khai tay nên không lệch với code. */
+function capabilitiesFrom(adapter: MarketplaceAdapter): ShopCapabilities {
+  return {
+    ...adapter.capabilities,
+    productSpec: Boolean(adapter.categoryTree),
+    contentUpdate: Boolean(adapter.updateContent),
+    repackOnReopen: Boolean(adapter.repackPackage),
+  };
+}
 
 /** Năng lực của sàn theo adapter đang đăng ký. */
 export function capabilitiesOf(platform: string): ShopCapabilities {
-  return getAdapter(platform)?.capabilities ?? CAUTIOUS;
+  const adapter = getAdapter(platform);
+  return adapter ? capabilitiesFrom(adapter) : CAUTIOUS;
 }
 
 /** Test thay adapter thật bằng adapter giả; `resetAdapters()` trả lại như cũ. */
