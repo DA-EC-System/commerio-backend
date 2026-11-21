@@ -4,6 +4,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
+import type { PoolClient } from 'pg';
 import {
   DEFAULT_ATTRIBUTES,
   DEFAULT_GROUP_TEMPLATES,
@@ -336,6 +337,27 @@ describe('migration gộp bản sao vào dòng nền tảng (#521)', () => {
     .split('--> statement-breakpoint')
     .filter((s) => !/CREATE TABLE|REVOKE ALL/.test(s) && s.replace(/--.*$/gm, '').trim());
 
+  // Migration có DDL (gỡ, thêm khoá ngoại, CHECK) cần AccessExclusiveLock trong lúc file test khác chạy song song:
+  // lấy hết khoá một lần ở đầu giao dịch (NOWAIT, bận thì rollback và thử lại) để không deadlock giữa chừng.
+  const LOCKED = [
+    'attributes', 'attribute_values', 'variant_attribute_values', 'product_attribute_value_images', 'product_groups',
+    'products', 'product_variants', 'spec_fields', 'spec_field_options', 'group_spec_fields', 'product_spec_values',
+    'company_group_settings', 'purchase_request_lines',
+  ].map((t) => `product.${t}`).join(', ');
+  const lockMigrationTables = async (client: PoolClient) => {
+    for (let attempt = 0; ; attempt++) {
+      await client.query('begin');
+      try {
+        await client.query(`lock table ${LOCKED} in access exclusive mode nowait`);
+        return;
+      } catch (e) {
+        await client.query('rollback');
+        if ((e as { code?: string }).code !== '55P03' || attempt >= 200) throw e;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+    }
+  };
+
   it('sản phẩm cũ giữ nguyên giá trị thông số và trục; bản sao biến mất; gợi ý sang cài đặt công ty; ghi bảng remap', async () => {
     const c = await createCompany();
     const db = testPool();
@@ -383,7 +405,7 @@ describe('migration gộp bản sao vào dòng nền tảng (#521)', () => {
 
     const client = await db.connect();
     try {
-      await client.query('begin');
+      await lockMigrationTables(client);
       await client.query('alter table product.attributes drop constraint attributes_platform_kind_tier');
       await client.query(`update product.attributes set platform_kind = 'color' where id = $1`, [a.id]);
       for (const s of statements) await client.query(s);
