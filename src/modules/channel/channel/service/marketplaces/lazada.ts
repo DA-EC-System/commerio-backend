@@ -252,6 +252,12 @@ const isHttpUrl = (u: string) => /^https?:/i.test(u);
  * `attributes.size_chart` (attribute `input = 'text'` mang link ảnh, 22 category trên staging), `skus[]`: `SkuId`,
  * `package_weight` (kg), `package_length`, `package_width`, `package_height` (cm), chuỗi số.
  */
+function saleValuesOf(prop: unknown): { saleValues?: string[] } {
+  if (!prop || typeof prop !== 'object') return {};
+  const values = Object.values(prop as Record<string, unknown>).flatMap((v) => (typeof v === 'string' && v.trim() ? [v.trim()] : []));
+  return values.length ? { saleValues: values } : {};
+}
+
 export function lazadaProductFacts(images: unknown, attrs: Record<string, unknown>, skus: unknown): RemoteProductFacts {
   const text = (v: unknown) => (typeof v === 'string' && v.trim() !== '' ? v.trim() : null);
   const chart = text(attrs['size_chart']);
@@ -266,6 +272,8 @@ export function lazadaProductFacts(images: unknown, attrs: Record<string, unknow
         : [
             {
               externalSkuId: String(k.SkuId),
+              // `saleProp { <trục>: <giá trị> }` (GetProductItem đọc lại, Documents/tich-hop-san/goi-thu-bien-the-thong-so.md 2.1).
+              ...saleValuesOf(k.saleProp),
               weightG: toGrams(k.package_weight),
               lengthMm: toMillimeters(k.package_length),
               widthMm: toMillimeters(k.package_width),

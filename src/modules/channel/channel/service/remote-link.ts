@@ -9,7 +9,8 @@ import type { ChannelListing } from './listings.ts';
 import { matchListing } from './mapping.ts';
 import type { ProductPort } from './product-port.ts';
 import { CANNOT_CREATE, createBlocker, productNameOf, remotePrices } from './setup.ts';
-import { type Actor, ownShop } from './shops.ts';
+import { readProduct } from './fill-back.ts';
+import { type Actor, onMarketplace, ownShop, shopSession } from './shops.ts';
 
 export interface BulkPairResult {
   externalSkuId: string;
@@ -86,6 +87,42 @@ function parentOfSiblings(variants: readonly ListingVariant[], linked: readonly 
 }
 
 /**
+ * Giá trị phân loại của SKU sàn đọc từ Get Product (`productCategory`, bộ đệm 10 phút của `fill-back`). Chỉ đọc khi SKU anh
+ * em đã liên kết (sắp thêm làm biến thể). `multiple`: sàn có nhiều giá trị (nhiều trục), không gán được vào một thuộc tính.
+ * Lỗi sàn, sàn không trả: `value` null kèm lý do để bên gọi tách từ tên.
+ */
+async function saleValueOf(
+  port: ProductPort,
+  actor: Actor,
+  shopId: string,
+  externalSkuId: string,
+): Promise<{ value: string | null; multiple: boolean; reason: string | null }> {
+  const none = (reason: string | null) => ({ value: null, multiple: false, reason });
+  const pre = await withCompany(actor.companyId, async () => {
+    const shop = await ownShop(shopId);
+    const remote = await findRemoteSkuRow(shop.id, externalSkuId);
+    if (!remote) return null;
+    const linked = await linkedVariantsOfRemoteProduct(shop.id, remote.externalProductId);
+    if (!linked.length || !parentOfSiblings(await port.variants(), linked)) return null;
+    return { shop, remote, session: await shopSession(shop.id) };
+  });
+  if (!pre) return none(null);
+  const { adapter, accessToken } = pre.session;
+  if (!adapter.productCategory) return none('marketplace_unsupported');
+  try {
+    const product = await onMarketplace(() =>
+      readProduct(pre.shop.id, pre.remote.externalProductId, () => adapter.productCategory!(accessToken, pre.remote.externalProductId)),
+    );
+    const values = product?.facts.skus.find((s) => s.externalSkuId === externalSkuId)?.saleValues ?? [];
+    if (values.length > 1) return { value: null, multiple: true, reason: null };
+    return values.length ? { value: values[0]!, multiple: false, reason: null } : none('no_sale_values');
+  } catch (err) {
+    if (!(err instanceof AppError)) throw err;
+    return none(err.code);
+  }
+}
+
+/**
  * Tạo SKU kho từ SKU sàn rồi liên kết (cùng luật dòng `create: true` của `POST /setup`, #500), một giao dịch: SKU người bán
  * làm mã; trùng SKU kho chưa lưu trữ thì liên kết vào SKU đó (`created: false`, 25 §6.1). Liên kết lỗi thì không tạo gì.
  */
@@ -96,6 +133,8 @@ export async function createVariantFromRemote(
   externalSkuId: string,
   groupId: string,
 ): Promise<{ variantId: string; created: boolean; pending: boolean; listing: ChannelListing }> {
+  // Giá trị phân loại thật của SKU trên sàn, đọc ngoài giao dịch (lời gọi sàn) khi SKU sẽ thành biến thể của sản phẩm app có sẵn.
+  const sale = await saleValueOf(port, actor, shopId, externalSkuId);
   return withCompany(actor.companyId, async () => {
     const shop = await ownShop(shopId);
     if (shop.status !== 'active') {
@@ -115,8 +154,18 @@ export async function createVariantFromRemote(
       const prices = (await remotePrices(shop.id))(remote.price);
       // SKU anh em của sản phẩm sàn này đã liên kết vào một sản phẩm app: thêm làm biến thể của sản phẩm đó (KB3), không
       // tạo sản phẩm app thứ hai cho cùng một sản phẩm sàn.
-      const parentId = parentOfSiblings(variants, await linkedVariantsOfRemoteProduct(shop.id, remote.externalProductId));
-      const label = parentId ? labelFromTitle(remote.title, (await remoteSkusOfProduct(shop.id, remote.externalProductId)).map((r) => r.title)) : null;
+      const parentId = sale.multiple ? null : parentOfSiblings(variants, await linkedVariantsOfRemoteProduct(shop.id, remote.externalProductId));
+      let label: string | null = null;
+      if (parentId) {
+        label = sale.value;
+        if (label === null) {
+          label = labelFromTitle(remote.title, (await remoteSkusOfProduct(shop.id, remote.externalProductId)).map((r) => r.title));
+          logger.warn(
+            { shopId: shop.id, externalSkuId, externalProductId: remote.externalProductId, label, reason: sale.reason },
+            'create-variant: sàn không trả giá trị phân loại, tách nhãn từ tên SKU sàn',
+          );
+        }
+      }
       const result = await port.createFromPlatform(
         { companyId: actor.companyId, accountId: actor.accountId },
         groupId,
