@@ -115,7 +115,7 @@ beforeAll(async () => {
 });
 
 describe('dữ liệu chuẩn hai tầng: bất biến (#521)', () => {
-  it('công ty mới không có bản sao; thấy 12 nhóm, 76 thông số, mẫu đủ, 4 thuộc tính chuẩn của nền tảng', async () => {
+  it('công ty mới không có bản sao; thấy 27 danh mục, 98 thông số, mẫu đủ, 23 thuộc tính chuẩn của nền tảng', async () => {
     for (const table of TABLES) {
       const { rows } = await testPool().query(`select count(*)::int as n from product.${table} where company_id = $1`, [companyId]);
       expect(rows[0].n, table).toBe(0);
@@ -208,7 +208,7 @@ describe('RLS bốn policy tier_* (#521)', () => {
 
 describe('ghi vào dữ liệu chuẩn (#521, Documents/21 mục 5.6)', () => {
   it('PUT/DELETE nhóm, thông số, thuộc tính nền tảng: 403 platform_managed; đổi tên nhóm chuẩn 422; gợi ý của công ty 200', async () => {
-    const group = await platformGroup('Phụ kiện');
+    const group = await platformGroup('Phụ kiện thời trang');
     problem(await api(token).delete(`/groups/${group.id}?version=1`), 403, 'platform_managed');
     const renamed = await api(token).put(`/groups/${group.id}`, { name: 'Đổi tên', version: group.version });
     problem(renamed, 422, 'validation_failed');
@@ -295,7 +295,7 @@ describe('ghi vào dữ liệu chuẩn (#521, Documents/21 mục 5.6)', () => {
   });
 
   it('mẫu nhóm chuẩn: dòng chuẩn rồi dòng công ty; gửi trục hoặc thông số đã có trong mẫu chuẩn 422', async () => {
-    const group = await platformGroup('Điện tử');
+    const group = await platformGroup('Phụ kiện điện thoại & máy tính');
     const tpl = await api(token).get(`/groups/${group.id}/template`);
     ok(tpl);
     const std = tpl.body.fields.filter((f: { scope: string }) => f.scope === 'platform');

@@ -14,6 +14,7 @@ import {
   updateValue,
 } from '../repository/attributes.ts';
 import { groupsUsingAxis } from '../repository/specs.ts';
+import { allowedAttributeIds } from './group-templates.ts';
 import { uniqueValueCode } from '../domain/sku.ts';
 import {
   auditOf,
@@ -73,8 +74,17 @@ function race(err: unknown): never {
   throw err;
 }
 
-export async function listAttributes(companyId: string): Promise<AttributeView[]> {
-  return (await withCompany(companyId, () => findAttributes())).map(toView);
+/**
+ * `groupId`: chỉ thuộc tính biến thể được phép của danh mục, theo thứ tự `allowedAttributes` (Documents/21 mục 5.7);
+ * danh mục không có hoặc của công ty khác 404.
+ */
+export async function listAttributes(companyId: string, opts: { groupId?: string | undefined } = {}): Promise<AttributeView[]> {
+  return withCompany(companyId, async () => {
+    const all = await findAttributes();
+    if (opts.groupId === undefined) return all.map(toView);
+    const byId = new Map(all.map((a) => [a.id, a]));
+    return (await allowedAttributeIds(opts.groupId)).flatMap((id) => (byId.has(id) ? [toView(byId.get(id)!)] : []));
+  });
 }
 
 export async function createAttribute(caller: Caller, input: AttributeInput): Promise<AttributeView> {

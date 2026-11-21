@@ -50,12 +50,13 @@ const TIER = [
   'product.spec_fields',
   'product.spec_field_options',
   'product.group_spec_fields',
+  'product.group_allowed_attributes',
 ];
 
 describe('RLS schema product (AC-1)', () => {
   it('mọi bảng có company_id của schema product bật RLS và có đúng policy cô lập theo app.company_id', async () => {
     const tables = await companyTables();
-    expect(tables).toHaveLength(26); // #400 BE3 xoá product.product_channel_specs; #447 thêm product.company_product_settings; #510 thêm 4 bảng thông số; #521 thêm company_group_settings
+    expect(tables).toHaveLength(27); // #531 thêm group_allowed_attributes; #400 BE3 xoá product.product_channel_specs; #447 thêm product.company_product_settings; #510 thêm 4 bảng thông số; #521 thêm company_group_settings
     const res = await testPool().query<{ name: string; rls: boolean; quals: string[] }>(
       `select n.nspname || '.' || c.relname as name, c.relrowsecurity as rls,
               coalesce((select array_agg(qual) from pg_policies p where p.schemaname = n.nspname and p.tablename = c.relname), '{}') as quals
@@ -84,6 +85,7 @@ describe('RLS schema product (AC-1)', () => {
       'product.spec_fields',
       'product.spec_field_options',
       'product.group_spec_fields',
+      'product.group_allowed_attributes',
     ];
     for (const table of await companyTables()) {
       const rows = await asCompany(a, async (c) => (await c.query<{ company_id: string }>(`select company_id from ${table}`)).rows);

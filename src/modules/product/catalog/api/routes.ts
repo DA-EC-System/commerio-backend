@@ -19,6 +19,7 @@ import type { CatalogContext } from '../service/standard-price.ts';
 import {
   AddVariantBody,
   AttributeBody,
+  AttributesQuery,
   BusinessStatusBody,
   BulkEditQuery,
   BulkSaveBody,
@@ -173,8 +174,8 @@ export function catalogRouter(ctx: CatalogContext): Router {
     res.json(await settings.updateSettings(caller(res), validated<typeof SettingsBody>(res, 'body')));
   });
 
-  router.get('/attributes', view, async (_req, res) => {
-    res.json(await attributes.listAttributes(caller(res).companyId));
+  router.get('/attributes', view, validate({ query: AttributesQuery }), async (_req, res) => {
+    res.json(await attributes.listAttributes(caller(res).companyId, validated<typeof AttributesQuery>(res, 'query')));
   });
 
   router.post('/attributes', setup, validate({ body: AttributeBody }), async (_req, res) => {
