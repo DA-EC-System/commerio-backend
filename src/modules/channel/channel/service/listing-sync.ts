@@ -3,6 +3,7 @@
 // `listings.ts`. Bấm tay ở route `sync`; #102 gọi lại `syncListings` theo lịch. Đẩy ngay khi số có thể bán đổi:
 // `pushPending` (việc `channel.stock_push`).
 import { Decimal } from 'decimal.js';
+import { stockToPushOf } from '../domain/stock-to-push.ts';
 import { requireCompanyId, withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { logger } from '../../../../shared/logger.ts';
@@ -623,14 +624,22 @@ async function pushDue(
     // Chỉ gửi tồn khi listing chờ đẩy tồn: dòng chỉ chờ đẩy giá không kéo theo đẩy tồn (luật chờ một lượt, 25 §6.5).
     const zero = zeroHidden(row);
     const stockDue = stockPending(row) && !waiting.has(row.id);
-    const wanted = !stockDue || r?.stockLocked ? undefined : zero ? 0 : available.get(row.variantId!);
+    // Cùng hàm với cột "Tồn sẽ đẩy" và hộp ghép (`domain/stock-to-push.ts`); gian hàng giữ tồn đã lọc ở `stockPending`.
+    const plan = stockToPushOf({
+      zeroHidden: zero,
+      holdStock: false,
+      counted: counted === null || counted.has(row.variantId!),
+      available: available.get(row.variantId!),
+    });
+    const notCounted = plan.stockHeldReason === 'not_counted';
+    const wanted = !stockDue || r?.stockLocked ? undefined : notCounted ? available.get(row.variantId!) : (plan.stockToPush ?? undefined);
     // SKU chưa tin được (#223, 21 §18.6.6): số app chỉ có thể cao hơn thật, nên chỉ đẩy khi không làm tồn trên sàn tăng,
     // so với số sàn ĐỌC THẬT trong lượt này (`sellableQuantity`). Không so với `platform_stock`: đó là số app gửi lần trước,
     // sàn có thể đã bán bớt mà app chưa biết (review R2-1). Đường không đọc sàn (`pushPending`) vì thế không đẩy tồn SKU
     // này. Bị giữ thì `pending` kèm `orders_stale`; lượt đồng bộ 15 phút hoặc lấy đơn xong trọn thì đẩy lại.
     // SKU kho chưa có số (#460, 25 §6.4 "Ghép listing có sẵn"): không đẩy số có thể bán (0) đè tồn trên sàn, thắng
     // `orders_stale`. Listing ẩn bằng tồn 0 vẫn gửi 0: đó là lệnh ngừng bán, không phải số tồn.
-    const uncounted = wanted !== undefined && !zero && counted !== null && !counted.has(row.variantId!);
+    const uncounted = wanted !== undefined && notCounted;
     const staleShops = untrusted.get(row.variantId!);
     const stale = !uncounted && staleShops !== undefined && wanted !== undefined && !zero && raisesStock(wanted, r?.sellableQuantity);
     const blocked = uncounted || stale;
