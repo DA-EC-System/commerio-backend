@@ -187,6 +187,38 @@ describe('kiểm ô khi sửa', () => {
     expect(stale.status).toBe(409);
     expect(stale.body.code).toBe('version_conflict');
   });
+
+  it('gộp theo ô: specs theo fieldId (gửi rỗng là xoá), variants theo tổ hợp; lỗi theo chỉ số trong mảng đã gửi', async () => {
+    const r = await createRequest(A.kho, A.supplierId, [fresh(uniq('Áo'), { 'Kích cỡ': 'M' }), fresh(uniq('Áo'), { 'Kích cỡ': 'L' })] as never);
+    const drafts = PurchaseRequest.parse((await pur(A.kho).get(`/requests/${r.id}`)).body).productDrafts;
+    const id = drafts[0]!.id;
+    const field = async () => {
+      const res = await api(A.ceo).post('/spec-fields', { name: uniq('Ghi chú'), input: 'text', allowCustom: false });
+      expect(res.status, JSON.stringify(res.body)).toBe(201);
+      return res.body.id as string;
+    };
+    const [f1, f2] = [await field(), await field()];
+    let d = await getDraft(A.kho, id);
+    let res = await putDraft(A.kho, id, { specs: [{ fieldId: f1, value: 'Một' }, { fieldId: f2, value: 'Hai' }], version: d.version });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    d = ProductDraft.parse(res.body);
+    res = await putDraft(A.kho, id, { specs: [{ fieldId: f2, value: 'Hai sửa' }], version: d.version });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    d = ProductDraft.parse(res.body);
+    expect(Object.fromEntries(d.specs.map((s) => [s.fieldId, s.value]))).toEqual({ [f1]: 'Một', [f2]: 'Hai sửa' });
+    res = await putDraft(A.kho, id, { specs: [{ fieldId: f1, value: '' }], version: d.version });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(ProductDraft.parse(res.body).specs.map((s) => s.fieldId)).toEqual([f2]);
+
+    // Lỗi theo chỉ số trong mảng `variants` đã gửi (FE chỉ gửi tổ hợp có ô đổi).
+    d = ProductDraft.parse(res.body);
+    const bad = await putDraft(A.kho, id, {
+      variants: [{ optionValues: { 'Kích cỡ': 'M' }, weightG: 100 }, { optionValues: { 'Kích cỡ': 'XL' }, weightG: 100 }],
+      version: d.version,
+    });
+    expect(bad.status).toBe(422);
+    expect(Object.keys(bad.body.errors)).toEqual(['variants.1.optionValues']);
+  });
 });
 
 describe('ghi sổ phiếu nhập kho chép bản soạn sang sản phẩm', () => {

@@ -305,7 +305,13 @@ export async function updateDraftContent(actor: Actor, id: string, input: DraftU
     if (input.originCountry !== undefined) set.originCountry = input.originCountry?.trim().toUpperCase() || null;
     if (input.imageFileIds !== undefined) set.imageFileIds = input.imageFileIds;
     if (input.sizeChartFileId !== undefined) set.sizeChartFileId = input.sizeChartFileId;
-    if (input.specs !== undefined) set.specs = [...input.specs];
+    // Thuộc tính sản phẩm gộp theo `fieldId` như `PUT /catalog/products` (21 mục 5.5): chỉ trường gửi lên đổi, trường gửi
+    // rỗng (không lựa chọn, không chữ) là xoá, trường không gửi giữ nguyên.
+    if (input.specs !== undefined) {
+      const sent = new Map(input.specs.map((x) => [x.fieldId, x]));
+      const kept = draft.specs.filter((x) => !sent.has(x.fieldId));
+      set.specs = [...kept, ...[...sent.values()].filter((x) => x.optionIds?.length || x.newValues?.length || x.value?.trim())];
+    }
     if (input.imageAxis !== undefined) set.imageAxis = input.imageAxis?.trim() || null;
     if (input.optionImages !== undefined) set.optionImages = input.optionImages;
     // Số chung và số theo tổ hợp gộp theo từng ô như các trường cấp trên: vắng là giữ, `null` là xoá (tổ hợp xoá thì dùng số chung).
