@@ -62,3 +62,42 @@ describe('groupVariants', () => {
     expect(groupVariants([{ id: 'v1', attributes: [color('Đen')] }], {}, leaf)).toMatchObject({ ok: false, code: 'axis_unmapped' });
   });
 });
+
+describe('groupVariants: ảnh theo giá trị (#295)', () => {
+  const c = (value: string, valueId: string) => ({ attributeId: 'a-color', attributeName: 'Màu', value, valueId });
+  const s = (value: string, valueId: string) => ({ attributeId: 'a-size', attributeName: 'Cỡ', value, valueId });
+  const map = { 'a-color': '__custom', 'a-size': '__custom' };
+
+  it('trục gắn ảnh tìm theo attributeValueId; mỗi giá trị lấy ảnh của SKU mang nó; trục kia không có ảnh', () => {
+    const g = groupVariants(
+      [
+        { id: 'v1', attributes: [c('Đen', 'den'), s('S', 's')], image: { attributeValueId: 'den', url: 'u-den' } },
+        { id: 'v2', attributes: [c('Đen', 'den'), s('M', 'm')], image: { attributeValueId: 'den', url: 'u-den' } },
+        { id: 'v3', attributes: [c('Trắng', 'trang'), s('S', 's')], image: { attributeValueId: 'trang', url: 'u-trang' } },
+      ],
+      map,
+      null,
+    );
+    if (!g.ok) throw new Error(g.message);
+    expect(g.axes[0]!.values).toEqual([
+      { optionId: null, label: 'Đen', imageUrl: 'u-den' },
+      { optionId: null, label: 'Trắng', imageUrl: 'u-trang' },
+    ]);
+    expect(g.axes[1]!.values.every((v) => !('imageUrl' in v))).toBe(true);
+  });
+
+  it('một giá trị của trục thiếu ảnh, hoặc link rỗng: không gắn ảnh nào', () => {
+    for (const second of [null, { attributeValueId: 'trang', url: '' }]) {
+      const g = groupVariants(
+        [
+          { id: 'v1', attributes: [c('Đen', 'den')], image: { attributeValueId: 'den', url: 'u-den' } },
+          { id: 'v2', attributes: [c('Trắng', 'trang')], image: second },
+        ],
+        map,
+        null,
+      );
+      if (!g.ok) throw new Error(g.message);
+      expect(g.axes[0]!.values.some((v) => 'imageUrl' in v)).toBe(false);
+    }
+  });
+});
