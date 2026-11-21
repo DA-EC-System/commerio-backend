@@ -32,10 +32,10 @@ describe('GET/POST /catalog/groups', () => {
     expect(await auditOf(res.body.id)).toEqual([{ action: 'create', entity_type: 'product.product_groups', before: null, after: { name } }]);
   });
 
-  it('công ty mới có 12 nhóm sắp theo tên tiếng Việt; `/catalog/categories` không còn (404) (AC-S7)', async () => {
+  it('công ty mới thấy 27 danh mục chuẩn sắp theo tên tiếng Việt; `/catalog/categories` không còn (404) (AC-S7)', async () => {
     const { ceo } = await createCompany();
     const names = (await groupsOf(ceo.token)).map((g) => g.name);
-    expect(names).toHaveLength(12);
+    expect(names).toHaveLength(27); // #531: 27 danh mục chuẩn
     expect(names).toEqual([...names].sort(new Intl.Collator('vi').compare));
     expect((await api(ceo.token).get('/categories')).status).toBe(404);
   });
