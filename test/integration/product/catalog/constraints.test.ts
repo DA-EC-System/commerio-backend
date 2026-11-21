@@ -60,7 +60,7 @@ describe('ràng buộc bảng catalog (AC-9)', () => {
     const company = randomUUID();
     const attr = await insertAttribute(company, 'Size');
     await insertValue(company, attr, 'Xanh navy', 'XANHNA');
-    await expect(insertValue(company, attr, 'xanh NAVY', 'XANHN2')).rejects.toThrow(/attribute_values_attribute_lower_value_uq/);
+    await expect(insertValue(company, attr, 'xanh NAVY', 'XANHN2')).rejects.toThrow(/attribute_values_company_lower_value_uq/);
     await expect(insertValue(company, attr, 'Xanh nhạt', 'XANHNA')).rejects.toThrow(/duplicate key/);
     const other = await insertAttribute(company, 'Màu phụ');
     await expect(insertValue(company, other, 'Xanh navy', 'XANHNA')).resolves.toBeDefined();

@@ -73,7 +73,10 @@ describe('thư viện thông số (#510)', () => {
 
   it('xoá lựa chọn đang dùng → 409 in_use; xoá thông số trong mẫu nhóm → 409 in_use kèm groups; hết dùng thì xoá được', async () => {
     const field = await createField({ name: uniq('Lớp phủ'), input: 'select', allowCustom: false, options: [{ value: 'Bóng' }, { value: 'Mờ' }] });
-    const group = await groupNamed('Khác');
+    const groupName = uniq('Nhóm phủ');
+    const created = await api(token).post('/groups', { name: groupName });
+    ok(created, 201);
+    const group = created.body as { id: string };
     const tpl = GroupTemplate.parse((await api(token).get(`/groups/${group.id}/template`)).body);
     const put = await api(token).put(`/groups/${group.id}/template`, {
       axisAttributeIds: tpl.axes.map((a) => a.attributeId),
@@ -94,7 +97,7 @@ describe('thư viện thông số (#510)', () => {
 
     const del = await api(token).delete(`/spec-fields/${field.id}?version=${field.version}`);
     problem(del, 409, 'in_use');
-    expect(del.body).toMatchObject({ groupCount: 1, productCount: 1, groups: [{ id: group.id, name: 'Khác' }] });
+    expect(del.body).toMatchObject({ groupCount: 1, productCount: 1, groups: [{ id: group.id, name: groupName }] });
 
     // Gỡ khỏi mẫu, xoá giá trị ở sản phẩm, rồi xoá được.
     const cur = GroupTemplate.parse((await api(token).get(`/groups/${group.id}/template`)).body);
@@ -156,7 +159,8 @@ describe('mẫu nhóm (#510)', () => {
     const src = GroupTemplate.parse((await api(token).get(`/groups/${source.id}/template`)).body);
     const copy = GroupTemplate.parse((await api(token).get(`/groups/${res.body.id}/template`)).body);
     expect(copy.axes).toEqual(src.axes);
-    expect(copy.fields).toEqual(src.fields);
+    // Nhóm nguồn là nhóm nền tảng (#521): dòng chép thành dòng của công ty.
+    expect(copy.fields).toEqual(src.fields.map((f) => ({ ...f, scope: 'company' })));
     problem(await api(token).post('/groups', { name: uniq('Nhóm lạ'), copyTemplateFromGroupId: '00000000-0000-4000-8000-000000000000' }), 422, 'validation_failed');
     const sale = await addMember(companyId, 'sale');
     problem(await api(sale.token).post('/groups', { name: uniq('Sale chép'), copyTemplateFromGroupId: source.id }), 403, 'forbidden');
@@ -231,9 +235,11 @@ describe('thông số của sản phẩm (#510)', () => {
       expect(specs.values.find((v) => v.code === 'chat_lieu')).toMatchObject({ optionIds: [material.options[0]!.id], optionLabels: [material.options[0]!.value] });
       expect((await getSpecFields()).some((f) => f.code === 'chat_lieu')).toBe(true);
     });
-    // Seed ánh xạ chạy trong giao dịch đăng ký (role chủ bảng): lọc công ty tường minh, không trả thông số công ty khác.
+    // Role chủ bảng: lọc công ty tường minh, trả dòng nền tảng và của công ty, không trả thông số công ty khác.
     const own = await getSpecFields({ companyId });
-    const ids = new Set((await testPool().query('select id from product.spec_fields where company_id = $1', [companyId])).rows.map((r) => r.id));
+    const ids = new Set(
+      (await testPool().query('select id from product.spec_fields where company_id = $1 or company_id is null', [companyId])).rows.map((r) => r.id),
+    );
     expect(own.length).toBe(ids.size);
     expect(own.every((f) => ids.has(f.id))).toBe(true);
     await expect(getSpecFields()).rejects.toThrow();
@@ -245,12 +251,16 @@ describe('thông số của sản phẩm (#510)', () => {
 
   it('thông số, nhóm của công ty khác → 404 / 422, không lộ', async () => {
     const other = await createCompany();
-    const theirs = (await api(other.ceo.token).get('/spec-fields')).body.items[0] as { id: string; version: number };
+    const theirsRes = await api(other.ceo.token).post('/spec-fields', { name: uniq('Của họ'), input: 'text', allowCustom: false });
+    ok(theirsRes, 201);
+    const theirs = theirsRes.body as { id: string; version: number };
     problem(await api(token).delete(`/spec-fields/${theirs.id}?version=${theirs.version}`), 404, 'not_found');
     const group = await groupNamed('Khác');
     const bad = await createSimpleProduct(group.id, { specs: [{ fieldId: theirs.id, value: 'x' }] });
     problem(bad, 422, 'validation_failed');
-    const otherGroup = (await api(other.ceo.token).get('/groups')).body.items[0] as { id: string };
+    const otherGroupRes = await api(other.ceo.token).post('/groups', { name: uniq('Nhóm họ') });
+    ok(otherGroupRes, 201);
+    const otherGroup = otherGroupRes.body as { id: string };
     problem(await api(token).get(`/groups/${otherGroup.id}/template`), 404, 'not_found');
     const rows = await testPool().query('select count(*)::int as n from product.product_spec_values where company_id = $1 and field_id = $2', [companyId, theirs.id]);
     expect(rows.rows[0].n).toBe(0);

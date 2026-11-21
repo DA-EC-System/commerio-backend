@@ -163,6 +163,9 @@ export async function findVariants(filter: { productId?: string; productIds?: re
       attributeId: attributes.id,
       attributeName: attributes.name,
       platformKind: attributes.platformKind,
+      // Tầng của thuộc tính và giá trị (Documents/21 mục 5.6): channel chỉ cho công ty ánh xạ dòng của mình.
+      scope: sql<'platform' | 'company'>`case when ${attributes.companyId} is null then 'platform' else 'company' end`,
+      valueScope: sql<'platform' | 'company'>`case when ${attributeValues.companyId} is null then 'platform' else 'company' end`,
       valueId: attributeValues.id,
       value: attributeValues.value,
       code: attributeValues.code,

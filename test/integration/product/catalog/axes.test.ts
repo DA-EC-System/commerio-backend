@@ -99,8 +99,8 @@ describe('POST /catalog/products với axes (AC-2, AC-S8)', () => {
     );
     expect(res.status, JSON.stringify(res.body)).toBe(201);
     const after = (await attrs(token)).find((a) => a.id === color.id)! as Attr & { version: number };
-    // Thuộc tính có sẵn thêm giá trị qua form: version tăng để form sửa thuộc tính đang mở nhận 409.
-    expect(after.version).toBe((color as Attr & { version: number }).version + 1);
+    // Thuộc tính nền tảng (#521): giá trị mới là dòng của công ty, thuộc tính không đổi `version` (không có form sửa).
+    expect(after.version).toBe((color as Attr & { version: number }).version);
     const values = after.values;
     expect(values.slice(-3).map((v) => [v.value, v.code])).toEqual([
       ['Xanh dưa', 'XANHD2'],
@@ -146,10 +146,15 @@ describe('POST /catalog/products: luật trục, lỗi theo ô (AC-3, AC-4)', ()
     expect(twice.status).toBe(422);
     expect(twice.body.errors.axes).toBeTruthy();
 
+    // Thuộc tính, giá trị riêng của công ty khác (thuộc tính chuẩn là dòng nền tảng dùng chung, #521).
     const other = await freshCompany();
-    const foreignAttr = await post([{ attributeId: other.color.id, values: [{ value: 'Đen' }] }], [['Đen']]);
+    const otherAttr = await api(other.token).post('/attributes', { name: `TT${randomUUID().slice(0, 6)}`, values: [{ value: 'Đen' }] });
+    expect(otherAttr.status, JSON.stringify(otherAttr.body)).toBe(201);
+    const foreignAttr = await post([{ attributeId: otherAttr.body.id, values: [{ value: 'Đen' }] }], [['Đen']]);
     expect(foreignAttr.body.errors['axes.0.name']).toBeTruthy();
-    const foreignValue = await post([{ attributeId: ctx.color.id, values: [{ id: other.color.values[0]!.id, value: 'Đen' }] }], [['Đen']]);
+    const otherValue = await api(other.token).post(`/attributes/${ctx.color.id}/values`, { value: 'Đen riêng' });
+    expect(otherValue.status, JSON.stringify(otherValue.body)).toBe(201);
+    const foreignValue = await post([{ attributeId: ctx.color.id, values: [{ id: otherValue.body.id, value: 'Đen riêng' }] }], [['Đen riêng']]);
     expect(foreignValue.body.errors['axes.0.values.0.value']).toBeTruthy();
     expect((await post([{ attributeId: randomUUID(), values: [{ value: 'A' }] }], [['A']])).body.errors['axes.0.name']).toBeTruthy();
   });
@@ -216,7 +221,8 @@ describe('PUT /catalog/products/:id đổi nhóm hàng (AC-S3)', () => {
     expect((await auditOf(product.id)).at(-1)).toMatchObject({ before: { group: group.name }, after: { group: target.name } });
 
     const other = await freshCompany();
-    const foreign = await api(token).put(`/products/${product.id}`, { name: product.name, description: '', groupId: other.group.id, version: product.version + 1 });
+    const otherGroup = await createGroup(other.token, uniq('Nhóm riêng'), null);
+    const foreign = await api(token).put(`/products/${product.id}`, { name: product.name, description: '', groupId: otherGroup.id, version: product.version + 1 });
     expect(foreign.status).toBe(422);
     expect(foreign.body.errors.groupId).toBeTruthy();
   });

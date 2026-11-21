@@ -1,4 +1,5 @@
-// Thư viện thông số của công ty (Documents/21 mục 5.5, 19 §3.2): CRUD, cổng `getSpecFields` cho channel.
+// Thư viện thông số (Documents/21 mục 5.5, 5.6; 19 §3.2): thông số nền tảng chỉ đọc (công ty thêm được lựa chọn riêng),
+// thông số của công ty CRUD; cổng `getSpecFields` cho channel.
 import { requireCompanyId, withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { publishEvent, recordAudit } from '../../../core/index.ts';
@@ -16,7 +17,19 @@ import {
   updateOption,
   updateSpecFieldIfVersion,
 } from '../repository/specs.ts';
-import { auditOf, type Caller, inUse, invalid, isUuid, nameTaken, notFound, pgError, versionConflict } from './errors.ts';
+import {
+  auditOf,
+  type Caller,
+  inUse,
+  invalid,
+  isUuid,
+  nameTaken,
+  notFound,
+  pgError,
+  platformManaged,
+  scopeOf,
+  versionConflict,
+} from './errors.ts';
 
 export interface SpecFieldCreate {
   code?: string | undefined;
@@ -49,6 +62,7 @@ const hasOptions = (input: SpecInputKind) => input === 'select' || input === 'mu
 function toView(r: Row) {
   return {
     id: r.id,
+    scope: scopeOf(r.companyId),
     code: r.code,
     name: r.name,
     input: r.input,
@@ -58,6 +72,7 @@ function toView(r: Row) {
       id: o.id,
       value: o.value,
       position: o.position,
+      scope: scopeOf(o.companyId),
       inUse: o.inUse,
     })),
     groupCount: r.groupCount,
@@ -129,14 +144,15 @@ export async function listSpecFields(companyId: string): Promise<{ items: SpecFi
 }
 
 /**
- * Cổng cho channel (Documents/21 mục 11.3): thư viện thông số, gọi trong `withCompany` của bên gọi. Luồng không thuộc
- * công ty nào (seed ánh xạ trong giao dịch đăng ký, role chủ bảng, RLS không lọc) phải truyền `companyId`.
+ * Cổng cho channel (Documents/21 mục 11.3): thư viện thông số hai tầng (dòng nền tảng trước), mỗi thông số và lựa chọn
+ * có `scope`; gọi trong `withCompany` của bên gọi. Luồng chạy bằng role chủ bảng (RLS không lọc) phải truyền `companyId`.
  */
 export async function getSpecFields(opts: { companyId?: string } = {}) {
   if (!opts.companyId) requireCompanyId('getSpecFields');
   const rows = await findSpecFields(undefined, opts.companyId);
   return rows.map((r) => ({
     id: r.id,
+    scope: scopeOf(r.companyId),
     code: r.code,
     name: r.name,
     input: r.input,
@@ -146,6 +162,7 @@ export async function getSpecFields(opts: { companyId?: string } = {}) {
       id: o.id,
       value: o.value,
       position: o.position,
+      scope: scopeOf(o.companyId),
     })),
   }));
 }
@@ -191,6 +208,7 @@ export async function createSpecField(caller: Caller, input: SpecFieldCreate): P
 export async function updateSpecField(caller: Caller, id: string, input: SpecFieldUpdate): Promise<SpecFieldView> {
   return withCompany(caller.companyId, async () => {
     const field = await findField(id);
+    if (field.companyId === null) throw platformManaged();
     if (field.version !== input.version) throw conflict(field);
     const options = input.options ?? [];
     const errors = {
@@ -266,6 +284,7 @@ export async function updateSpecField(caller: Caller, id: string, input: SpecFie
 export async function deleteSpecField(caller: Caller, id: string, version: number): Promise<void> {
   await withCompany(caller.companyId, async () => {
     const field = await findField(id);
+    if (field.companyId === null) throw platformManaged();
     if (field.version !== version) throw conflict(field);
     if (field.groupCount > 0 || field.productCount > 0) {
       throw new AppError(409, 'in_use', `Không xoá được thông số ${field.name} vì đang được dùng`, {
@@ -286,4 +305,53 @@ export async function deleteSpecField(caller: Caller, id: string, version: numbe
       before: { code: field.code, ...snapshot(field) },
     });
   }).catch(race);
+}
+
+const OPTION_ENTITY = 'product.spec_field_options';
+const optionTaken = () => new AppError(409, 'name_taken', 'Lựa chọn đã có', { errors: { value: 'Đã có lựa chọn này' } });
+
+/** Thông số nền tảng kiểu chọn từ danh sách; thông số của công ty sửa qua `PUT` (422 `errors.value`). */
+async function platformChoiceField(id: string): Promise<Row> {
+  const field = await findField(id);
+  if (field.companyId !== null || !hasOptions(field.input)) {
+    throw invalid({ value: 'Chỉ thêm lựa chọn riêng cho thông số chuẩn kiểu chọn từ danh sách' });
+  }
+  return field;
+}
+
+/**
+ * Lựa chọn riêng của công ty trên thông số nền tảng (Documents/21 mục 5.6, chốt 4): đứng sau lựa chọn chuẩn. Trùng lựa
+ * chọn có sẵn ở cả hai tầng (`lower(trim)`): 409 `name_taken`.
+ */
+export async function addSpecOption(caller: Caller, fieldId: string, value: string) {
+  return withCompany(caller.companyId, async () => {
+    const field = await platformChoiceField(fieldId);
+    const v = value.trim();
+    if (field.options.some((o) => o.value.toLowerCase() === v.toLowerCase())) throw optionTaken();
+    const position = Math.max(-1, ...field.options.map((o) => o.position)) + 1;
+    const [row] = await insertOptions(caller.companyId, field.id, [{ value: v, position }]);
+    await recordAudit({ ...auditOf(caller, 'create', OPTION_ENTITY, row!.id), label: `${field.name}: ${v}`, after: { field: field.code, value: v } });
+    return { id: row!.id, value: row!.value, position, scope: 'company' as const, inUse: false };
+  }).catch((err: unknown) => {
+    if (pgError(err).code === '23505') throw optionTaken();
+    throw err;
+  });
+}
+
+/** Xoá lựa chọn riêng; lựa chọn nền tảng 403 `platform_managed`, đang dùng 409 `in_use`. */
+export async function removeSpecOption(caller: Caller, fieldId: string, optionId: string): Promise<void> {
+  await withCompany(caller.companyId, async () => {
+    const field = await findField(fieldId);
+    const option = field.options.find((o) => o.id === optionId);
+    if (!option) throw notFound('lựa chọn');
+    if (option.companyId === null) throw platformManaged();
+    if (field.companyId !== null || !hasOptions(field.input)) throw invalid({ value: 'Thông số của công ty sửa lựa chọn qua PUT' });
+    if (option.inUse) throw inUse(`Không xoá được ${option.value} vì có sản phẩm đang dùng`);
+    await deleteOptions([option.id]);
+    await publishEvent({ type: 'catalog.spec_option_deleted', aggregateId: field.id, payload: { fieldId: field.id, optionIds: [option.id] } });
+    await recordAudit({ ...auditOf(caller, 'delete', OPTION_ENTITY, option.id), label: `${field.name}: ${option.value}`, before: { field: field.code, value: option.value } });
+  }).catch((err: unknown) => {
+    if (pgError(err).code === '23503') throw inUse('Lựa chọn đang được dùng');
+    throw err;
+  });
 }
