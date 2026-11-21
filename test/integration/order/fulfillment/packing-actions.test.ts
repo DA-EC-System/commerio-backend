@@ -206,11 +206,11 @@ describe('đóng gói kiện', () => {
       const expected = [
         {
           id: mappedLine, variantId, untracked: false, sku: app.sku, productName: app.name, attributesLabel: '',
-          externalSku: 'SAN-AO-DO', quantity: 2, pendingDropQty: 0,
+          externalSku: 'SAN-AO-DO', quantity: 2, pendingDropQty: 0, remapPending: false,
         },
         {
           id: untrackedLine, variantId: null, untracked: true, sku: 'SAN-QUA-TANG', productName: 'Quà tặng kèm', attributesLabel: '',
-          externalSku: 'SAN-QUA-TANG', quantity: 1, pendingDropQty: 0,
+          externalSku: 'SAN-QUA-TANG', quantity: 1, pendingDropQty: 0, remapPending: false,
         },
       ];
       const detail = await packingApp().get(`/api/v1/fulfillment/packages/${packageId}`).set('Authorization', `Bearer ${warehouse}`);

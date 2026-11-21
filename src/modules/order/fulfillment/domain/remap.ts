@@ -1,7 +1,13 @@
 // Trạng thái ghép SKU của dòng đơn/kiện (spec 237): có biến thể (ghép), "không quản tồn" (ghép không giữ), hoặc chưa ghép.
-// Luật thuần áp ghép lên kiện đã có (`planRemap`, spec 237 §5.5 bảng 1, P1–P3); thi hành ở `service/remap.ts`.
+// Luật thuần áp ghép lên kiện đã có (`planRemap`, spec 237 §5.5 bảng 1, 2, 3 và §5.6); thi hành ở `service/remap.ts`.
+// - Bảng 1 (ghép lần đầu, P1–P3): dòng chưa ghép nhận ghép mới ở mọi trạng thái kiện.
+// - Bảng 2 (đổi ghép A → B hay "không quản tồn"): kiện chưa đóng nhả A, ghi dòng; kiện đã đóng đánh dấu `remap_pending`,
+//   bật Cần mở `remap` (D15–D17), mở ra mới áp; kiện huỷ, dòng chờ bỏ không tính; kiện đã rời kho giữ ghép cũ.
+// - Bảng 3 ("không quản tồn" → B): kiện chưa rời kho ghi dòng như bảng 1, kể cả kiện đã đóng (món trong hộp đã đúng).
+// - Dòng chờ thay của kiện thay giữ ghép cũ (D26); đổi về như cũ xoá dấu, hết dấu thì `remap` sang `stocktake` (D24).
 import type { HandoverSource } from './handover.ts';
-import { HANDED_OVER, HOLDING, type PackageStatus } from './package.ts';
+import { type OpenPurpose, raisePurpose } from './open-purpose.ts';
+import { HANDED_OVER, HOLDING, isSealed, type PackageStatus } from './package.ts';
 
 export type LineSku = { kind: 'variant'; variantId: string } | { kind: 'untracked' } | { kind: 'unmapped' };
 
@@ -11,7 +17,8 @@ export type MappedSku = Exclude<LineSku, { kind: 'unmapped' }>;
 export const lineSkuOf = (l: { variantId: string | null; stockUntracked: boolean }): LineSku =>
   l.variantId ? { kind: 'variant', variantId: l.variantId } : l.stockUntracked ? { kind: 'untracked' } : { kind: 'unmapped' };
 
-const sameSku = (a: LineSku, b: LineSku) =>
+/** Hai trạng thái ghép như nhau (cùng loại, cùng biến thể). */
+export const sameSku = (a: LineSku, b: LineSku) =>
   a.kind === b.kind && (a.kind !== 'variant' || a.variantId === (b as { variantId: string }).variantId);
 
 /**
@@ -33,6 +40,8 @@ export interface RemapPackage {
   status: PackageStatus;
   handedOverAt: Date | null;
   handoverSource: HandoverSource | null;
+  needsOpen: boolean;
+  openPurpose: OpenPurpose | null;
   lines: readonly {
     id: string;
     orderLineId: string;
@@ -41,6 +50,10 @@ export interface RemapPackage {
     quantity: number;
     reservedQty: number;
     stockDeducted: boolean;
+    /** Dòng chờ bỏ (`> 0`) không tính khi đổi ghép (§5.4). */
+    pendingDropQty: number;
+    /** Dòng của kiện đã đóng đang chờ áp ghép mới (§5.6). */
+    remapPending: boolean;
   }[];
 }
 
@@ -71,36 +84,103 @@ export interface RemapPlan {
   stock: RemapStock;
   /** Kiện `delivered`: gọi `reportDelivered` sau bước tồn. */
   reportDelivered: boolean;
+  /** Dòng đổi ghép (bảng 2) đang giữ theo biến thể cũ: nhả trước khi ghi dòng. */
+  releases: { lineId: string; variantId: string; quantity: number }[];
+  /** Dòng của kiện đã đóng bật dấu chờ đổi ghép (bảng 2). */
+  marks: string[];
+  /** Dòng có dấu mà ghép đã về đúng như món trong hộp: xoá dấu. */
+  unmarks: string[];
+  /** Cờ Cần mở cần ghi (D17, D24); null: giữ cờ đang có. */
+  purpose: { needsOpen: true; openPurpose: OpenPurpose } | null;
+  /** Biến thể xếp lượt phân hàng thêm (biến thể vừa nhả, D24), đã sắp, không trùng. */
+  allocateAlso: string[];
 }
 
 const NONE: RemapStock = { kind: 'none' };
 
+const sorted = (ids: Iterable<string>) => [...new Set(ids)].sort();
+
 /**
- * Áp ghép lên các dòng của một kiện (spec 237 §5.5 bảng 1). PR 1 chỉ ghép lần đầu (P1): dòng kiện đã ghép khác `to` giữ
- * nguyên (`kept`); đã đúng `to` thì `applied` không ghi. `changes` theo `orderLineId`.
+ * Áp ghép lên các dòng của một kiện (spec 237 §5.5 bảng 1, 2, 3; §5.6). `changes` theo `orderLineId`. `awaitingLineIds`:
+ * dòng chờ thay của kiện thay (#238), giữ ghép cũ (D26). Dòng kiện không có trong `outcomes` thì không tính vào kết quả
+ * của dòng đơn (kiện huỷ, dòng chờ bỏ khi đổi ghép, §5.4).
  */
 export function planRemap(
   pkg: RemapPackage,
   changes: ReadonlyMap<string, MappedSku>,
-  opts: { holdStock: boolean; orderCutoffAt: Date | null },
+  opts: { holdStock: boolean; orderCutoffAt: Date | null; awaitingLineIds?: ReadonlySet<string> },
 ): RemapPlan {
+  const awaiting = opts.awaitingLineIds ?? new Set<string>();
+  const sealed = isSealed(pkg.status);
   const writes: RemapPlan['writes'] = [];
+  const releases: RemapPlan['releases'] = [];
+  const marks: string[] = [];
+  const unmarks: string[] = [];
   const outcomes = new Map<string, RemapOutcome>();
+  let unload = false;
   for (const l of pkg.lines) {
     const to = changes.get(l.orderLineId);
     if (!to) continue;
     const from = lineSkuOf(l);
-    if (sameSku(from, to)) outcomes.set(l.id, 'applied');
-    else if (from.kind !== 'unmapped') outcomes.set(l.id, 'kept');
-    else {
+    if (awaiting.has(l.id)) {
+      outcomes.set(l.id, 'kept');
+    } else if (sameSku(from, to)) {
+      outcomes.set(l.id, 'applied');
+      if (l.remapPending && sealed) unmarks.push(l.id);
+    } else if (from.kind === 'unmapped') {
+      // Bảng 1: ghép lần đầu, mọi trạng thái kiện, kể cả dòng chờ bỏ.
+      writes.push({ lineId: l.id, to });
+      outcomes.set(l.id, 'applied');
+    } else if (l.pendingDropQty > 0 || pkg.status === 'cancelled') {
+      // Không tính (§5.4): dòng chờ bỏ rời kiện khi mở, kiện huỷ không còn món.
+    } else if (HANDED_OVER.includes(pkg.status)) {
+      outcomes.set(l.id, 'kept');
+    } else if (from.kind === 'variant' && sealed) {
+      // Bảng 2, kiện đã đóng: hộp chứa món theo ghép cũ, chờ dỡ (D4, D15, D16).
+      outcomes.set(l.id, 'needs_unload');
+      unload = true;
+      if (!l.remapPending) marks.push(l.id);
+    } else {
+      // Bảng 2 kiện `backordered`/`reserved`; bảng 3 ("không quản tồn" → B) kiện chưa rời kho.
+      if (from.kind === 'variant' && l.reservedQty > 0 && opts.holdStock) {
+        releases.push({ lineId: l.id, variantId: from.variantId, quantity: l.reservedQty });
+      }
       writes.push({ lineId: l.id, to });
       outcomes.set(l.id, 'applied');
     }
   }
-  return { writes, outcomes, stock: stockStep(pkg, writes, opts), reportDelivered: pkg.status === 'delivered' && writes.length > 0 };
+
+  let purpose: RemapPlan['purpose'] = unload ? raisePurpose(pkg, 'remap') : null;
+  const allocateAlso = releases.map((r) => r.variantId);
+  // D24: kiện `remap` hết dấu (đổi về như cũ) chuyển sang `stocktake` và xếp lượt, không gỡ thẳng.
+  const stillMarked = pkg.lines.some((l) => (l.remapPending && !unmarks.includes(l.id)) || marks.includes(l.id));
+  if (sealed && pkg.needsOpen && pkg.openPurpose === 'remap' && !stillMarked) {
+    purpose = { needsOpen: true, openPurpose: 'stocktake' };
+    allocateAlso.push(...pkg.lines.flatMap((l) => (l.variantId ? [l.variantId] : [])));
+  }
+
+  const released = new Set(releases.map((r) => r.lineId));
+  const base = { ...pkg, lines: pkg.lines.map((l) => (released.has(l.id) ? { ...l, reservedQty: 0 } : l)) };
+  const awaitingInPackage = pkg.lines.some((l) => awaiting.has(l.id));
+  return {
+    writes,
+    outcomes,
+    stock: stockStep(base, writes, opts, awaitingInPackage),
+    reportDelivered: pkg.status === 'delivered' && writes.length > 0,
+    releases,
+    marks,
+    unmarks,
+    purpose,
+    allocateAlso: sorted(allocateAlso),
+  };
 }
 
-function stockStep(pkg: RemapPackage, writes: RemapPlan['writes'], opts: { holdStock: boolean; orderCutoffAt: Date | null }): RemapStock {
+function stockStep(
+  pkg: RemapPackage,
+  writes: RemapPlan['writes'],
+  opts: { holdStock: boolean; orderCutoffAt: Date | null },
+  awaitingReplacement: boolean,
+): RemapStock {
   if (!writes.length) return NONE;
   const written = new Map(writes.map((w) => [w.lineId, w.to]));
   const after = pkg.lines.map((l) => {
@@ -112,8 +192,9 @@ function stockStep(pkg: RemapPackage, writes: RemapPlan['writes'], opts: { holdS
   const { status } = pkg;
 
   // Kiện có thể vừa đủ điều kiện giữ; kiện toàn dòng "không quản tồn" lượt phân hàng không tìm thấy nên `hold` ngay (D10).
+  // Kiện chờ thay không `hold` trong lúc áp (D26): dòng chờ thay sẽ nhận phần giữ của dòng chờ bỏ ở kiện cũ.
   if (status === 'backordered') {
-    if (nothingToHold(after)) return { kind: 'hold' };
+    if (!awaitingReplacement && nothingToHold(after)) return { kind: 'hold' };
     const ids = variantIds();
     return ids.length ? { kind: 'allocate', variantIds: ids } : NONE;
   }

@@ -93,12 +93,12 @@ export const LEFT_WHILE_AWAITING_OPEN_NOTE = 'Sàn báo kiện rời kho khi cò
 /**
  * Cờ Cần mở chỉ có nghĩa khi kiện còn đóng trong kho (spec #238 §5.5, D27): kiện rời nhóm đã đóng (sau D28 chỉ còn đường
  * sàn báo rời kho) mà bên gọi không ghi cờ thì gỡ, để kiện không nằm mãi trong tab Cần mở. Mục đích `cancel`, `edit`,
- * `resplit` thì bật Cần xử lý (hộp đi theo sàn mà kho chưa dỡ); kiện đã có Cần xử lý thì giữ ghi chú cũ. `stocktake` gỡ
+ * `resplit`, `remap` (spec 237 D19: hộp đi với món theo ghép cũ) thì bật Cần xử lý (hộp đi theo sàn mà kho chưa dỡ); kiện đã có Cần xử lý thì giữ ghi chú cũ. `stocktake` gỡ
  * im. Trong `UPDATE … SET`, cột bên phải là giá trị cũ; bên gọi ghi `needsAttention`/`flagNote` tường minh thì thắng.
  */
 function openFlagRules(patch: { status?: PackageStatus; needsOpen?: boolean; openPurpose?: unknown; needsAttention?: boolean; flagNote?: unknown }) {
   if (patch.status === undefined || isSealed(patch.status) || patch.needsOpen !== undefined || patch.openPurpose !== undefined) return {};
-  const attention = sql`${packages.openPurpose} in ('cancel', 'edit', 'resplit')`;
+  const attention = sql`${packages.openPurpose} in ('cancel', 'edit', 'resplit', 'remap')`;
   return {
     needsOpen: sql`false`,
     openPurpose: sql`null`,
@@ -167,6 +167,9 @@ export async function updatePackage(
  */
 export const ORDER_SHIP_BY = sql`(select o.ship_by from "order".orders o where o.id = ${packages.orderId})`;
 
+/** Mốc giữ hàng cho `UPDATE … SET`: giữ mốc đang có, chưa có thì giờ DB (kiện giữ được dòng mới ngoài lượt phân hàng). */
+export const RESERVED_AT_OR_NOW = sql`coalesce(${packages.reservedAt}, now())`;
+
 /**
  * Kiện chưa bàn giao của đơn nhận hạn bàn giao của đơn (KH-B01, Documents/21 §19.1): kiện đã rời kho hay đã huỷ giữ hạn
  * cũ. Hạn đổi thật thì tăng `version` dù không phát sự kiện. Trả số kiện đã ghi. Bên gọi đã khoá kiện của đơn.
@@ -227,8 +230,8 @@ const handoverColumns = {
   lostClaimCode: packages.lostClaimCode,
 };
 
-/** Dòng kiện kèm dòng đơn và số chờ bỏ (spec 205 §5.10). */
-export type PackageLineRow = PlanLine & { orderLineId: string; pendingDropQty: number };
+/** Dòng kiện kèm dòng đơn, số chờ bỏ (spec 205 §5.10) và dấu chờ đổi ghép (spec 237 §5.6). */
+export type PackageLineRow = PlanLine & { orderLineId: string; pendingDropQty: number; remapPending: boolean };
 
 /** Dòng của các kiện, theo thứ tự chèn ổn định (id dòng). */
 export async function planLinesOf(packageIds: readonly string[]): Promise<Map<string, PackageLineRow[]>> {
@@ -245,6 +248,7 @@ export async function planLinesOf(packageIds: readonly string[]): Promise<Map<st
       stockDeducted: packageLines.stockDeducted,
       stockUntracked: packageLines.stockUntracked,
       pendingDropQty: packageLines.pendingDropQty,
+      remapPending: packageLines.remapPending,
     })
     .from(packageLines)
     .where(inArray(packageLines.packageId, [...packageIds]))
@@ -259,9 +263,16 @@ export async function packageShopOf(id: string): Promise<{ shopId: string | null
   return row;
 }
 
+/** Kiện đã khoá cho luật đổi ghép (spec 237 §5.5, §5.6): kèm mục đích Cần mở và dòng có dấu chờ đổi ghép. */
+export type RemapLockedPackage = Omit<HandoverPackage, 'lines'> & { openPurpose: OpenPurpose | null; lines: PackageLineRow[] };
+
 /** Một kiện kèm dòng, khoá dòng kiện tới hết giao dịch; không có (hoặc công ty khác, RLS) thì `undefined`. */
-export async function lockPackage(id: string): Promise<(Omit<HandoverPackage, 'lines'> & { lines: PackageLineRow[] }) | undefined> {
-  const [row] = await getDb().select(handoverColumns).from(packages).where(eq(packages.id, id)).for('update');
+export async function lockPackage(id: string): Promise<RemapLockedPackage | undefined> {
+  const [row] = await getDb()
+    .select({ ...handoverColumns, openPurpose: packages.openPurpose })
+    .from(packages)
+    .where(eq(packages.id, id))
+    .for('update');
   if (!row) return undefined;
   return { ...row, lines: (await planLinesOf([row.id])).get(row.id)! };
 }
@@ -349,11 +360,11 @@ export function readOrderPackages(orderId: string): Promise<PackageRow[]> {
  * Kiện có dòng trỏ tới các dòng đơn (mọi trạng thái) kèm dòng, khoá theo id tăng dần tới hết giao dịch (spec 237 §5.5,
  * thứ tự khoá §5.8: sau khoá advisory phân hàng).
  */
-export async function lockPackagesOfOrderLines(orderLineIds: readonly string[]): Promise<(HandoverPackage & { lines: PackageLineRow[] })[]> {
+export async function lockPackagesOfOrderLines(orderLineIds: readonly string[]): Promise<RemapLockedPackage[]> {
   if (!orderLineIds.length) return [];
   const db = getDb();
   const rows = await db
-    .select(handoverColumns)
+    .select({ ...handoverColumns, openPurpose: packages.openPurpose })
     .from(packages)
     .where(
       inArray(
@@ -378,6 +389,32 @@ export async function setLineSku(lineIds: readonly string[], to: MappedSku): Pro
       version: sql`${packageLines.version} + 1`,
       updatedAt: sql`now()`,
     })
+    .where(inArray(packageLines.id, [...lineIds]));
+}
+
+/** Bật/xoá dấu chờ đổi ghép trên dòng kiện (spec 237 §5.6). Bên gọi đã khoá kiện. */
+export async function setRemapPending(lineIds: readonly string[], value: boolean): Promise<void> {
+  if (!lineIds.length) return;
+  await getDb()
+    .update(packageLines)
+    .set({ remapPending: value, version: sql`${packageLines.version} + 1`, updatedAt: sql`now()` })
+    .where(inArray(packageLines.id, [...lineIds]));
+}
+
+/** Mở kiện xoá mọi dấu chờ đổi ghép của kiện (spec 237 §5.6). */
+export async function clearRemapPendingOf(packageId: string): Promise<void> {
+  await getDb()
+    .update(packageLines)
+    .set({ remapPending: false, version: sql`${packageLines.version} + 1`, updatedAt: sql`now()` })
+    .where(and(eq(packageLines.packageId, packageId), eq(packageLines.remapPending, true)));
+}
+
+/** Dòng vừa nhả phần giữ (đổi ghép, bảng 2): `reserved_qty = 0`. */
+export async function clearLinesReserved(lineIds: readonly string[]): Promise<void> {
+  if (!lineIds.length) return;
+  await getDb()
+    .update(packageLines)
+    .set({ reservedQty: 0, version: sql`${packageLines.version} + 1`, updatedAt: sql`now()` })
     .where(inArray(packageLines.id, [...lineIds]));
 }
 
@@ -461,7 +498,15 @@ export async function setReserved(packageId: string, reserved: boolean): Promise
 }
 
 export type PackageViewRow = typeof packages.$inferSelect & {
-  lines: { id: string; variantId: string | null; stockUntracked: boolean; orderLineId: string; quantity: number; pendingDropQty: number }[];
+  lines: {
+    id: string;
+    variantId: string | null;
+    stockUntracked: boolean;
+    orderLineId: string;
+    quantity: number;
+    pendingDropQty: number;
+    remapPending: boolean;
+  }[];
   /** Kiện cũ mà kiện này thay khi sàn chia lại kiện (spec #238 §5.6); null khi không phải kiện thay. */
   replaces: { id: string; code: string; status: PackageStatus } | null;
 };
@@ -486,6 +531,7 @@ export async function attachViewLines(rows: (typeof packages.$inferSelect)[]): P
       orderLineId: packageLines.orderLineId,
       quantity: packageLines.quantity,
       pendingDropQty: packageLines.pendingDropQty,
+      remapPending: packageLines.remapPending,
     })
     .from(packageLines)
     .where(

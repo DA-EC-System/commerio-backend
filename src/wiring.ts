@@ -26,6 +26,7 @@ import {
   settlementPayouts,
   settlementTransactions,
   shopsToSettle,
+  skuMappingOf,
 } from './modules/channel/index.ts';
 import { type IdentityContext, loadCompanyAccess, type PlatformContext } from './modules/core/index.ts';
 import { type FinanceContext, paymentStatusesOf } from './modules/finance/index.ts';
@@ -39,7 +40,7 @@ import type { ModuleContext } from './shared/module.ts';
 export type AppContext = ModuleContext &
   Required<Pick<FinanceContext, 'shopsOf' | 'settlementSource'>> &
   Required<Pick<SalesContext, 'shopsOf' | 'marketplaceOrders' | 'marketplaceReturns' | 'paymentStatusOf' | 'returnPoliciesOf'>> &
-  Required<Pick<FulfillmentContext, 'shopsOf' | 'stockHoldOf' | 'marketplacePackages'>> &
+  Required<Pick<FulfillmentContext, 'shopsOf' | 'stockHoldOf' | 'marketplacePackages' | 'skuMappingOf'>> &
   Required<Pick<PlatformContext, 'moduleData'>> &
   Required<Pick<IdentityContext, 'seedCompanyDefaults'>> & { soldQtyOf: typeof soldQtyOf } &
   Required<Pick<CatalogContext, 'orderArchiveBlockers' | 'listingArchiveBlockers' | 'listingPresenceOf' | 'orderInUse' | 'listingInUse'>>;
@@ -70,6 +71,8 @@ export function createModuleContext(): AppContext {
     returnPoliciesOf,
     // #199 phần b: fulfillment (lớp dưới) cần biết gian hàng còn chờ kiểm kê đầu kỳ để hoãn trừ, bỏ qua khi phân hàng.
     stockHoldOf: awaitingStocktakeShops,
+    // #237 PR 2: fulfillment (lớp dưới) mở kiện đơn sàn áp lại ghép SKU hiện hành của channel.
+    skuMappingOf,
     // #221: fulfillment tách kiện (#205), báo sẵn sàng giao (#239) trên sàn qua token gian hàng của channel.
     // #205: `splitLevel` cho fulfillment rẽ nhánh tách kiện theo năng lực sàn của gian hàng.
     marketplacePackages: {

@@ -5,6 +5,7 @@ import { AppError } from '../../../../shared/errors/app-error.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
 import { isUuid } from '../../../../shared/uuid.ts';
 import type { PackageTab } from '../domain/package.ts';
+import type { LineSku, MappedSku } from '../domain/remap.ts';
 import type { SplitLevel } from '../domain/split.ts';
 import { countPackageTabs, findPackagePage, findPackagesByIds, type PackageFilter } from '../repository/package-list.ts';
 import type { PackageViewRow } from '../repository/packages.ts';
@@ -30,6 +31,15 @@ export interface FulfillmentContext extends ModuleContext {
    * `withCompany` riêng (khoá đơn, không giữ khoá kiện).
    */
   readonly settleCancelledOrder?: (orderId: string) => Promise<unknown>;
+  /**
+   * Ghép SKU hiện hành theo SKU người bán của gian hàng (channel, `src/wiring.ts`; spec 237 §5.6, D20): mở kiện đơn sàn
+   * áp lại ghép. Không tiêm thì mở kiện bỏ bước áp.
+   */
+  readonly skuMappingOf?: (shopId: string, sellerSkus: readonly string[]) => Promise<Map<string, LineSku>>;
+  /** Khoá dòng đơn theo id (sales, `order/index.ts`), trước khoá phân hàng khi mở kiện đơn sàn (spec 237 D21). */
+  readonly lockOrderLines?: (ids: readonly string[]) => Promise<void>;
+  /** Ghi ghép lên dòng đơn sau khi mở kiện áp lại ghép, phát sự kiện đơn (sales, `order/index.ts`; spec 237 §5.6). */
+  readonly applyLineSkus?: (rows: readonly { orderLineId: string; to: MappedSku }[]) => Promise<void>;
 }
 
 export interface PlatformPackageItems {
@@ -82,6 +92,14 @@ export function orderRefsLookupOf(ctx: FulfillmentContext) {
 export function orderViewLookupOf(ctx: FulfillmentContext) {
   if (!ctx.orderViewOf) throw new AppError(500, 'internal_error', 'Chưa nối chi tiết đơn của sales (src/modules/order/index.ts)');
   return ctx.orderViewOf;
+}
+
+/** Hai hàm sales cho mở kiện áp lại ghép; có `skuMappingOf` mà thiếu thì lỗi nối (như `settleCancelledOrder`). */
+export function orderLineWritersOf(ctx: FulfillmentContext) {
+  if (!ctx.lockOrderLines || !ctx.applyLineSkus) {
+    throw new AppError(500, 'internal_error', 'Chưa nối ghi dòng đơn của sales (src/modules/order/index.ts)');
+  }
+  return { lockOrderLines: ctx.lockOrderLines, applyLineSkus: ctx.applyLineSkus };
 }
 
 export function cancelledOrderSettlerOf(ctx: FulfillmentContext) {

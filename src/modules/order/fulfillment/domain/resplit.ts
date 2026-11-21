@@ -53,8 +53,8 @@ export interface ResplitPlan {
 /** Thứ tự thi hành (§5.6 bước 4): gỡ mã trước khi gắn mã, huỷ và bớt dòng trước khi lập kiện mới. */
 const STEP_ORDER: readonly ResplitStep['kind'][] = ['clear_code', 'relabel', 'flag', 'cancel_open', 'move_out', 'mark_drop', 'create'];
 
-const isLive = (p: ResplitPackage) => p.status !== 'cancelled';
-const liveLines = (p: ResplitPackage) => p.lines.filter((l) => l.pendingDropQty === 0);
+const isLive = (p: Pick<ResplitPackage, 'status'>) => p.status !== 'cancelled';
+const liveLines = (p: Pick<ResplitPackage, 'lines'>) => p.lines.filter((l) => l.pendingDropQty === 0);
 const byText = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
 /** Số lượng theo dòng đơn của một tập dòng. */
@@ -211,7 +211,7 @@ export interface ReplacementPair {
  * Dòng sống của kiện ghép với dòng chờ bỏ cùng dòng đơn ở kiện khác đang đóng (D9). Rỗng: không phải kiện chờ thay.
  * "Kiện chờ thay" suy ra, không lưu cờ: kiện cũ mở xong, bị xác nhận mất hay rời kho thì kiện thay tự hết chờ.
  */
-export function replacementPairs(packages: readonly ResplitPackage[], packageId: string): ReplacementPair[] {
+export function replacementPairs(packages: readonly Pick<ResplitPackage, 'id' | 'status' | 'lines'>[], packageId: string): ReplacementPair[] {
   const pkg = packages.find((p) => p.id === packageId);
   if (!pkg || !isLive(pkg)) return [];
   const used = new Set<string>();

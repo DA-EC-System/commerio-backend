@@ -543,3 +543,40 @@ describe('hạn bàn giao của kiện thay khi sàn chia lại (KH-B01)', () =>
     for (const r of rows) expect(r.ship_by).toEqual(deadline);
   });
 });
+
+/** Kiện chờ đổi ghép như sau ca 19 của spec 237 (dấu trên dòng, Cần mở `remap`), dựng thẳng bằng SQL. */
+async function markRemap(packageId: string) {
+  await testPool().query(`update "order".packages set needs_open = true, open_purpose = 'remap' where id = $1`, [packageId]);
+  await testPool().query(`update "order".package_lines set remap_pending = true where package_id = $1 and pending_drop_qty = 0`, [packageId]);
+}
+
+// Mục đích Cần mở khi kiện còn dấu chờ đổi ghép (spec 237 §5.6, D17, D18).
+describe('chia lại kiện và dấu chờ đổi ghép (spec 237 D17, D18)', () => {
+  it('D2-G12 19c: kiện packed Cần mở resplit có dòng sống mang dấu, kiện thay được lấy → mục đích thành remap, không gỡ', async () => {
+    const v = await setup(10);
+    const o = remote(v, { lines: 2, status: 'packed' });
+    const { packageId } = await ingest(v.companyId, o);
+    // Sàn giữ mã cũ cho món 1 (vẫn đóng), món 2 sang mã mới: kiện cũ còn món 1, chờ mở để bỏ món 2.
+    const next = itemStatuses(relabeled(o, [o.lines[0]!.packageCode, `FP-B-${tag()}`]), ['packed', 'pending']);
+    await ingest(v.companyId, next);
+    expect(await packageRow(packageId)).toMatchObject({ needs_open: true, open_purpose: 'resplit' });
+    // Đổi ghép SKU của món 1 lúc kiện chờ chia lại: dấu trên dòng sống, mục đích giữ resplit.
+    await testPool().query('update "order".package_lines set remap_pending = true where package_id = $1 and pending_drop_qty = 0', [packageId]);
+
+    await ingest(v.companyId, itemStatuses(next, ['packed', 'in_transit']));
+
+    expect(await lineRows(packageId)).toEqual([{ item: external(o, 0), reserved: 1, drop: 0 }]);
+    expect(await packageRow(packageId)).toMatchObject({ status: 'packed', needs_open: true, open_purpose: 'remap' });
+  });
+
+  it('D2-G12 19d: kiện mang remap, sàn chia lại kiện → mục đích resplit', async () => {
+    const v = await setup(10);
+    const o = remote(v, { lines: 2, status: 'packed' });
+    const { packageId } = await ingest(v.companyId, o);
+    await markRemap(packageId);
+
+    await ingest(v.companyId, withStatus(relabeled(o, [`FP-A-${tag()}`, `FP-B-${tag()}`]), 'pending'));
+
+    expect(await packageRow(packageId)).toMatchObject({ status: 'packed', needs_open: true, open_purpose: 'resplit' });
+  });
+});

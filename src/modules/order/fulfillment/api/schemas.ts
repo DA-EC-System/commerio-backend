@@ -3,6 +3,7 @@
 import { z } from 'zod';
 import { StatusChangeSchema } from '../../../../shared/http/status-change.ts';
 import { HANDOVER_SOURCES } from '../domain/handover.ts';
+import { OPEN_PURPOSES } from '../domain/open-purpose.ts';
 import { PACKAGE_TABS } from '../domain/package.ts';
 
 const iso = z.iso.datetime();
@@ -45,8 +46,9 @@ export const PackageSummary = z
     notices: z
       .array(z.object({ code: z.literal('not_implemented'), issue: z.string(), owner: z.string(), message: z.string() }).strict())
       .meta({ description: 'Việc chạy ngầm chưa làm được vì chờ issue khác, vd giữ hàng khi `reserve` chờ commerio-backend#206 (21 §18.7.9). Rỗng khi không có' }),
-    openPurpose: z.enum(['cancel', 'edit', 'resplit', 'stocktake']).nullable().meta({
-      description: 'Vì sao kiện chờ mở; `stocktake`: phiếu kiểm kê đếm thấp hơn hàng trong kiện (#238)',
+    openPurpose: z.enum(OPEN_PURPOSES).nullable().meta({
+      description:
+        'Vì sao kiện chờ mở; `stocktake`: phiếu kiểm kê đếm thấp hơn hàng trong kiện (#238); `remap`: đổi ghép SKU: dỡ kiện, mở ra là áp ghép mới (#237)',
     }),
     selfDelivery: z.boolean(),
     paymentMethod: z.enum(['prepaid', 'cod']).nullable(),
@@ -70,6 +72,9 @@ export const PackageSummary = z
         quantity: z.number().int().meta({ description: 'Số đang nằm trong kiện, gồm cả phần chờ bỏ' }),
         pendingDropQty: z.number().int().min(0).meta({
           description: 'Phần chờ bỏ (0..`quantity`): sàn đã huỷ món của kiện đã đóng gói, kho bỏ ra khi mở kiện (#205). 0 khi không chờ bỏ',
+        }),
+        remapPending: z.boolean().meta({
+          description: 'Món trong hộp theo ghép cũ, kho mở kiện để áp ghép mới (#237); chỉ true khi kiện còn đóng',
         }),
       }),
     ),

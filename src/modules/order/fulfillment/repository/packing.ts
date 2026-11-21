@@ -33,6 +33,20 @@ export async function lockReadyPackages(ids: readonly string[]) {
   return getDb().select(packingColumns).from(packages).where(inArray(packages.id, [...ids])).orderBy(asc(packages.id)).for('update');
 }
 
+/**
+ * SKU người bán của từng dòng kiện (`order_lines.external_sku`, cùng schema, SQL thô như `platformItemsOf`): id dòng kiện →
+ * SKU, null với đơn tay (spec 237 §5.6). Một câu cho mọi dòng của kiện.
+ */
+export async function lineSellerSkusOf(packageId: string): Promise<Map<string, string | null>> {
+  const { rows } = await getDb().execute<{ id: string; externalSku: string | null }>(sql`
+    select ${packageLines.id} as id, l.external_sku as "externalSku"
+    from ${packageLines}
+    join "order".order_lines l on l.id = ${packageLines.orderLineId}
+    where ${packageLines.packageId} = ${packageId}
+  `);
+  return new Map(rows.map((r) => [r.id, r.externalSku]));
+}
+
 export async function platformItemsOf(packageId: string) {
   const { rows } = await getDb().execute<{ externalOrderId: string | null; externalLineId: string | null }>(sql`
     select o.external_order_id as "externalOrderId", l.external_line_id as "externalLineId"

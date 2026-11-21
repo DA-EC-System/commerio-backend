@@ -3,7 +3,7 @@
 // tên, nhãn của biến thể app mà dòng kiện giữ do `packageVariantsOf` tra một lần cho cả trang (Documents/21 §19.2).
 import { getVariants } from '../../../product/index.ts';
 import { pickupUnconfirmed } from '../domain/handover.ts';
-import { isHandedOver, PRE_HANDOVER } from '../domain/package.ts';
+import { isHandedOver, isSealed, PRE_HANDOVER } from '../domain/package.ts';
 import type { PackageViewRow } from '../repository/packages.ts';
 
 /** Dòng đơn mà dòng kiện trỏ tới, đã tính nhãn biến thể như chi tiết đơn. */
@@ -97,6 +97,8 @@ export function toPackageSummary(
       externalSku: l?.externalSku ?? null,
       quantity: pl.quantity,
       pendingDropQty: pl.pendingDropQty,
+      // Dấu chỉ có nghĩa khi kiện còn đóng (spec 237 §5.6, D25): kiện huỷ hay rời kho thì dấu nằm im.
+      remapPending: pl.remapPending && isSealed(p.status),
     };
   });
   return {
