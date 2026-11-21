@@ -810,6 +810,12 @@ export interface MarketplaceAdapter {
    */
   readonly defaultSpecMappings?: Readonly<Record<string, readonly string[]>>;
   /**
+   * Nhãn của các mã trong `defaultSpecMappings` (mã của sàn là toàn cục). Trang ánh xạ dùng khi `platform_category_attributes`
+   * chưa có leaf nào chứa mã, để không hiện mã thay nhãn và vẫn lưu lại được ánh xạ mặc định. Bắt buộc khi khai
+   * `defaultSpecMappings` (test bất biến `spec-mappings-data.test.ts`).
+   */
+  readonly defaultAttributeLabels?: Readonly<Record<string, string>>;
+  /**
    * Giá trị cấp kế của attribute `input = 'cascade'` (#400, Lazada GetNextCascadeProp, cần token gian hàng). `cascadeId` là id
    * attribute của sàn (trong `raw`), `path` các cấp đã chọn theo định dạng của sàn. Sàn không có thì không khai.
    */

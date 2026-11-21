@@ -5,7 +5,7 @@ import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
 import { type AttributeKind, normalizePath } from '../domain/product-spec.ts';
-import { isMarketplace } from '../repository/schema.ts';
+import { isMarketplace, type Marketplace } from '../repository/schema.ts';
 import type { FieldMapping } from '../domain/spec-resolve.ts';
 import {
   attributesByCodes,
@@ -75,13 +75,28 @@ function toMappings(
   });
 }
 
+/**
+ * Attribute theo mã: cache `platform_category_attributes` trước; mã của ánh xạ mặc định mà cache chưa có leaf nào chứa thì lấy
+ * nhãn adapter khai (`defaultAttributeLabels`), kiểu `property`, chưa có lựa chọn. Không có bước này, trang ánh xạ hiện mã thay
+ * nhãn và `PUT` lại ánh xạ mặc định bị 422 "không phải thuộc tính đã gặp" cho tới khi đồng bộ đúng leaf.
+ */
+async function knownAttributes(platform: Marketplace, codes: readonly string[]): Promise<Map<string, CatalogAttribute>> {
+  const attrs = await attributesByCodes(platform, codes);
+  const labels = getAdapter(platform)?.defaultAttributeLabels ?? {};
+  for (const code of codes) {
+    const label = labels[code];
+    if (!attrs.has(code) && label) attrs.set(code, { code, label, kind: 'property', input: 'text', options: [] });
+  }
+  return attrs;
+}
+
 /** `GET /channel/platforms/:platform/spec-mappings`: mỗi thông số của công ty một dòng. */
 export async function listSpecMappings(ctx: ModuleContext, companyId: string, raw: string): Promise<{ items: SpecMapping[] }> {
   const { platform } = platformOf(raw);
   return withCompany(companyId, async () => {
     const fields = (await productPort(ctx).specFields?.()) ?? [];
     const mappings = await mappingsOf(platform);
-    const attrs = await attributesByCodes(platform, mappings.map((m) => m.attributeCode));
+    const attrs = await knownAttributes(platform, mappings.map((m) => m.attributeCode));
     const properties = await propertyAttributesOf(platform);
     return { items: toMappings(fields, mappings, attrs, properties) };
   });
@@ -105,7 +120,7 @@ export async function putSpecMapping(
     const field = fields.find((f) => f.id === fieldId);
     if (!field) throw new AppError(404, 'not_found', 'Không tìm thấy thông số');
     const codes = input.codes.map((c) => c.attributeCode);
-    const attrs = await attributesByCodes(platform, codes);
+    const attrs = await knownAttributes(platform, codes);
     const taken = await codesTakenByOthers(platform, fieldId, codes);
     const optionIds = new Set(field.options.map((o) => o.id));
     const errors: Record<string, string> = {};
