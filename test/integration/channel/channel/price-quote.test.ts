@@ -118,12 +118,15 @@ describe('POST /channel/products/:productId/price-quote', () => {
     ]);
   });
 
-  it('người không có inventory.cost.view: không có trường marginPct', async () => {
+  it('người không có inventory.cost.view: belowFloor và marginPct null (R4), thực nhận vẫn có', async () => {
     const v = await variant(200000, 150000);
     const res = await quote(v.productId, [{ shopId, variantId: v.id, listPrice: 239000 }], noCostToken);
     expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(res.body.items[0]).not.toHaveProperty('marginPct');
-    expect(res.body.items[0]).toMatchObject({ netReceived: 202540 });
+    expect(res.body.items[0]).toMatchObject({ netReceived: 202540, belowFloor: null, marginPct: null });
+    // Giá dưới giá thấp nhất cũng không bật cờ cho người này; CEO thì thấy.
+    const low = { shopId, variantId: v.id, listPrice: 150000 };
+    expect((await quote(v.productId, [low], noCostToken)).body.items[0]).toMatchObject({ belowFloor: null, marginPct: null });
+    expect((await quote(v.productId, [low])).body.items[0]).toMatchObject({ belowFloor: true });
   });
 
   it('SKU của sản phẩm khác: 422 theo dòng; gian hàng không thuộc công ty: 404', async () => {

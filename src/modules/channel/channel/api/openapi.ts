@@ -518,7 +518,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/products/:productId/price-quote',
     summary: 'Tính thử giá niêm yết → thực nhận theo gian hàng (21 §18.9 R1)',
     description:
-      'Cần `channel.listing.manage`. Không ghi gì. Thiếu `listPrice` thì dùng giá bộ lọc lần đăng sẽ gửi. Không trả giá thấp nhất; `marginPct` chỉ khi người gọi có `inventory.cost.view`. `blocked.code`: `fee_not_configured` (gian hàng chưa có phí, ba trường số null), `price_missing` (chưa có giá muốn bán và không gõ giá), `fee_config_invalid` (tổng phí từ 100%).',
+      'Cần `channel.listing.manage`. Không ghi gì. Thiếu `listPrice` thì dùng giá bộ lọc lần đăng sẽ gửi. Không trả giá thấp nhất. Người gọi thiếu `inventory.cost.view` nhận `belowFloor`, `marginPct` null (R4: dò giá thấp nhất bằng giá gõ thử là suy ra giá vốn); khi đăng BE vẫn chặn `below_floor`. Hai dòng cùng (`shopId`, `variantId`): 422. `blocked.code`: `fee_not_configured` (gian hàng chưa có phí, ba trường số null), `price_missing` (chưa có giá muốn bán và không gõ giá), `fee_config_invalid` (tổng phí từ 100%).',
     security: bearer,
     request: { params: PriceQuoteParams, body: json(PriceQuoteBody) },
     responses: {
@@ -561,7 +561,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/shops/:id/listings/match-preview',
     summary: 'Xem trước số sẽ đẩy khi ghép SKU sàn (#460, 21 §18.3)',
     description:
-      'Cần `channel.listing.match`. Hộp ghép gọi khi người dùng chọn một cặp, trước nút Lưu. Đọc bản sao SKU sàn (tồn, giá gốc, lần đọc thấy gần nhất) và số của app (số có thể bán, giá đang bán sẽ đẩy: giá ghi đè tay của listing hiện có, không thì giá chuẩn), không gọi sàn, không ghi gì. Ghép xong giá app luôn được đẩy (`priceWillPush` false khi chưa có giá chuẩn). Tồn không đẩy khi gian hàng chờ kiểm kê lần đầu (`shop_waiting_opening`, xét trước) hoặc SKU kho chưa có số (`not_counted`, `app.stock` null: chưa nhập, chưa kiểm kê; tồn trên sàn giữ nguyên). Lỗi: 404 gian hàng → 422 `errors.externalSkuId` (SKU không có trong bản sao) → 422 `errors.variantId` (biến thể không thuộc công ty).',
+      'Cần `channel.listing.match`. Hộp ghép gọi khi người dùng chọn một cặp, trước nút Lưu. `fillBack` (21 §18.9 R4): trường app đang trống mà liên kết sẽ điền từ sàn; BE đọc chi tiết sản phẩm trên sàn (một lần mỗi sản phẩm sàn, giữ trong tiến trình 10 phút, không trường nào trống thì không gọi); sàn lỗi thì `fillBackError` có mã, trường trống `value` null, vẫn 200. Đọc bản sao SKU sàn (tồn, giá gốc, lần đọc thấy gần nhất) và số của app (số có thể bán, giá đang bán sẽ đẩy: giá ghi đè tay của listing hiện có, không thì giá chuẩn), không gọi sàn, không ghi gì. Ghép xong giá app luôn được đẩy (`priceWillPush` false khi chưa có giá chuẩn). Tồn không đẩy khi gian hàng chờ kiểm kê lần đầu (`shop_waiting_opening`, xét trước) hoặc SKU kho chưa có số (`not_counted`, `app.stock` null: chưa nhập, chưa kiểm kê; tồn trên sàn giữ nguyên). Lỗi: 404 gian hàng → 422 `errors.externalSkuId` (SKU không có trong bản sao) → 422 `errors.variantId` (biến thể không thuộc công ty).',
     security: bearer,
     request: { params: ShopParams, query: MatchPreviewQuery },
     responses: { 200: { description: 'Số sàn và số app', ...json(MatchPreview) }, ...onShop },

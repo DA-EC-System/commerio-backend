@@ -8,14 +8,14 @@ import { groupVariants } from '../domain/variant-group.ts';
 import type { ListingRow } from '../repository/listings.ts';
 import type { ShopRow } from '../repository/shops.ts';
 import { currentPrices } from './listing-prices.ts';
-import { refreshPermission, sizeChartRuleOf, uploadAll } from './listing-push.ts';
+import { refreshPermission, sizeChartRuleOf, uploadAll, uploadAxisImages } from './listing-push.ts';
 import { countedOf } from './listing-sync.ts';
 import type { MarketplaceAdapter, NewProduct, ProductSku } from './marketplaces/index.ts';
 import { evaluatePrices } from './price-inputs.ts';
 import type { ListingVariant, ProductPort } from './product-port.ts';
 import { ensureLeaf } from './platform-categories.ts';
 import { pushAttributes, specChecks } from './product-specs.ts';
-import { pushBlock } from './push-block.ts';
+import { pushBlock, variantImageGaps } from './push-block.ts';
 import { untrustedVariants } from './stock-trust.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { MarketplaceError } from './marketplaces/index.ts';
@@ -78,7 +78,9 @@ export async function prepareNewProduct(args: {
     const counted = await countedOf(port, variantIds);
     const shopPrices = new Map(variantIds.flatMap((id) => (prices.get(id)?.priceSource === 'shop' ? [[id, String(prices.get(id)!.price)] as const] : [])));
     const floors = shopPrices.size ? (await evaluatePrices(shop.id, shopPrices)).results : new Map();
-    return { map, variants, prices, available, untrusted, counted, floors, responsible: await responsibleOrgOf(shop.companyId) };
+    // Kiểm lại ảnh theo giá trị trước khi gọi sàn (21 §18.5 `variant_images_missing`): ảnh có thể bị gỡ sau lúc request.
+    const gap = variantImageGaps(adapter, await port.variants(undefined, { productIds: [productId] })).get(productId) ?? null;
+    return { map, variants, prices, available, untrusted, counted, floors, gap, responsible: await responsibleOrgOf(shop.companyId) };
   });
   const { map } = data;
   const sizeChartRule = map ? await sizeChartRuleOf(adapter, accessToken, map) : null;
@@ -97,7 +99,7 @@ export async function prepareNewProduct(args: {
       blocked.push({ row, code: 'below_floor', message: 'Giá theo bộ lọc giá của gian hàng có thực nhận dưới giá thấp nhất' });
       continue;
     }
-    const block = pushBlock(v, price, map && { ...map, sizeChartRule }, Boolean(args.imageUrls.length), Boolean(args.sizeChartUrl));
+    const block = pushBlock(v, price, map && { ...map, sizeChartRule }, Boolean(args.imageUrls.length), Boolean(args.sizeChartUrl), data.gap);
     if (block) {
       blocked.push({ row, code: block.code, message: block.message });
       continue;
@@ -112,7 +114,7 @@ export async function prepareNewProduct(args: {
     return { ok: false, blocked: blocked.length ? blocked : rows.map((row) => ({ row, code: 'category_unmapped', message: 'Chưa chọn category của sàn cho sản phẩm' })) };
   }
   const group = groupVariants(
-    ready.map((r) => ({ id: r.v.id, attributes: r.v.attributes })),
+    ready.map((r) => ({ id: r.v.id, attributes: r.v.attributes, image: r.v.image ?? null })),
     map.row.axisMap,
     map.attributes,
   );
@@ -120,6 +122,7 @@ export async function prepareNewProduct(args: {
   for (const r of ready) r.sku.values = group.valuesOf.get(r.v.id)!;
   const lead = ready[0]!.v;
   const imageUrls = await uploadAll(adapter, accessToken, args.imageUrls);
+  const salesAttributes = await uploadAxisImages(adapter, accessToken, group.axes);
   const sizeChartUri =
     args.sizeChartUrl && sizeChartRule !== 'unsupported' ? await adapter.uploadImage(accessToken, args.sizeChartUrl, 'size_chart') : null;
   const product: NewProduct = {
@@ -132,7 +135,7 @@ export async function prepareNewProduct(args: {
     imageUrls,
     ...(sizeChartUri && { sizeChartUri }),
     ...ready[0]!.sku,
-    ...(group.axes.length && { salesAttributes: group.axes }),
+    ...(salesAttributes.length && { salesAttributes }),
     skus: ready.map((r) => r.sku),
     idempotencyKey: args.idempotencyKey,
     skipExistingSkuCheck: true,

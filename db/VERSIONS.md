@@ -3,14 +3,20 @@
 <!-- Sinh tự động bởi `npm run db:docs` từ db/migrations. Không sửa tay. -->
 
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
-Mới nhất: **V142**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+Mới nhất: **V143**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
 
-## V142 · 21/11/2026 · doi-ghep-da-dung
+## V143 · 21/11/2026 · ban-soan-truoc-rls
 
-`db/migrations/20261121071042_doi-ghep-da-dung.sql` · sinh từ schema
+`db/migrations/20261121101636_ban-soan-truoc-rls.sql` · viết tay
 
-- `order.package_lines`: + cột `remap_pending`; + check `package_lines_remap_pending`
-- enum `order.open_purpose`: + `remap`
+- viết tay: RLS
+- RLS cho bảng mới `product.purchase_product_drafts` (bản soạn trước sản phẩm mới, Documents/19, 21 mục 16.3; vòng lặp của 0002 chỉ chạy một lần).
+
+## V142 · 21/11/2026 · ban-soan-truoc
+
+`db/migrations/20261121101614_ban-soan-truoc.sql` · sinh từ schema
+
+- + bảng `product.purchase_product_drafts`
 
 ## V141 · 21/11/2026 · danh-muc-chuan-du-lieu
 

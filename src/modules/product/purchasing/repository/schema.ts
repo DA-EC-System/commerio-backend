@@ -129,6 +129,60 @@ export const purchaseRequestLines = purchasingSchema.table(
   ],
 );
 
+/** Số của biến thể trong bản soạn trước (Documents/21 mục 16.3 `VariantFacts`): tiền là chuỗi `numeric`, số đo là số nguyên. */
+export interface DraftVariantFacts {
+  standardPrice?: string | null;
+  targetNetPrice?: string | null;
+  weightG?: number | null;
+  lengthMm?: number | null;
+  widthMm?: number | null;
+  heightMm?: number | null;
+  minQty?: number | null;
+}
+
+/**
+ * Bản soạn trước nội dung của **một sản phẩm cha mới** trên một đề nghị (Documents/19 `purchase_product_drafts`, 21 mục
+ * 16.3 "Bản soạn trước", 29 bước 1); các dòng cùng tên cha mới dùng chung. `parent_key` = tên cha mới chữ thường đã gộp
+ * khoảng trắng. Ghi sổ phiếu nhận tạo cha thì chép sang sản phẩm và đặt `product_id`; từ đó phần sản phẩm chỉ đọc.
+ * `image_file_ids`, `size_chart_file_id`, `option_images.fileId` là tệp của module files (không khoá ngoại chéo, như
+ * `product_images.file_id`); `specs` jsonb không khoá ngoại tới `spec_fields` vì mẫu nhóm có thể đổi trước lúc hàng về,
+ * kiểm lại lúc chép. `variant_facts` khoá theo `optionValues` của dòng (dòng nháp có thể xoá, thêm lại).
+ * `updated_by`: người soạn gần nhất, nhật ký lúc chép ghi người này.
+ */
+export const purchaseProductDrafts = purchasingSchema.table(
+  'purchase_product_drafts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    companyId: uuid('company_id').notNull(),
+    requestId: uuid('request_id')
+      .notNull()
+      .references(() => purchaseRequests.id, { onDelete: 'cascade' }),
+    parentKey: text('parent_key').notNull(),
+    description: text('description'),
+    brand: text('brand'),
+    originCountry: text('origin_country'),
+    imageFileIds: uuid('image_file_ids').array().notNull().default(sql`'{}'::uuid[]`),
+    sizeChartFileId: uuid('size_chart_file_id'),
+    /** Cùng hình dạng `specs` của `POST /catalog/products` (21 mục 5.5): `[{ fieldId, optionIds?, newValues?, value? }]`. */
+    specs: jsonb('specs').$type<{ fieldId: string; optionIds?: string[]; newValues?: string[]; value?: string }[]>().notNull().default([]),
+    /** Tên trục gắn ảnh (không phải số thứ tự: trục của cha mới xếp theo thứ tự dòng). */
+    imageAxis: text('image_axis'),
+    optionImages: jsonb('option_images').$type<{ axis: string; value: string; fileId: string }[]>().notNull().default([]),
+    variantDefaults: jsonb('variant_defaults').$type<DraftVariantFacts>().notNull().default({}),
+    variantFacts: jsonb('variant_facts').$type<({ optionValues: Record<string, string> } & DraftVariantFacts)[]>().notNull().default([]),
+    productId: uuid('product_id'),
+    updatedBy: uuid('updated_by'),
+    ...timestamps,
+    ...version,
+  },
+  (t) => [
+    unique('purchase_product_drafts_request_parent_uq').on(t.requestId, t.parentKey),
+    check('purchase_product_drafts_images', sql`cardinality(${t.imageFileIds}) <= 9`),
+    check('purchase_product_drafts_brand', sql`${t.brand} is null or char_length(${t.brand}) <= 100`),
+    check('purchase_product_drafts_origin', sql`${t.originCountry} is null or ${t.originCountry} ~ '^[A-Z]{2}$'`),
+  ],
+);
+
 /** Phiếu nhận (25 §4.1, Documents/21 mục 16.3). */
 export const goodsReceiptStatus = purchasingSchema.enum('goods_receipt_status', [
   'counting',

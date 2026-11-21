@@ -593,6 +593,8 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
     // Ảnh minh chứng khi từ chối đi Upload Product Image (`use_case` DESCRIPTION_IMAGE) rồi vào `images` (#476). Sàn nhận
     // cả WEBP, HEIC, BMP; giữ JPG, PNG như Lazada để một luật cho ô ảnh ở FE.
     returnImageTypes: ['image/jpeg', 'image/png'],
+    // OAS Create Product 202309 `sku_img`: "you must attach an image for each value of the chosen attribute" (12052522).
+    requiresAllVariantImages: true,
     ...tiktokOrderMethods(client, deps),
     // Xoá sản phẩm sàn cho gom lại dữ liệu cũ (#295).
     ...tiktokDeleteMethods(client),

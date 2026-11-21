@@ -12,7 +12,7 @@ import {
   type NewProduct,
   type NewVariants,
 } from '#src/modules/channel/channel/service/marketplaces/common.ts';
-import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
+import { getAdapter, registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
 import { type ListingVariant, setProductPort } from '#src/modules/channel/channel/service/product-port.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
@@ -35,7 +35,7 @@ let onCreate: (p: NewProduct) => Promise<CreatedProduct>;
 let onAdd: (externalProductId: string, p: NewVariants) => Promise<{ skus: CreatedSku[]; live: boolean }>;
 const createProduct = vi.fn((_t: string, p: NewProduct) => onCreate(p));
 const addVariants = vi.fn((_t: string, id: string, p: NewVariants) => onAdd(id, p));
-const uploadImage = vi.fn(async (_t: string, url: string) => `https://slatic.test/${encodeURIComponent(url)}`);
+const uploadImage = vi.fn(async (_t: string, url: string, _purpose?: string) => `https://slatic.test/${encodeURIComponent(url)}`);
 registerAdapter(
   'lazada',
   fakeAdapter({
@@ -81,9 +81,11 @@ beforeEach(() => {
 const color = (value: string) => [{ attributeId: 'a-color', attributeName: 'Màu', platformKind: 'color' as const, valueId: randomUUID(), value }];
 
 /** Một sản phẩm cha với các SKU theo màu, spec trục `__custom`. */
-async function product(colors: readonly string[]) {
+async function product(colors: readonly string[], images: Readonly<Record<string, string>> = {}) {
   const productId = randomUUID();
-  const vs = colors.map((c) => ({
+  const vs = colors.map((c) => {
+    const attributes = color(c);
+    return {
     id: randomUUID(),
     productId,
     productName: 'Áo thun cotton nhiều màu',
@@ -91,7 +93,7 @@ async function product(colors: readonly string[]) {
     attributesLabel: c,
     productCode: 'SP-TEST',
     groupId: 'GROUP-TEST',
-    attributes: color(c),
+    attributes,
     archived: false,
     businessStatus: 'selling' as const,
     description: 'Áo cotton',
@@ -99,7 +101,9 @@ async function product(colors: readonly string[]) {
     lengthMm: 300,
     widthMm: 200,
     heightMm: 15,
-  }));
+    image: images[c] ? { attributeValueId: attributes[0]!.valueId, url: images[c] } : null,
+    };
+  });
   variants.push(...vs);
   await seedSpecs(company.companyId, 'lazada', '14275', vs, { brand: 'No Brand' });
   return { productId, vs };
@@ -170,6 +174,58 @@ describe('việc nền channel.product_push', () => {
     expect(addVariants.mock.calls[0]![1]).toBe('item-cu');
     expect(addVariants.mock.calls[0]![2].skus.map((s) => s.sellerSku)).toEqual([vs[0]!.sku]);
     expect(await listings(ids)).toMatchObject([{ status: 'under_review', external_product_id: 'item-cu', shop_product_id: spId }]);
+  });
+
+  it('ảnh theo màu (#295): mọi màu có ảnh thì tải lên sàn (sale_attribute) và gửi imageUri theo giá trị, kể cả khi thêm phân loại', async () => {
+    const imgs = { Đen: 'https://cdn.test/den.png', Trắng: 'https://cdn.test/trang.png' };
+    const { productId, vs } = await product(['Đen', 'Trắng'], imgs);
+    await runProductPush(port, (await lot(productId, vs)).job);
+    expect(createProduct.mock.calls[0]![1].salesAttributes).toEqual([
+      {
+        code: null,
+        name: 'Màu',
+        values: [
+          { optionId: null, label: 'Đen', imageUri: `https://slatic.test/${encodeURIComponent(imgs.Đen)}` },
+          { optionId: null, label: 'Trắng', imageUri: `https://slatic.test/${encodeURIComponent(imgs.Trắng)}` },
+        ],
+      },
+    ]);
+    expect(uploadImage.mock.calls.filter((c) => c[2] === 'sale_attribute').map((c) => c[1])).toEqual([imgs.Đen, imgs.Trắng]);
+
+    const added = await product(['Xanh'], { Xanh: 'https://cdn.test/xanh.png' });
+    await runProductPush(port, (await lot(added.productId, added.vs, 'item-anh-mau')).job);
+    expect(addVariants.mock.calls[0]![2].salesAttributes![0]!.values).toEqual([
+      { optionId: null, label: 'Xanh', imageUri: `https://slatic.test/${encodeURIComponent('https://cdn.test/xanh.png')}` },
+    ]);
+  });
+
+  it('sàn đòi đủ ảnh theo giá trị (requiresAllVariantImages) mà còn thiếu: push_failed variant_images_missing, không gọi sàn', async () => {
+    const { productId, vs } = await product(['Đen', 'Trắng'], { Đen: 'https://cdn.test/den.png' });
+    const { ids, job } = await lot(productId, vs);
+    const lazada = getAdapter('lazada') as { requiresAllVariantImages?: boolean };
+    lazada.requiresAllVariantImages = true;
+    try {
+      await runProductPush(port, job);
+    } finally {
+      delete lazada.requiresAllVariantImages;
+    }
+    expect(createProduct).not.toHaveBeenCalled();
+    const rows = await listings(ids);
+    expect(rows.map((r) => [r.status, r.push_error?.code])).toEqual([
+      ['push_failed', 'variant_images_missing'],
+      ['push_failed', 'variant_images_missing'],
+    ]);
+    expect(rows[0]!.push_error.message).toBe('Sàn bắt buộc ảnh cho mọi giá trị của Màu: thêm ảnh cho Trắng rồi đăng lại');
+  });
+
+  it('ảnh theo màu thiếu một giá trị: không gửi ảnh nào (sàn bắt buộc đủ ảnh cho mọi giá trị của trục)', async () => {
+    const { productId, vs } = await product(['Đen', 'Trắng'], { Đen: 'https://cdn.test/den.png' });
+    await runProductPush(port, (await lot(productId, vs)).job);
+    expect(createProduct.mock.calls[0]![1].salesAttributes![0]!.values).toEqual([
+      { optionId: null, label: 'Đen' },
+      { optionId: null, label: 'Trắng' },
+    ]);
+    expect(uploadImage.mock.calls.some((c) => c[2] === 'sale_attribute')).toBe(false);
   });
 
   it('SKU sàn không trả về thì push_failed riêng SKU đó, SKU còn lại lên sàn', async () => {
