@@ -1,4 +1,5 @@
 // Adapter Lazada Open Platform (Documents/tich-hop-san/lazada.md §2, §3, §7.1). Cách ký chép từ scripts/smoke/lazada.ts.
+import type { PlatformKind } from '../../domain/product-spec.ts';
 import { createHmac } from 'node:crypto';
 import { LAZADA_ATTRIBUTE_LABELS, LAZADA_SPEC_MAPPINGS } from './lazada-spec-mappings.ts';
 import type { LedgerKind } from '../../../../finance/index.ts';
@@ -650,6 +651,37 @@ function toRemoteOrder(o: Row, items: Row[]): RemoteOrder {
   };
 }
 
+/**
+ * Sale prop mặc định theo loại thuộc tính phân loại (việc #3 luồng sản phẩm, 21/11/2026): mã đổi theo leaf, lấy mã đầu tiên
+ * leaf có. Đo bằng `GetCategoryAttributes` (`attribute_type = sku`, `is_sale_prop = 1`) khoảng 100 leaf (api.lazada.vn,
+ * shop thử, 21/11/2026; cache `channel.platform_category_attributes` trên staging); bảng ở Documents/21 §18.8.3 và
+ * `.claude/issues/luong-san-pham/anh-xa-bien-the-san.md`. Lazada không nhận tên trục tự đặt: kind không có mã (age,
+ * style) hay leaf thiếu mã thì `axis_unmapped`.
+ */
+const LAZADA_SALES_ATTRIBUTES = {
+  color: ['color_family'],
+  size: ['size', 'clothing_size', 'Toy_Size', 'basic_size'],
+  shoe_size: ['size'],
+  bra_size: ['size'],
+  ring_size: ['ring_size'],
+  storage: ['storage_capacity_new', 'Storage_Size'],
+  version: ['Variation'],
+  screen_size: ['display_size_tv', 'smartwear_size'],
+  connector: ['cable_connection', 'wear_acc_connectivity'],
+  length: ['cable_length', 'Length_(m)', 'curtain_length'],
+  battery_capacity: ['powerbank_capacity'],
+  voltage: ['input_voltage'],
+  power: ['power_consumption'],
+  volume: ['volume', 'capacity'],
+  weight: ['pet_food_size', 'weight'],
+  flavor: ['flavor', 'pets_flavor'],
+  scent: ['scent', 'fragrance_family', 'Baby_scent'],
+  pack: ['Units_(per_Bundle)', 'units_hb', 'units', 'diaper_pack_size', 'number_of_pieces'],
+  diaper_size: ['size_diaper', 'size'],
+  bed_size: ['bedding_size_2', 'mattress_size', 'size'],
+  compatible_model: ['compatibility_by_model'],
+} as const satisfies Partial<Record<PlatformKind, readonly string[]>>;
+
 export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch = fetch, deps: LazadaPackingDeps = {}): MarketplaceAdapter {
   // Một chỗ quyết định cấu hình đủ chưa: `connectMethods`, `credentials`, `authorizeUrl` cùng đọc (#163).
   const hasCredentials = Boolean(config.appKey && config.appSecret);
@@ -1147,7 +1179,7 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
     },
     suggestionRules: { needsImage: true },
     // Lazada chỉ nhận trục là sale prop của category (Documents#214 mục 3).
-    standardSalesAttributes: { color: ['color_family'], size: ['size'], volume: ['volume'], flavor: ['flavor'] },
+    standardSalesAttributes: LAZADA_SALES_ATTRIBUTES,
     variantCapabilities: lazadaVariantCapabilities,
     async suggestCategories(accessToken, input) {
       // `image_url` bắt buộc khác rỗng (Documents#214 mục 2.3): service chặn `images_missing` trước; không có ảnh thì không gọi sàn.
