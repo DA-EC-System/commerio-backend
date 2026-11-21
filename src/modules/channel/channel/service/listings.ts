@@ -512,11 +512,12 @@ async function enqueueProduct(
   try {
     const listed = await withCompany(actor.companyId, async () => {
       // Cha đã có sản phẩm trên sàn: dòng `app` (app tạo), hoặc đúng một dòng `match` (sản phẩm người bán ghép vào app, KB3)
-      // thì thêm phân loại vào đó, không tạo sản phẩm sàn mới. Nhiều dòng `match` (người bán tách sản phẩm trên sàn) thì chưa
-      // biết thêm vào đâu, tạo dòng `app` như cũ.
+      // thì thêm phân loại vào đó, không tạo sản phẩm sàn mới. Nhiều dòng `match` (người bán tách sản phẩm trên sàn) thì chặn
+      // `platform_product_ambiguous` (21 §18.5): không tự tạo sản phẩm sàn mới, chọn sản phẩm sàn là việc chờ (29 mục 6).
       const app = await findAppShopProduct(shopId, productId, { lock: true });
       const matched = app ? [] : await matchShopProductsOf(shopId, siblingIds, { lock: true });
-      const sp = app ?? (matched.length === 1 ? matched[0]! : await insertAppShopProduct(actor.companyId, shopId, productId));
+      if (matched.length > 1) return { ambiguous: matched.map((m) => m.externalProductId!), out: [] as ListingRow[] };
+      const sp = app ?? matched[0] ?? (await insertAppShopProduct(actor.companyId, shopId, productId));
       await setShopProductPushStarted(sp.id, pushStartedAt);
       const out: ListingRow[] = [];
       for (const r of rows) {
@@ -549,9 +550,13 @@ async function enqueueProduct(
         imageUrls,
         ...(sizeChartUrl && { sizeChartUrl }),
       });
-      return out;
+      return { ambiguous: null, out };
     });
-    return listed.map((row) => ({ variantId: row.variantId!, listingId: row.id, status: row.status, code: null, message: null }));
+    if (listed.ambiguous) {
+      const message = `Biến thể anh em đang nằm ở ${listed.ambiguous.length} sản phẩm trên sàn; chọn sản phẩm cần thêm vào (${listed.ambiguous.join(', ')})`;
+      return rows.map((r) => blocked(r.variantId, r.existing, 'platform_product_ambiguous', message));
+    }
+    return listed.out.map((row) => ({ variantId: row.variantId!, listingId: row.id, status: row.status, code: null, message: null }));
   } catch (err) {
     const constraint = pgError(err).constraint;
     const raced =
