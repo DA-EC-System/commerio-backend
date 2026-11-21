@@ -316,6 +316,11 @@ describe('lượt kéo đơn còn mở (AC-12, AC-13, AC-16, AC-17, AC-19)', () 
   const pulledIds = async (shopId: string) => (await packagesOf(shopId)).map((p) => p.external_order_id as string).sort();
   const setupOfShop = async (c: Company, shopId: string) =>
     (await request(testApp()).get(`/api/v1/channel/shops/${shopId}`).set('Authorization', `Bearer ${c.ceo.token}`)).body.setup;
+  // Hai ca dưới nhận 200–250 đơn, mỗi đơn một giao dịch (khoá gian hàng, `ingestMarketplaceOrder`, giữ hàng): chạy riêng
+  // file mất 10–11 giây, chạy chung cả project integration (cùng một container PostgreSQL) thì có lượt quá 30 giây (#414).
+  // Không giảm được số đơn: trần 200 cần hơn 200 đơn để có đơn bị bỏ và hơn 2 trang để thử lật trang. Chỉ nới hai ca này,
+  // giữ `testTimeout` chung.
+  const manyOrdersTimeout = 90_000;
 
   it('OPEN_ORDER_PULL_MAX=200 với 250 đơn mở: kéo đúng 200 đơn đặt mới nhất, `setup.openOrdersSkipped` = 50', async () => {
     const { shopId, sku, c } = await setUpShop();
@@ -331,7 +336,7 @@ describe('lượt kéo đơn còn mở (AC-12, AC-13, AC-16, AC-17, AC-19)', () 
     expect(getOrders.mock.calls.map((c) => c[1].length)).toEqual([1, 100, 100]);
     expect((await shopCols(shopId)).open_orders_pulled_at).not.toBeNull();
     expect(await setupOfShop(c, shopId)).toMatchObject({ openOrdersSkipped: 50 });
-  });
+  }, manyOrdersTimeout);
 
   it('không đặt OPEN_ORDER_PULL_MAX: kéo đủ 250 đơn mở, không bỏ đơn nào', async () => {
     const { shopId, sku, c } = await setUpShop();
@@ -340,5 +345,5 @@ describe('lượt kéo đơn còn mở (AC-12, AC-13, AC-16, AC-17, AC-19)', () 
     await runOpenOrderPull({ companyId: c.companyId, shopId });
     expect(await pulledIds(shopId)).toHaveLength(250);
     expect(await setupOfShop(c, shopId)).toMatchObject({ openOrdersSkipped: 0 });
-  });
+  }, manyOrdersTimeout);
 });
