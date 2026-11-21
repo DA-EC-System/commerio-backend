@@ -12,7 +12,7 @@ import {
   replaceProductSpec,
 } from '../repository/specs.ts';
 import { productGroupIds } from '../repository/products.ts';
-import { isUuid } from './errors.ts';
+import { isUuid, scopeOf } from './errors.ts';
 
 export interface SpecValueInput {
   fieldId: string;
@@ -23,14 +23,17 @@ export interface SpecValueInput {
 
 type ValueRow = Awaited<ReturnType<typeof findProductSpecValues>>[number];
 
+type Scope = ReturnType<typeof scopeOf>;
+
 interface StoredSpec {
   fieldId: string;
+  scope: Scope;
   code: string;
   name: string;
   input: SpecInputKind;
   unit: string | null;
   allowCustom: boolean;
-  selected: { id: string; value: string }[];
+  selected: { id: string; value: string; scope: Scope }[];
   value: string | null;
 }
 
@@ -42,6 +45,7 @@ function groupValues(rows: readonly ValueRow[]): Map<string, Map<string, StoredS
     result.set(r.productId, byField);
     const spec = byField.get(r.fieldId) ?? {
       fieldId: r.fieldId,
+      scope: scopeOf(r.fieldCompanyId),
       code: r.code,
       name: r.name,
       input: r.input,
@@ -51,7 +55,7 @@ function groupValues(rows: readonly ValueRow[]): Map<string, Map<string, StoredS
       value: null,
     };
     byField.set(r.fieldId, spec);
-    if (r.optionId) spec.selected.push({ id: r.optionId, value: r.optionValue! });
+    if (r.optionId) spec.selected.push({ id: r.optionId, value: r.optionValue!, scope: scopeOf(r.optionCompanyId) });
     else spec.value = r.valueText;
   }
   return result;
@@ -138,7 +142,7 @@ export async function productSpecsView(productId: string, groupId: string) {
         allowCustom: t.allowCustom,
         required: t.required,
         inTemplate: true,
-        selected: v?.selected ?? [],
+        selected: (v?.selected ?? []).map((o) => ({ id: o.id, value: o.value })),
         choices: choices(t.fieldId),
         value: v?.value ?? null,
       };
@@ -152,7 +156,7 @@ export async function productSpecsView(productId: string, groupId: string) {
       allowCustom: v.allowCustom,
       required: false,
       inTemplate: false,
-      selected: v.selected,
+      selected: v.selected.map((o) => ({ id: o.id, value: o.value })),
       choices: choices(v.fieldId),
       value: v.value,
     })),
@@ -163,8 +167,9 @@ export async function productSpecsView(productId: string, groupId: string) {
 
 /**
  * Cổng `getProductSpecs(productIds)` cho channel (Documents/21 mục 11.3): giá trị thông số của sản phẩm cha, kể cả ngoài
- * mẫu. `values` xếp thông số trong mẫu theo `position`, rồi ngoài mẫu theo `code` (`position` null). Sản phẩm không thấy
- * (RLS, sai id) thì vắng mặt.
+ * mẫu. `values` xếp thông số trong mẫu theo thứ tự hiển thị (dòng nền tảng rồi dòng công ty; `position` là chỉ số trong
+ * mẫu), rồi ngoài mẫu theo `code` (`position` null). `scope` của thông số và `optionScopes` song song `optionIds`
+ * (Documents/21 mục 5.6). Sản phẩm không thấy (RLS, sai id) thì vắng mặt.
  */
 export async function getProductSpecs(productIds: readonly string[]) {
   const ids = [...new Set(productIds.filter(isUuid))];
@@ -174,12 +179,14 @@ export async function getProductSpecs(productIds: readonly string[]) {
       groupId: string;
       values: {
         fieldId: string;
+        scope: Scope;
         code: string;
         input: SpecInputKind;
         unit: string | null;
         allowCustom: boolean;
         optionIds: string[];
         optionLabels: string[];
+        optionScopes: Scope[];
         value: string | null;
         position: number | null;
       }[];
@@ -190,16 +197,18 @@ export async function getProductSpecs(productIds: readonly string[]) {
   const templates = Map.groupBy(await findTemplateFields([...new Set(groups.values())]), (t) => t.groupId);
   const values = groupValues(await findProductSpecValues([...groups.keys()]));
   for (const [productId, groupId] of groups) {
-    const position = new Map((templates.get(groupId) ?? []).map((t) => [t.fieldId, t.position]));
+    const position = new Map((templates.get(groupId) ?? []).map((t, i) => [t.fieldId, i]));
     const list = [...(values.get(productId)?.values() ?? [])]
       .map((v) => ({
         fieldId: v.fieldId,
+        scope: v.scope,
         code: v.code,
         input: v.input,
         unit: v.unit,
         allowCustom: v.allowCustom,
         optionIds: v.selected.map((o) => o.id),
         optionLabels: v.selected.map((o) => o.value),
+        optionScopes: v.selected.map((o) => o.scope),
         value: v.value,
         position: position.get(v.fieldId) ?? null,
       }))

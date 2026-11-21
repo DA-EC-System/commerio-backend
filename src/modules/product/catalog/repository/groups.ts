@@ -1,20 +1,36 @@
 import { and, eq, inArray, ne, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
-import { productGroups, products } from './schema.ts';
+import { companyGroupSettings, productGroups, products } from './schema.ts';
 
-// Mọi hàm chạy trong `withCompany` của service: RLS chỉ cho thấy dòng của công ty đang chọn.
+// Mọi hàm chạy trong `withCompany` của service: RLS cho thấy nhóm nền tảng và nhóm của công ty đang chọn.
+// Nhóm nền tảng lấy gợi ý, cờ ẩn, `version` từ `company_group_settings` của công ty (chưa có dòng: trống, 0); nối kèm
+// điều kiện công ty tường minh để đúng cả khi chạy bằng role chủ bảng.
 // Subquery viết SQL có bí danh: Drizzle in cột không kèm tên bảng khi chỉ select một bảng, `id` sẽ nhập nhằng.
+
+const CURRENT_COMPANY = sql`nullif(current_setting('app.company_id', true), '')::uuid`;
+export const settingsJoin = and(eq(companyGroupSettings.groupId, productGroups.id), sql`${companyGroupSettings.companyId} = ${CURRENT_COMPANY}`);
+const platform = sql`${productGroups.companyId} is null`;
+const effective = <T>(col: unknown, own: unknown) => sql<T>`case when ${platform} then ${col} else ${own} end`;
+
+/** Gợi ý hiệu lực của nhóm (nhóm nền tảng: của công ty ở `company_group_settings`); cần `leftJoin(companyGroupSettings, settingsJoin)`. */
+export const effectiveSuggest = {
+  marginCoefficient: effective<string | null>(companyGroupSettings.marginCoefficient, productGroups.marginCoefficient),
+  priceRounding: effective<number | null>(companyGroupSettings.priceRounding, productGroups.priceRounding),
+  reorderLeadDays: effective<number | null>(companyGroupSettings.reorderLeadDays, productGroups.reorderLeadDays),
+  reorderSafetyQty: effective<number | null>(companyGroupSettings.reorderSafetyQty, productGroups.reorderSafetyQty),
+  reorderDefaultQty: effective<number | null>(companyGroupSettings.reorderDefaultQty, productGroups.reorderDefaultQty),
+};
 
 const columns = {
   id: productGroups.id,
+  companyId: productGroups.companyId,
   name: productGroups.name,
-  marginCoefficient: productGroups.marginCoefficient,
-  priceRounding: productGroups.priceRounding,
-  reorderLeadDays: productGroups.reorderLeadDays,
-  reorderSafetyQty: productGroups.reorderSafetyQty,
-  reorderDefaultQty: productGroups.reorderDefaultQty,
-  version: productGroups.version,
-  updatedAt: productGroups.updatedAt,
+  ...effectiveSuggest,
+  hidden: sql<boolean>`coalesce(${companyGroupSettings.hidden}, false)`,
+  version: sql<number>`case when ${platform} then coalesce(${companyGroupSettings.version}, 0) else ${productGroups.version} end`,
+  updatedAt: sql<Date>`case when ${platform} then coalesce(${companyGroupSettings.updatedAt}, ${productGroups.updatedAt}) else ${productGroups.updatedAt} end`.mapWith(
+    (v: string | Date) => new Date(v),
+  ),
   // Đếm cả sản phẩm đã lưu trữ: cùng điều kiện với `in_use` khi xoá (V25).
   productCount: sql<number>`(select count(*)::int from product.products p where p.group_id = product_groups.id)`,
   // Mẫu thông số (#510, Documents/21 mục 5.5).
@@ -24,11 +40,57 @@ const columns = {
 
 export type GroupRow = Awaited<ReturnType<typeof findGroups>>[number];
 
-export function findGroups(id?: string) {
+/** `includeHidden: false` bỏ nhóm nền tảng công ty đã ẩn (ô chọn nhóm); đọc theo id luôn thấy. */
+export function findGroups(id?: string, opts: { includeHidden?: boolean } = {}) {
   return getDb()
     .select(columns)
     .from(productGroups)
-    .where(id ? eq(productGroups.id, id) : undefined);
+    .leftJoin(companyGroupSettings, settingsJoin)
+    .where(
+      and(
+        id ? eq(productGroups.id, id) : undefined,
+        opts.includeHidden === false ? sql`coalesce(${companyGroupSettings.hidden}, false) = false` : undefined,
+      ),
+    );
+}
+
+/** Ẩn hoặc hiện nhóm nền tảng cho công ty (không điều kiện `version`, Documents/21 mục 5.5); tăng `version` cài đặt. */
+export async function setGroupHidden(companyId: string, groupId: string, hidden: boolean): Promise<void> {
+  await getDb()
+    .insert(companyGroupSettings)
+    .values({ companyId, groupId, hidden })
+    .onConflictDoUpdate({
+      target: [companyGroupSettings.companyId, companyGroupSettings.groupId],
+      set: { hidden, version: sql`${companyGroupSettings.version} + 1`, updatedAt: sql`now()` },
+    });
+}
+
+/**
+ * Ghi cài đặt của công ty trên nhóm nền tảng, có điều kiện `version` (0 = chưa có dòng). `false` khi người khác vừa
+ * ghi. `patch` bỏ trường là giữ.
+ */
+export async function upsertGroupSettingsIfVersion(
+  companyId: string,
+  groupId: string,
+  version: number,
+  patch: Partial<SuggestColumns & { hidden: boolean }>,
+): Promise<boolean> {
+  if (version === 0) {
+    const rows = await getDb()
+      .insert(companyGroupSettings)
+      .values({ companyId, groupId, ...patch })
+      .onConflictDoNothing()
+      .returning({ groupId: companyGroupSettings.groupId });
+    return rows.length > 0;
+  }
+  const rows = await getDb()
+    .update(companyGroupSettings)
+    .set({ ...patch, version: sql`${companyGroupSettings.version} + 1`, updatedAt: sql`now()` })
+    .where(
+      and(eq(companyGroupSettings.companyId, companyId), eq(companyGroupSettings.groupId, groupId), eq(companyGroupSettings.version, version)),
+    )
+    .returning({ groupId: companyGroupSettings.groupId });
+  return rows.length > 0;
 }
 
 export async function groupNameExists(name: string, exceptId?: string): Promise<boolean> {

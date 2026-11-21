@@ -2,7 +2,8 @@ import { and, asc, eq, inArray, ne, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
 import { attributes, attributeValues } from './schema.ts';
 
-// Mọi hàm chạy trong `withCompany` của service.
+// Mọi hàm chạy trong `withCompany` của service: RLS cho thấy thuộc tính, giá trị nền tảng (`company_id` NULL) và của
+// công ty đang chọn (Documents/21 mục 5.6). Dòng nền tảng xếp trước.
 
 /**
  * `created_at` lệch i micro giây theo thứ tự gửi lên: trong một giao dịch `now()` như nhau và bảng không có cột
@@ -12,11 +13,13 @@ export const orderedNow = (i: number) => sql`now() + ${i} * interval '1 microsec
 
 // Subquery viết SQL có bí danh: Drizzle in cột không kèm tên bảng khi chỉ select một bảng.
 const used = sql`exists (select 1 from product.variant_attribute_values vav where vav.attribute_value_id = attribute_values.id)`;
+const platformFirst = (col: unknown) => sql`${col} is not null`;
 
 export async function findAttributes(id?: string) {
   const rows = await getDb()
     .select({
       id: attributes.id,
+      companyId: attributes.companyId,
       name: attributes.name,
       platformKind: attributes.platformKind,
       version: attributes.version,
@@ -28,11 +31,12 @@ export async function findAttributes(id?: string) {
     })
     .from(attributes)
     .where(id ? eq(attributes.id, id) : undefined)
-    .orderBy(asc(attributes.createdAt), asc(attributes.id));
+    .orderBy(platformFirst(attributes.companyId), asc(attributes.createdAt), asc(attributes.id));
   const values = rows.length
     ? await getDb()
         .select({
           id: attributeValues.id,
+          companyId: attributeValues.companyId,
           attributeId: attributeValues.attributeId,
           value: attributeValues.value,
           code: attributeValues.code,
@@ -40,7 +44,7 @@ export async function findAttributes(id?: string) {
         })
         .from(attributeValues)
         .where(inArray(attributeValues.attributeId, rows.map((r) => r.id)))
-        .orderBy(asc(attributeValues.createdAt), asc(attributeValues.id))
+        .orderBy(platformFirst(attributeValues.companyId), asc(attributeValues.createdAt), asc(attributeValues.id))
     : [];
   const byAttribute = Map.groupBy(values, (v) => v.attributeId);
   return rows.map((r) => ({
@@ -62,7 +66,7 @@ export async function insertAttribute(companyId: string, name: string): Promise<
   return row!.id;
 }
 
-/** Id thuộc tính cùng tên (không phân biệt hoa thường) của công ty đang chọn. */
+/** Id thuộc tính cùng tên (không phân biệt hoa thường), nền tảng hoặc của công ty đang chọn (hai tầng không trùng tên). */
 export async function findAttributeIdByName(name: string): Promise<string | undefined> {
   const [row] = await getDb()
     .select({ id: attributes.id })
@@ -141,10 +145,14 @@ export function findValuesWithAttribute(ids: readonly string[]) {
     .where(inArray(attributeValues.id, [...ids]));
 }
 
-/** Thuộc tính phân loại của công ty (id, tên, `platform_kind`) theo thứ tự tạo; cho channel ghép trục (#448). Gọi trong `withCompany`. */
+/**
+ * Thuộc tính phân loại thấy được (nền tảng trước, rồi của công ty; id, tên, `platform_kind`, `scope`); cho channel ghép
+ * trục (#448, Documents/21 mục 11.3). Gọi trong `withCompany`.
+ */
 export async function findAttributeKinds() {
-  return getDb()
-    .select({ id: attributes.id, name: attributes.name, platformKind: attributes.platformKind })
+  const rows = await getDb()
+    .select({ id: attributes.id, companyId: attributes.companyId, name: attributes.name, platformKind: attributes.platformKind })
     .from(attributes)
-    .orderBy(asc(attributes.createdAt), asc(attributes.id));
+    .orderBy(platformFirst(attributes.companyId), asc(attributes.createdAt), asc(attributes.id));
+  return rows.map(({ companyId, ...r }) => ({ ...r, scope: companyId === null ? ('platform' as const) : ('company' as const) }));
 }

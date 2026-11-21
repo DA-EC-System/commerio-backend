@@ -23,8 +23,14 @@ import {
   BulkEditQuery,
   BulkSaveBody,
   CreateProductBody,
+  AttributeValueBody,
+  AttributeValueParams,
   GroupBody,
+  GroupHiddenBody,
+  GroupListQuery,
   GroupTemplateBody,
+  SpecOptionBody,
+  SpecOptionParams,
   MoveProductsBody,
   IdParams,
   ProductListQuery,
@@ -78,8 +84,15 @@ export function catalogRouter(ctx: CatalogContext): Router {
   // chỉ thử tiếp khi `forbidden`, phân hệ purchasing tắt thì `module_disabled` trả ngay.
   const quickGroup = anyOf(setup, manage, ctx.authorize('purchasing.request.manage'));
 
-  router.get('/groups', view, async (_req, res) => {
-    res.json(await groups.listGroups(caller(res).companyId));
+  router.get('/groups', view, validate({ query: GroupListQuery }), async (_req, res) => {
+    const { includeHidden } = validated<typeof GroupListQuery>(res, 'query');
+    res.json(await groups.listGroups(caller(res).companyId, { includeHidden }));
+  });
+
+  // Ẩn, hiện nhóm nền tảng cho công ty (Documents/21 mục 5.6).
+  router.put('/groups/:id/hidden', setup, validate({ params: IdParams, body: GroupHiddenBody }), async (_req, res) => {
+    const { id } = validated<typeof IdParams>(res, 'params');
+    res.json(await groups.setHidden(caller(res), id, validated<typeof GroupHiddenBody>(res, 'body').hidden));
   });
 
   router.post('/groups', quickGroup, validate({ body: GroupBody }), async (_req, res) => {
@@ -134,6 +147,18 @@ export function catalogRouter(ctx: CatalogContext): Router {
     res.json(await specFields.updateSpecField(caller(res), id, validated<typeof UpdateSpecFieldBody>(res, 'body')));
   });
 
+  // Lựa chọn riêng của công ty trên thông số nền tảng (Documents/21 mục 5.6).
+  router.post('/spec-fields/:id/options', setup, validate({ params: IdParams, body: SpecOptionBody }), async (_req, res) => {
+    const { id } = validated<typeof IdParams>(res, 'params');
+    res.status(201).json(await specFields.addSpecOption(caller(res), id, validated<typeof SpecOptionBody>(res, 'body').value));
+  });
+
+  router.delete('/spec-fields/:id/options/:optionId', setup, validate({ params: SpecOptionParams }), async (_req, res) => {
+    const { id, optionId } = validated<typeof SpecOptionParams>(res, 'params');
+    await specFields.removeSpecOption(caller(res), id, optionId);
+    res.status(204).end();
+  });
+
   router.delete('/spec-fields/:id', setup, validate({ params: IdParams, query: VersionQuery }), async (_req, res) => {
     const { id } = validated<typeof IdParams>(res, 'params');
     await specFields.deleteSpecField(caller(res), id, validated<typeof VersionQuery>(res, 'query').version);
@@ -159,6 +184,18 @@ export function catalogRouter(ctx: CatalogContext): Router {
   router.put('/attributes/:id', setup, validate({ params: IdParams, body: UpdateAttributeBody }), async (_req, res) => {
     const { id } = validated<typeof IdParams>(res, 'params');
     res.json(await attributes.updateAttribute(caller(res), id, validated<typeof UpdateAttributeBody>(res, 'body')));
+  });
+
+  // Giá trị riêng của công ty trên thuộc tính nền tảng (Documents/21 mục 5.6).
+  router.post('/attributes/:id/values', setup, validate({ params: IdParams, body: AttributeValueBody }), async (_req, res) => {
+    const { id } = validated<typeof IdParams>(res, 'params');
+    res.status(201).json(await attributes.addAttributeValue(caller(res), id, validated<typeof AttributeValueBody>(res, 'body')));
+  });
+
+  router.delete('/attributes/:id/values/:valueId', setup, validate({ params: AttributeValueParams }), async (_req, res) => {
+    const { id, valueId } = validated<typeof AttributeValueParams>(res, 'params');
+    await attributes.removeAttributeValue(caller(res), id, valueId);
+    res.status(204).end();
   });
 
   router.delete('/attributes/:id', setup, validate({ params: IdParams, query: VersionQuery }), async (_req, res) => {
