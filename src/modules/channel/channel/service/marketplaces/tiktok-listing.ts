@@ -68,7 +68,11 @@ export function tiktokProductFacts(data: Row | undefined): RemoteProductFacts {
     description: plainDescription(data?.description),
     imageUrls: ((data?.main_images ?? []) as unknown[]).map(firstUrl).filter((u): u is string => u !== null),
     sizeChartUrl: firstUrl((data?.size_chart as { image?: unknown } | undefined)?.image),
-    skus: ((data?.skus ?? []) as Row[]).flatMap((k) => (k.id == null ? [] : [{ externalSkuId: String(k.id), ...measures }])),
+    skus: ((data?.skus ?? []) as Row[]).flatMap((k) => {
+      if (k.id == null) return [];
+      const saleValues = ((k.sales_attributes ?? []) as Row[]).flatMap((a) => (typeof a.value_name === 'string' && a.value_name.trim() ? [a.value_name.trim()] : []));
+      return [{ externalSkuId: String(k.id), ...measures, ...(saleValues.length && { saleValues }) }];
+    }),
   };
 }
 

@@ -87,7 +87,8 @@ export async function fillBackOf(
   return { fillBack: gaps.flatMap((field) => (values[field] ? [{ field, value: values[field] }] : [])), fillBackError: null };
 }
 
-async function readProduct(shopId: string, externalProductId: string, read: () => Promise<RemoteProductCategory | null>) {
+/** Chi tiết sản phẩm sàn qua bộ nhớ đệm 10 phút (cũng dùng ở tạo SKU kho từ SKU sàn anh em, KB3). */
+export async function readProduct(shopId: string, externalProductId: string, read: () => Promise<RemoteProductCategory | null>) {
   const key = `${shopId}:${externalProductId}`;
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < CACHE_MS) return hit.value;
