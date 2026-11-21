@@ -515,7 +515,8 @@ export const ProductGroup = z
   })
   .meta({ id: 'ProductGroup' });
 
-const SpecOptionRef = z.object({ id: z.uuid(), value: z.string(), scope: Scope });
+const OptionRef = z.object({ id: z.uuid(), value: z.string() });
+const SpecOptionRef = OptionRef.extend({ scope: Scope });
 
 export const SpecField = z
   .object({
@@ -573,8 +574,8 @@ export const ProductSpecValue = z
     allowCustom: z.boolean(),
     required: z.boolean(),
     inTemplate: z.boolean().meta({ description: 'false: thông số ngoài mẫu nhóm hiện tại đang có giá trị ("Thông số khác")' }),
-    selected: z.array(SpecOptionRef),
-    choices: z.array(SpecOptionRef).meta({ description: 'Mọi lựa chọn của thông số' }),
+    selected: z.array(OptionRef),
+    choices: z.array(OptionRef).meta({ description: 'Mọi lựa chọn của thông số' }),
     value: z.string().nullable().meta({ description: 'text, number (chuẩn hoá), date (YYYY-MM-DD)' }),
   })
   .meta({ id: 'ProductSpecValue' });

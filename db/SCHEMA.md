@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V132** (`20261120221509_san-pham-san-du-lieu`): 99 bảng trong 6 schema, 80 khoá ngoại, 81 cột tham chiếu không có khoá ngoại. Lịch sử từng phiên bản: [VERSIONS.md](VERSIONS.md).
+Phiên bản **V135** (`20261121032708_du-lieu-chung-chuyen`): 100 bảng trong 6 schema, 81 khoá ngoại, 81 cột tham chiếu không có khoá ngoại. Lịch sử từng phiên bản: [VERSIONS.md](VERSIONS.md).
 
 Nguồn: snapshot của migration mới nhất, comment trong `src/modules/<lớn>/<con>/repository/schema.ts`, khoá ngoại, trigger, index, EXCLUDE viết tay trong migration. Cột, kiểu, ràng buộc, quan hệ của từng bảng ở `db/schema/<schema>.md`.
 
@@ -45,12 +45,13 @@ Chi tiết: [schema/core.md](schema/core.md)
 - `core.roles` (access): Vai trò có sẵn có `company_id` trống, dùng chung mọi công ty; vai trò tuỳ biến thuộc một công ty.
 - `core.state_transitions` (platform): Lịch sử chuyển trạng thái của mọi thực thể có máy trạng thái (N4, Documents/21 mục 14.1: `statusHistory`), chỉ thêm.
 
-## `product` · Sản phẩm · lớp 2 · 25 bảng
+## `product` · Sản phẩm · lớp 2 · 26 bảng
 
 Chi tiết: [schema/product.md](schema/product.md)
 
 - `product.attribute_values` (catalog): Giá trị thuộc tính; `code` là phần ghép vào {VAL} của SKU (19-D27, D36).
-- `product.attributes` (catalog)
+- `product.attributes` (catalog): Thuộc tính (trục phân loại), hai tầng: Màu sắc, Kích cỡ, Dung tích, Hương vị là dòng nền tảng.
+- `product.company_group_settings` (catalog): Cài đặt của một công ty trên nhóm nền tảng (dữ liệu chung, Documents/19 D12): ẩn nhóm không bán, gợi ý giá và ngưỡng tồn riêng.
 - `product.company_product_settings` (catalog): Cài đặt sản phẩm của công ty (D11): mẫu SKU, số {SEQ} kế tiếp, gợi ý mặc định.
 - `product.doc_counters` (inventory): Bộ đếm số chứng từ của cả module lớn `product` (phiếu kho, đề nghị nhập, phiếu nhận, phiếu trả NCC): cấp số bằng `UPDATE … SET next_number = next_number + 1 RETURNING` trong giao dịch.
 - `product.goods_receipt_lines` (purchasing): Dòng phiếu nhận: số NCC báo giao, số đạt (vào tồn thực), số lỗi giữ lại (vào chờ xử lý), số trả tại chỗ.
