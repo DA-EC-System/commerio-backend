@@ -175,7 +175,7 @@ describe('đẩy listing: request chỉ kiểm và xếp việc', () => {
     // #399: đẩy tạo sản phẩm mới thì nội dung là của app.
     expect(row).toMatchObject({ status: 'pushing', seller_sku: 'CMR-OK', push_attempts: 0, content_source: 'app' });
     expect(await jobsOf(row.id)).toEqual([
-      { companyId: company.companyId, shopId, shopProductId: expect.any(String), pushStartedAt: expect.any(String), imageUrls: CATALOG },
+      { companyId: company.companyId, shopId, shopProductId: expect.any(String), productId: ok.productId, pushStartedAt: expect.any(String), imageUrls: CATALOG },
     ]);
     expect(await rowsOf(noPrice.id)).toEqual([]);
     const history = await testPool().query(
