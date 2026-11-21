@@ -23,6 +23,7 @@ import {
   marketplaceSplitLevel,
   marketplaceSplitOrder,
   returnPoliciesOf,
+  settlementFeeSamples,
   settlementPayouts,
   settlementTransactions,
   shopsToSettle,
@@ -56,7 +57,7 @@ export function createModuleContext(): AppContext {
     // #30 A7: finance (lớp dưới) cần tên gian hàng của channel cho bảng kê đối soát; #105: sales cho danh sách đơn.
     shopsOf: getShops,
     // #117: finance kéo quyết toán qua token gian hàng của channel.
-    settlementSource: { transactions: settlementTransactions, payouts: settlementPayouts, shops: shopsToSettle },
+    settlementSource: { transactions: settlementTransactions, payouts: settlementPayouts, shops: shopsToSettle, feeSamples: settlementFeeSamples },
     // #105 PR 2: sales (lớp dưới) huỷ đơn, trả lời khách xin huỷ trên sàn qua token gian hàng của channel.
     marketplaceOrders: {
       cancelReasons: marketplaceCancelReasons, cancel: marketplaceCancelOrder, decideCancel: marketplaceDecideCancel,

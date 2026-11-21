@@ -42,6 +42,11 @@ Payment kiểm chữ ký rồi gọi `handleVerifiedPayment` (tiêm qua `ctx.onV
 - **Chạy thử** không ghi sổ (doanh nghiệp: bỏ GTGT đầu ra khỏi doanh thu theo loại hình, quy tắc thuế hôm nay): lãi 30 ngày theo `ledger_entries` (dòng chưa bị thay theo cùng `isReplaced` với tổng tiền ở sàn; bỏ `NOT_SALES_PROFIT`: khoản ngoài sàn, rút tiền, quảng cáo vì đây là lãi gộp, #308) và lãi nếu áp bản này (phí, thuế đổi bao nhiêu phần trăm doanh thu). `listingsRepriced`, `belowFloor` null tới khi C2 (#104) có giá theo sàn.
 - **Quyền** (§21.0): xem có ít nhất một quyền `finance.config.*`, `finance.settlement.*`, `finance.invoice.view`; soạn, chạy thử, gửi, huỷ `finance.config.manage`; duyệt, trả về, từ chối `finance.config.approve`.
 
+## Gợi ý cấu hình phí từ quyết toán (tra-phi-san.md mục 5b, Thành chốt câu 1 ngày 21/11/2026)
+
+- `domain/fee-suggestion.ts` (thuần): `suggestFeeConfig(samples, n = 30)` lấy n mẫu mới nhất (đơn đã giao, không hoàn), mỗi loại `pct = Σ|phí| / Σ cơ sở × 100` trên cả lô; phí giao dịch dùng `transactionBase` khi sàn có (TikTok khách trả + giảm của nền tảng); `fee_service`: trung vị mỗi đơn là phần cố định (`perItemFee` = trung vị / số món trung bình), phần vượt thành `servicePct`; `withholdingPct` để so với `tax_rules`. Kèm `spread` (p10, p90, lệch chuẩn tỷ lệ từng đơn), `warnings` (lệch quá 1 điểm %: bán nhiều ngành; có số ước tính; ít hơn n đơn). `feeSamplesFromLines` dựng mẫu từ dòng quyết toán theo khoản (Lazada): cơ sở là dòng `revenue`, bỏ đơn có `customer_refund`.
+- Mẫu lấy qua `ctx.settlementSource.feeSamples` (channel `settlementFeeSamples`). Chưa có route: hợp đồng chờ PR Documents gộp cấu hình phí; CEO duyệt bằng luồng cấu hình phí sẵn có.
+
 ## Sổ tiền theo đơn (#116, D4.1)
 
 - **Bảng** `ledger_entries`, chỉ thêm (role ứng dụng không UPDATE, DELETE): mỗi khoản một dòng, số có dấu (vào dương, ra âm), `is_estimate`; số thật về thì cặp (dòng thực tế, dòng ước tính nó thay) ghi ở `ledger_replacements` (mỗi bên unique, chỉ thêm; cột `replaces_entry_id` cũ đã chép sang và không ghi nữa, #231), sai thì thêm dòng `adjustment` có `reason`. Hợp đồng: `Documents/21` §21.1, sự kiện §11.2.

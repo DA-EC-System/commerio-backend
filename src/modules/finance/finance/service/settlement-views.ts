@@ -3,6 +3,7 @@ import { Decimal } from 'decimal.js';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
+import type { FeeSample } from '../domain/fee-suggestion.ts';
 import type { PlatformPayout, PlatformTxn } from '../domain/settlement.ts';
 import { feeTotal, needsReceipt } from '../domain/settlement-match.ts';
 import {
@@ -38,6 +39,8 @@ export interface SettlementSource {
   transactions(companyId: string, shopId: string, from: string, to: string): Promise<PlatformTxn[]>;
   payouts(companyId: string, shopId: string, from: string): Promise<PlatformPayout[]>;
   shops(): Promise<{ companyId: string; shopId: string }[]>;
+  /** Mẫu phí theo đơn cho gợi ý cấu hình phí (`suggestFeeConfig`); route chờ hợp đồng gộp cấu hình phí. Gọi sàn. */
+  feeSamples?(companyId: string, shopId: string, opts: { limit: number; since: string; until: string }): Promise<FeeSample[]>;
 }
 
 interface Paging {

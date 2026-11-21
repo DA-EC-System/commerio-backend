@@ -18,6 +18,15 @@ export { getEffectiveConfig } from './service/config-versions.ts';
 export { type ConfigPayload, feePctOf, feeRoundingOf, vnDate } from './domain/config-version.ts';
 // Loại khoản trong sổ: adapter sàn của channel điền `kind` cho khoản quyết toán (#203).
 export { LEDGER_KINDS, type LedgerKind } from './domain/ledger.ts';
+// Gợi ý cấu hình phí từ quyết toán thật (tra-phi-san.md mục 5b): kiểu mẫu cho adapter sàn, hàm thuần cho route sau này.
+export {
+  DEFAULT_SAMPLE_SIZE,
+  type FeeSample,
+  feeSamplesFromLines,
+  type FeeSuggestion,
+  type SampleFeeKind,
+  suggestFeeConfig,
+} from './domain/fee-suggestion.ts';
 // Ghi sổ theo sự kiện (#116, Documents/21 §11.2); consumer `finance-ledger` đăng ký ở startFinanceBackground (#228).
 export {
   type PackageDelivered,
