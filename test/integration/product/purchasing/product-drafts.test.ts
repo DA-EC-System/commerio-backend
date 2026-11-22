@@ -120,6 +120,34 @@ describe('tạo, xoá bản soạn theo dòng đề nghị', () => {
   });
 });
 
+describe('thứ tự productDrafts', () => {
+  it('theo vị trí dòng đầu của mỗi cha, kể cả sau khi sửa đổi thứ tự dòng (không theo thứ tự tạo bản)', async () => {
+    const names = ['A', 'B', 'C', 'D', 'E'].map((n) => uniq(`Hàng ${n}`));
+    const [a, b, c, d, e] = names as [string, string, string, string, string];
+    const r = await createRequest(A.kho, A.supplierId, [
+      fresh(a, { 'Kích cỡ': 'M' }),
+      fresh(b, { 'Kích cỡ': 'M' }),
+      fresh(a, { 'Kích cỡ': 'L' }),
+      fresh(c, { 'Kích cỡ': 'M' }),
+      fresh(d, { 'Kích cỡ': 'M' }),
+      fresh(e, { 'Kích cỡ': 'M' }),
+    ] as never);
+    const detail = PurchaseRequest.parse((await pur(A.kho).get(`/requests/${r.id}`)).body);
+    expect(detail.productDrafts.map((x) => x.parentName)).toEqual([a, b, c, d, e]);
+    // Đổi thứ tự dòng ở nháp: bản soạn cũ giữ nguyên (không tạo lại) nhưng xếp theo dòng mới.
+    const put = await pur(A.kho).put(`/requests/${r.id}`, {
+      supplierId: A.supplierId,
+      note: '',
+      version: detail.version,
+      lines: [fresh(e, { 'Kích cỡ': 'M' }), fresh(c, { 'Kích cỡ': 'M' }), fresh(a, { 'Kích cỡ': 'M' }), fresh(d, { 'Kích cỡ': 'M' }), fresh(b, { 'Kích cỡ': 'M' })],
+    });
+    expect(put.status, JSON.stringify(put.body)).toBe(200);
+    const after = PurchaseRequest.parse(put.body);
+    expect(after.productDrafts.map((x) => x.parentName)).toEqual([e, c, a, d, b]);
+    expect(after.productDrafts.map((x) => x.id).sort()).toEqual(detail.productDrafts.map((x) => x.id).sort());
+  });
+});
+
 describe('quyền (21 mục 16.2)', () => {
   let draftId: string;
   beforeAll(async () => {
@@ -189,9 +217,11 @@ describe('kiểm ô khi sửa', () => {
   });
 
   it('gộp theo ô: specs theo fieldId (gửi rỗng là xoá), variants theo tổ hợp; lỗi theo chỉ số trong mảng đã gửi', async () => {
-    const r = await createRequest(A.kho, A.supplierId, [fresh(uniq('Áo'), { 'Kích cỡ': 'M' }), fresh(uniq('Áo'), { 'Kích cỡ': 'L' })] as never);
+    const nameM = uniq('Áo');
+    const r = await createRequest(A.kho, A.supplierId, [fresh(nameM, { 'Kích cỡ': 'M' }), fresh(uniq('Áo'), { 'Kích cỡ': 'L' })] as never);
     const drafts = PurchaseRequest.parse((await pur(A.kho).get(`/requests/${r.id}`)).body).productDrafts;
-    const id = drafts[0]!.id;
+    // Hai bản soạn tạo cùng giao dịch, cùng `created_at`: thứ tự trả về không cố định, chọn theo tên (bản của dòng "M").
+    const id = drafts.find((d) => d.parentName === nameM)!.id;
     const field = async () => {
       const res = await api(A.ceo).post('/spec-fields', { name: uniq('Ghi chú'), input: 'text', allowCustom: false });
       expect(res.status, JSON.stringify(res.body)).toBe(201);

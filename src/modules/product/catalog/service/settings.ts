@@ -3,7 +3,7 @@ import { withCompany } from '../../../../shared/db/client.ts';
 import { recordAudit } from '../../../core/index.ts';
 import { findSettings, type SettingsRow, updateSettingsIfVersion } from '../repository/settings.ts';
 import { auditOf, type Caller, versionConflict } from './errors.ts';
-import { columnsOf, type SuggestConfig, suggestOf, withSuggest } from './suggest-config.ts';
+import { columnsOf, mergeSuggest, type SuggestPatch, suggestOf, withSuggest } from './suggest-config.ts';
 
 const ENTITY = 'product.company_product_settings';
 
@@ -18,15 +18,15 @@ export async function getSettings(companyId: string): Promise<SettingsView> {
   return toView(await withCompany(companyId, () => findSettings(companyId)));
 }
 
-/** Đổi mẫu chỉ áp cho SKU sinh sau (P3); `skuNextSeq` chỉ đọc. `suggest` không gửi thì giữ. */
+/** Đổi mẫu chỉ áp cho SKU sinh sau (P3); `skuNextSeq` chỉ đọc. `suggest` không gửi (hoặc vắng từng trường) thì giữ. */
 export async function updateSettings(
   caller: Caller,
-  input: { skuPattern: string; suggest?: SuggestConfig | undefined; version: number },
+  input: { skuPattern: string; suggest?: SuggestPatch | undefined; version: number },
 ): Promise<SettingsView> {
   return withCompany(caller.companyId, async () => {
     const current = await findSettings(caller.companyId);
     if (current.version !== input.version) throw conflict(current);
-    const suggest = input.suggest ?? suggestOf(current);
+    const suggest = mergeSuggest(suggestOf(current), input.suggest);
     if (!(await updateSettingsIfVersion(caller.companyId, input.version, input.skuPattern, columnsOf(suggest)))) {
       throw conflict(await findSettings(caller.companyId));
     }

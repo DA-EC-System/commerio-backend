@@ -66,7 +66,13 @@ export const SuggestConfig = z
   })
   .meta({ id: 'SuggestConfig' });
 
-const keepSuggest = SuggestConfig.optional().meta({ description: 'Bỏ trống thì giữ cấu hình đang lưu (tạo mới: chưa đặt)' });
+/**
+ * Cấu hình gợi ý gửi lên (`PUT /settings`, `POST`, `PUT /groups`): từng trường vắng là giữ giá trị đang lưu (tạo mới: chưa
+ * đặt), `null` là xoá (kiểm người bán KB2 2.10: trước đây thiếu trường là 422, phải gửi `null` tường minh).
+ */
+const keepSuggest = SuggestConfig.partial()
+  .optional()
+  .meta({ description: 'Bỏ trống, hoặc vắng từng trường, thì giữ giá trị đang lưu (tạo mới: chưa đặt); `null` là xoá' });
 
 export const GroupBody = z
   .object({
@@ -234,6 +240,42 @@ export const GroupTemplateBody = z
     version: settingsVersion.meta({ description: 'Nhóm nền tảng: chỉ gửi phần của công ty; `version` của cài đặt công ty' }),
   })
   .meta({ id: 'GroupTemplateRequest' });
+
+/**
+ * Thêm một thông số vào cuối mẫu của nhóm (Documents/21 mục 5.6, `POST /groups/:id/template/fields`): `field` là
+ * `{ fieldId }` (thông số có sẵn) hoặc thông số mới (luật như `POST /spec-fields`, không có `code`: sinh từ tên).
+ */
+const TemplateFieldInput = z
+  .object({
+    fieldId: z.string().optional().meta({ description: 'Chọn thông số có sẵn; gửi thì không gửi trường nào khác' }),
+    name: name('thông số', 40).optional(),
+    input: z.enum(SPEC_INPUTS, 'Chọn kiểu nhập').optional(),
+    unit: specUnit.meta({ description: 'Chỉ khi `input = number`' }),
+    allowCustom: z.boolean('Chọn có nhận giá trị ngoài danh sách không').optional(),
+    options: z.array(z.object({ value: specOption })).max(500, 'Tối đa 500 lựa chọn').optional(),
+  })
+  .strict()
+  .superRefine((f, ctx) => {
+    if (f.fieldId !== undefined) {
+      const extra = Object.keys(f).filter((k) => k !== 'fieldId' && f[k as keyof typeof f] !== undefined);
+      if (extra.length) ctx.addIssue({ code: 'custom', path: ['fieldId'], message: 'Chọn thông số có sẵn hoặc tạo mới, không cả hai' });
+      return;
+    }
+    if (f.name === undefined) ctx.addIssue({ code: 'custom', path: ['name'], message: 'Nhập tên thông số' });
+    if (f.input === undefined) ctx.addIssue({ code: 'custom', path: ['input'], message: 'Chọn kiểu nhập' });
+    if (f.allowCustom === undefined) ctx.addIssue({ code: 'custom', path: ['allowCustom'], message: 'Chọn có nhận giá trị ngoài danh sách không' });
+  })
+  .meta({
+    description: '`{ fieldId }` chọn thông số có sẵn, hoặc `{ name, input, unit?, allowCustom, options? }` tạo thông số mới của công ty',
+  });
+
+export const TemplateFieldBody = z
+  .object({
+    field: TemplateFieldInput,
+    required: z.boolean('Chọn bắt buộc hay không'),
+    version: settingsVersion.meta({ description: '`version` của mẫu (nhóm nền tảng: của cài đặt công ty), như `PUT /groups/:id/template`' }),
+  })
+  .meta({ id: 'TemplateFieldRequest' });
 
 export const SpecOptionBody = z
   .object({ value: z.string('Nhập lựa chọn').trim().min(1, 'Nhập lựa chọn').max(60, 'Lựa chọn tối đa 60 ký tự') })

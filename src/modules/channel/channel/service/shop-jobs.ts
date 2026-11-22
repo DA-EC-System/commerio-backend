@@ -61,6 +61,8 @@ export const listingPushQueue = defineQueue('channel.listing_push', ListingPushJ
 export const ProductPushJobSchema = JobDataSchema.extend({
   shopId: z.uuid(),
   shopProductId: z.uuid(),
+  /** Sản phẩm cha (KB3): dòng `match` không có `product_id`; việc cũ thiếu trường thì lấy từ dòng `app`. */
+  productId: z.uuid().optional(),
   pushStartedAt: z.iso.datetime(),
   imageUrls: z.array(z.string()).max(PUSH_IMAGE_MAX),
   sizeChartUrl: z.string().nullish(),

@@ -46,7 +46,7 @@ import type { PriceFilterResult } from '../domain/price-filter.ts';
 import { pushAttributes, specChecks, specStatusOf } from './product-specs.ts';
 import { keepsPlatformContent, listingText, pushBlock, pushSpec, specBlock, variantImageGaps } from './push-block.ts';
 import { PUSH_IMAGE_MAX, sendListingPush, sendProductPush } from './shop-jobs.ts';
-import { findAppShopProduct, findShopProduct, insertAppShopProduct, setShopProductPushStarted } from '../repository/shop-products.ts';
+import { findAppShopProduct, findShopProduct, insertAppShopProduct, matchShopProductsOf, setShopProductPushStarted } from '../repository/shop-products.ts';
 import { MarketplaceError } from './marketplaces/index.ts';
 import { type Actor, onMarketplace, ownShop, platformOf, shopSession } from './shops.ts';
 
@@ -393,7 +393,7 @@ export async function pushListings(
   }
   const ids = [...new Set(input.variantIds)];
   const { adapter } = platformOf(shop.platform);
-  const { variants, prices, specs, gaps, current, images, sizeCharts } = await inCompany(async () => {
+  const { variants, prices, specs, siblings, gaps, current, images, sizeCharts } = await inCompany(async () => {
     const variants = new Map((await port.variants(ids)).map((v) => [v.id, v]));
     const productIds = [...new Set([...variants.values()].map((v) => v.productId))];
     const siblings = await port.variants(undefined, { productIds });
@@ -401,6 +401,7 @@ export async function pushListings(
       variants,
       prices: await port.standardPrices(ids),
       specs: await specChecks(port, shop, adapter, siblings),
+      siblings,
       // Ảnh theo giá trị có một phần, chỉ khi sàn đòi đủ ảnh (21 §18.5 `variant_images_missing`).
       gaps: variantImageGaps(adapter, siblings),
       current: new Map(await Promise.all(ids.map(async (id) => [id, await findListingRow(shop.id, id)] as const))),
@@ -477,7 +478,8 @@ export async function pushListings(
     results.push(await enqueue(actor, shop.id, v.id, v.sku, existing, imageUrls, sizeChartUrl, price));
   }
   for (const [productId, rows] of groups) {
-    results.push(...(await enqueueProduct(actor, shop.id, productId, rows, images.get(productId) ?? [], sizeCharts.get(productId) ?? null)));
+    const siblingIds = siblings.filter((v) => v.productId === productId).map((v) => v.id);
+    results.push(...(await enqueueProduct(actor, shop.id, productId, rows, images.get(productId) ?? [], sizeCharts.get(productId) ?? null, siblingIds)));
   }
   return { results };
 }
@@ -503,11 +505,19 @@ async function enqueueProduct(
   rows: readonly NewSku[],
   imageUrls: string[],
   sizeChartUrl: string | null,
+  /** Mọi biến thể của cha (kể cả đã có listing), để tìm sản phẩm sàn người bán đã ghép. */
+  siblingIds: readonly string[],
 ): Promise<PushResult[]> {
   const pushStartedAt = new Date();
   try {
     const listed = await withCompany(actor.companyId, async () => {
-      const sp = (await findAppShopProduct(shopId, productId, { lock: true })) ?? (await insertAppShopProduct(actor.companyId, shopId, productId));
+      // Cha đã có sản phẩm trên sàn: dòng `app` (app tạo), hoặc đúng một dòng `match` (sản phẩm người bán ghép vào app, KB3)
+      // thì thêm phân loại vào đó, không tạo sản phẩm sàn mới. Nhiều dòng `match` (người bán tách sản phẩm trên sàn) thì chặn
+      // `platform_product_ambiguous` (21 §18.5): không tự tạo sản phẩm sàn mới, chọn sản phẩm sàn là việc chờ (29 mục 6).
+      const app = await findAppShopProduct(shopId, productId, { lock: true });
+      const matched = app ? [] : await matchShopProductsOf(shopId, siblingIds, { lock: true });
+      if (matched.length > 1) return { ambiguous: matched.map((m) => m.externalProductId!), out: [] as ListingRow[] };
+      const sp = app ?? matched[0] ?? (await insertAppShopProduct(actor.companyId, shopId, productId));
       await setShopProductPushStarted(sp.id, pushStartedAt);
       const out: ListingRow[] = [];
       for (const r of rows) {
@@ -535,13 +545,18 @@ async function enqueueProduct(
         companyId: actor.companyId,
         shopId,
         shopProductId: sp.id,
+        productId,
         pushStartedAt: pushStartedAt.toISOString(),
         imageUrls,
         ...(sizeChartUrl && { sizeChartUrl }),
       });
-      return out;
+      return { ambiguous: null, out };
     });
-    return listed.map((row) => ({ variantId: row.variantId!, listingId: row.id, status: row.status, code: null, message: null }));
+    if (listed.ambiguous) {
+      const message = `Biến thể anh em đang nằm ở ${listed.ambiguous.length} sản phẩm trên sàn; chọn sản phẩm cần thêm vào (${listed.ambiguous.join(', ')})`;
+      return rows.map((r) => blocked(r.variantId, r.existing, 'platform_product_ambiguous', message));
+    }
+    return listed.out.map((row) => ({ variantId: row.variantId!, listingId: row.id, status: row.status, code: null, message: null }));
   } catch (err) {
     const constraint = pgError(err).constraint;
     const raced =

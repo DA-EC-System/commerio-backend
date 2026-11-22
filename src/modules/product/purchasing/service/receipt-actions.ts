@@ -84,13 +84,19 @@ async function createReceivedProducts(
         groupId: rl.newGroupId,
         options: rl.newOptionValues ?? [],
       })),
-      `Tạo khi nhập kho phiếu ${receipt.number}`,
+      receipt.number,
     );
     if (!result.ok) {
       const errors: Record<string, string> = {};
-      for (const [k, e] of result.errors) errors[`lines.${toCreate[k]!.i}`] = e.message;
+      // Sản phẩm đang giữ tên theo dòng, để FE mở thẳng trang sản phẩm đó (Documents/21 mục 16.3).
+      const productIds: Record<string, string> = {};
+      for (const [k, e] of result.errors) {
+        errors[`lines.${toCreate[k]!.i}`] = e.message;
+        if (e.productId) productIds[`lines.${toCreate[k]!.i}`] = e.productId;
+      }
       if (result.code === 'new_product_name_taken') {
-        throw new AppError(409, 'new_product_name_taken', Object.values(errors)[0]!, { errors });
+        const productId = Object.values(productIds)[0] ?? null;
+        throw new AppError(409, 'new_product_name_taken', Object.values(errors)[0]!, { errors, productId, productIds });
       }
       throw invalid(errors, result.code);
     }
