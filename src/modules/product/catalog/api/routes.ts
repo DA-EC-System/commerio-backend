@@ -6,7 +6,7 @@ import { AppError } from '../../../../shared/errors/app-error.ts';
 import { validate, validated } from '../../../../shared/http/validate.ts';
 import * as attributes from '../service/attributes.ts';
 import * as groups from '../service/groups.ts';
-import { getGroupTemplate, putGroupTemplate } from '../service/group-templates.ts';
+import { addTemplateField, getGroupTemplate, putGroupTemplate } from '../service/group-templates.ts';
 import * as specFields from '../service/spec-fields.ts';
 import * as settings from '../service/settings.ts';
 import { type BusinessActor, changeBusinessStatus } from '../service/business-status.ts';
@@ -31,6 +31,7 @@ import {
   GroupListQuery,
   GroupTemplateBody,
   SpecOptionBody,
+  TemplateFieldBody,
   SpecOptionParams,
   MoveProductsBody,
   IdParams,
@@ -132,6 +133,12 @@ export function catalogRouter(ctx: CatalogContext): Router {
   router.put('/groups/:id/template', setup, validate({ params: IdParams, body: GroupTemplateBody }), async (_req, res) => {
     const { id } = validated<typeof IdParams>(res, 'params');
     res.json(await putGroupTemplate(caller(res), id, validated<typeof GroupTemplateBody>(res, 'body')));
+  });
+
+  // Tạo hoặc chọn thông số rồi gắn vào cuối mẫu, một giao dịch (Documents/21 mục 5.6).
+  router.post('/groups/:id/template/fields', setup, validate({ params: IdParams, body: TemplateFieldBody }), async (_req, res) => {
+    const { id } = validated<typeof IdParams>(res, 'params');
+    res.json(await addTemplateField(caller(res), id, validated<typeof TemplateFieldBody>(res, 'body')));
   });
 
   // Thư viện thông số (#510, Documents/21 mục 5.5).

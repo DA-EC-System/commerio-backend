@@ -94,3 +94,21 @@ describe('lazadaProductFacts', () => {
     expect(lazadaProductFacts(undefined, { size_chart: 'S M L' }, undefined).sizeChartUrl).toBeNull();
   });
 });
+
+// Giá trị phân loại của từng SKU (KB3): tạo SKU kho từ SKU sàn anh em lấy làm giá trị thuộc tính biến thể.
+describe('saleValues của SKU sàn', () => {
+  it('TikTok: skus[].sales_attributes[].value_name theo thứ tự; SKU không có thì không có trường', () => {
+    const facts = tiktokProductFacts({
+      skus: [
+        { id: 'S1', sales_attributes: [{ id: '100000', value_name: ' Cam ' }, { id: '100007', value_name: 'M' }] },
+        { id: 'S2', sales_attributes: [] },
+      ],
+    });
+    expect(facts.skus.map((s) => s.saleValues)).toEqual([['Cam', 'M'], undefined]);
+  });
+
+  it('Lazada: skus[].saleProp lấy giá trị; không có saleProp thì không có trường', () => {
+    const facts = lazadaProductFacts(undefined, {}, [{ SkuId: 1, saleProp: { color_family: 'Cam' } }, { SkuId: 2 }]);
+    expect(facts.skus.map((s) => s.saleValues)).toEqual([['Cam'], undefined]);
+  });
+});
