@@ -1046,7 +1046,7 @@ export const VariantCapabilitiesSchema = z
     salesRequired: z.array(z.string()).meta({ description: 'Sales attribute bắt buộc phải có trong `axisMap`' }),
     addVariant: z.boolean().meta({ description: 'true: thêm được phân loại vào sản phẩm sàn đã có; false thì SKU bị chặn ở lần đẩy đầu chặn cả cha (§18.8.4)' }),
     combineTarget: z.string().nullable().meta({
-      description: 'Mã sales attribute (hoặc `__custom`) BE đề xuất để ghép khi sản phẩm nhiều thuộc tính biến thể hơn `maxAxes`; null khi leaf không ghép được (#568)',
+      description: 'Mã sales attribute BE đề xuất để ghép khi sản phẩm nhiều thuộc tính biến thể hơn `maxAxes`; null khi leaf không ghép được (#568)',
     }),
     maxValueLength: z.number().int().positive().nullable().meta({ description: 'Số ký tự tối đa của giá trị thuộc tính biến thể ghép; null: sàn không công bố' }),
     maxAxisValues: z.number().int().positive().nullable().meta({ description: 'Số giá trị tối đa của thuộc tính biến thể ghép; null: sàn không công bố' }),
