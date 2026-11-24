@@ -1,0 +1,42 @@
+# Reset staging: xoá dữ liệu của mọi công ty (gian hàng, đơn, kiện, tồn, sổ tiền, tài khoản), giữ dữ liệu chuẩn
+# của nền tảng, rồi seed lại Demo, Cách Ly, QA Hộp Đen A/B như job migrate của deploy-staging.yml.
+# Chạy tay: Actions → Reset staging → Run workflow, gõ RESET. Hoặc: gh workflow run reset-staging.yml -f confirm=RESET
+# Chi tiết bảng giữ/xoá: scripts/db/reset.ts.
+name: Reset staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: Gõ RESET để xác nhận xoá dữ liệu staging
+        required: true
+
+# Không chạy chen với deploy (đang migrate, seed).
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  reset:
+    if: inputs.confirm == 'RESET'
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Xoá dữ liệu công ty
+        run: npm run db:reset -- --yes
+      - name: Migration (bù nếu main có migration mới)
+        run: npm run db:migrate
+      - name: Seed lại tài khoản và dữ liệu demo
+        run: npm run db:seed
+        env:
+          SEED_PASSWORD: ${{ secrets.STAGING_SEED_PASSWORD }}

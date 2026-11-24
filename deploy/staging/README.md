@@ -86,6 +86,16 @@ Prometheus tính các luật ở `deploy/monitoring/rules/alerts.yml` (tiến tr
 
 Seed tạo thêm hai công ty cho bộ test hộp đen (#120), cùng mật khẩu seed: "Công ty QA Hộp Đen A" (`qa-ceo@`, `qa-admin@`, `qa-sale@`, `qa-kho@`, `qa-truong-kho@bk.demo`; bật Nhập hàng, Kênh bán, Báo cáo) và "Công ty QA Hộp Đen B" (`qa-ceo-b@bk.demo`). Mỗi lần chạy test thêm bản ghi mới vào hai công ty này; buổi demo dùng "Công ty Demo Commerio".
 
+## Reset dữ liệu staging
+
+Test lại từ đầu (kết nối sàn, đơn, kiện): Actions → **Reset staging** → Run workflow, gõ `RESET` (hoặc `gh workflow run reset-staging.yml -f confirm=RESET`). Workflow chạy `npm run db:reset -- --yes`, `db:migrate`, rồi `db:seed` với `STAGING_SEED_PASSWORD`, chung hàng đợi với deploy nên không chen giữa lúc migrate.
+
+- **Xoá**: mọi công ty, tài khoản, gian hàng, đơn, kiện, yêu cầu trả, tồn, chứng từ, sổ tiền, file, audit, outbox, refresh token; mọi job pg-boss và lịch cron gắn shop/công ty. Ai đang đăng nhập đều bị đăng xuất.
+- **Giữ**: `channel.marketplaces`, `platform_categories`, `platform_category_attributes`, `core.permissions`, `role_permissions`, và dòng dùng chung (`company_id IS NULL`) của nhóm hàng, thông số, thuộc tính, ánh xạ sàn, vai hệ thống; lịch cron chung (purge, category_sync).
+- **Sau khi chạy**: chỉ còn tài khoản seed (Demo, Cách Ly, QA Hộp Đen A/B). Công ty e2e (`form.*`, `finance-*@e2e.commerio.test`) do spec tự đăng ký lại. Shop trên Lazada/TikTok vẫn cấp quyền cho app, nối lại bằng OAuth như bình thường. Ảnh cũ còn trên S3 nhưng không bảng nào trỏ tới.
+
+Xem trước số dòng sẽ xoá (chạy rồi rollback): `npm run db:reset:staging -- --dry-run`. Bảng mới không có `company_id` mà chưa xếp vào danh sách trong `scripts/db/reset.ts` thì script dừng, không đoán.
+
 ## Tài khoản quản trị nền tảng
 
 Seed không tạo quản trị nền tảng (quyền cao nhất, không dùng chung mật khẩu demo). Cấp bằng script, chạy từ máy với chuỗi kết nối staging như `db:migrate:staging` (#152):
