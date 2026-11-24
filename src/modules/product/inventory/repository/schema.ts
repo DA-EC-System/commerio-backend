@@ -185,6 +185,11 @@ export const stockDocumentLines = inventorySchema.table(
     quantity: integer('quantity'),
     bookQty: integer('book_qty'),
     countedQty: integer('counted_qty'),
+    /**
+     * Nguồn số đếm của phiếu kiểm kê đầu kỳ (#569, Documents/19): `platform` khi điền theo tồn sàn và số khớp tồn sàn lúc lưu,
+     * `manual` khi gõ tay; null khi chưa đếm hoặc phiếu không phải đầu kỳ.
+     */
+    countSource: text('count_source').$type<'manual' | 'platform'>(),
     expectedQty: integer('expected_qty'),
     scannedQty: integer('scanned_qty'),
     resellQty: integer('resell_qty'),
@@ -203,6 +208,10 @@ export const stockDocumentLines = inventorySchema.table(
     index().on(t.variantId),
     check('stock_document_lines_quantity', sql`${t.quantity} > 0`),
     check('stock_document_lines_counted', sql`${t.countedQty} >= 0`),
+    check(
+      'stock_document_lines_count_source',
+      sql`${t.countSource} is null or (${t.countSource} in ('manual', 'platform') and ${t.countedQty} is not null)`,
+    ),
     check(
       'stock_document_lines_inspection',
       sql`${t.expectedQty} >= 0 and ${t.scannedQty} >= 0 and ${t.resellQty} >= 0 and ${t.damagedQty} >= 0
