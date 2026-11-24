@@ -42,6 +42,7 @@ export function toPlatformReturn(shopId: string, r: RemoteReturn): PlatformRetur
     returnTrackingCode: r.returnTrackingCode,
     respondBy: r.respondBy,
     sellerHandledReceipt: r.sellerHandledReceipt ?? false,
+    refundConfirmed: r.refundConfirmed ?? false,
     reason: r.reason,
     refundAmount: r.refundAmount,
     refundAmountUnreadable: r.refundAmountUnreadable ?? null,
@@ -82,7 +83,7 @@ export async function approvePendingRefunds(companyId: string, shopId: string, a
   let approved = 0;
   for (const r of pending) {
     try {
-      await onMarketplace(() => adapter.approveReturnRefund!(accessToken, r.externalReturnId));
+      await onMarketplace(() => adapter.approveReturnRefund!(accessToken, r.externalReturnId, r.externalLineIds));
     } catch (err) {
       if (shopStopped(err)) throw err;
       logger.warn({ err, shopId, returnRequestId: r.id }, 'báo sàn đồng ý hoàn tiền lỗi');
