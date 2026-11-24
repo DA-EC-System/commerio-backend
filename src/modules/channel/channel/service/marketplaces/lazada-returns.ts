@@ -4,6 +4,9 @@
 // (`/order/reverse/return/update`, `action` ∈ instantRefund, agreeReturn, refuseReturn, agreeRefund, refuseRefund,
 // confirmDelivery), GetReverseOrderHistoryList (`/order/reverse/return/history/list`), ReverseOrderOnlyRefundDecide
 // (`/order/reverse/onlyrefund/seller/decide`, `action` agreeRefund, startDispute).
+// ReverseOrderReturnUpdate đọc lại 24/11/2026: mã lỗi E0108 (từ chối cần lý do), E0109 (cần comment), E0110 (từ chối hoàn
+// tiền cần ảnh), E0111 (không từ chối nhiều dòng một lần), E0114 (đơn ngược không nhận thao tác này); luồng người bán
+// (docId 121061 §3.2.4–3.2.6): nhận hàng (`confirmDelivery`) → kiểm hàng → `agreeRefund` hoặc `refuseRefund` → sàn hoàn.
 // Gọi thật 12/11/2026 trên shop thử (chỉ đọc): lọc `ReverseOrderLineModifiedTimeRangeStart` (ms) chạy, 26 yêu cầu sửa trong
 // 60 ngày; lịch sử chỉ có `time` (ms), `operator`, `picture`; lý do có `reason_id`, `muti_language_text`, `text`.
 // Chưa gọi thao tác ghi trên sàn thật (không chắc đơn nào của shop thử dùng chung là của nhóm).
@@ -64,6 +67,16 @@ export function lazadaReturnLineStatus(
     default:
       return null;
   }
+}
+
+/**
+ * Sàn xác nhận hoàn tiền sau khi hàng về người bán (#437): yêu cầu trả hàng, mọi món `REFUND_PENDING` (người bán đồng ý
+ * hoàn) hoặc `REFUND_SUCCESS`, chiều về đã giao tới người bán. Hoàn ngay khi hàng còn đang về (`instantRefund`) không tính:
+ * đó là bước `refund_only`.
+ */
+function refundConfirmedOf(lines: readonly Row[], kind: RemoteReturn['kind']): boolean {
+  if (kind !== 'return' || !lines.length) return false;
+  return lines.every((l) => (l.reverse_status === 'REFUND_PENDING' || l.reverse_status === 'REFUND_SUCCESS') && delivered(opt(l.ofc_status)));
 }
 
 /** Hạn người bán phải trả lời: `sla` (ms) sớm nhất của các dòng, chỉ khi yêu cầu còn chờ người bán (#436). */
@@ -136,36 +149,78 @@ export function toLazadaReturn(item: Row, amount: LazadaAmountReader): RemoteRet
     disputeInProgress: lines.some((l) => l.is_dispute === true),
     returnTrackingCode: unique(lines.map((l) => opt(l.tracking_number)))[0] ?? null,
     respondBy: respondByOf(lines, status?.status ?? null),
+    refundConfirmed: refundConfirmedOf(lines, kind),
     returnTo: returnToType === 'RTW' ? 'warehouse' : returnToType === 'RTM' ? 'merchant' : item.is_rtm === true ? 'merchant' : item.is_rtm === false ? 'warehouse' : null,
   };
 }
 
 const idList = (ids: readonly string[]) => `[${ids.join(',')}]`;
 
+/** Đơn ngược đã qua bước quyết hoàn tiền: gọi `agreeRefund` lại thì sàn từ chối, không phải lỗi. */
+const REFUND_DECIDED = new Set(['REFUND_PENDING', 'REFUND_SUCCESS', 'REFUND_REJECT', 'REQUEST_CANCEL', 'CANCEL_SUCCESS']);
+
+/** E0114 "this reverse does not support this action": Lazada trả mã `114` (bảng mã của ReverseOrderReturnUpdate). */
+const isE0114 = (err: MarketplaceError) => err.platformCode === '114' || err.platformCode === 'E0114' || Boolean(err.platformMessage?.includes('E0114'));
+
+/**
+ * Lỗi của `/order/reverse/return/update` cho người dùng (#437, LZ-TRA-U05). Mã 6 ("Unexpected internal error", ngoài bảng
+ * mã của API này) khi từ chối là sàn không nhận lệnh, không phải lỗi tạm: báo `rejected`, không bảo thử lại. Mã 6 của API
+ * khác vẫn là lỗi tạm (`TRANSIENT_CODES` ở `lazada.ts`). E0114: yêu cầu đã được xử lý trên sàn.
+ */
+function returnUpdateError(err: MarketplaceError, action: string, withImages: boolean): MarketplaceError {
+  const refuse = action === 'refuseReturn' || action === 'refuseRefund';
+  let message: string | null = null;
+  if (refuse && err.platformCode === '6') {
+    message = withImages
+      ? 'Lazada không nhận lệnh từ chối (mã 6). Kiểm yêu cầu trên Seller Center trước khi thử lại'
+      : 'Lazada không nhận lệnh từ chối, cần ít nhất 1 ảnh bằng chứng';
+  } else if (isE0114(err)) {
+    message = 'Yêu cầu này đã được xử lý trên Lazada. Tải lại để xem trạng thái mới';
+  }
+  if (!message) return err;
+  const out = new MarketplaceError('rejected', err.platformCode, err.platformMessage);
+  out.requestId = err.requestId;
+  out.details = err.details;
+  out.userMessage = message;
+  return out;
+}
+
 type Image = { name: string; url: string };
 
 export function lazadaReturnMethods(
   call: Call,
   amount: LazadaAmountReader,
-): Pick<Required<MarketplaceAdapter>, 'listReturns' | 'returnReasons' | 'decideReturn' | 'confirmReturnReceived' | 'returnHistory'> {
+): Pick<
+  Required<MarketplaceAdapter>,
+  'listReturns' | 'returnReasons' | 'decideReturn' | 'confirmReturnReceived' | 'approveReturnRefund' | 'returnHistory'
+> {
   /** Mã dòng đơn ngược đầu của yêu cầu (lý do, lịch sử theo dòng). */
   async function firstLineId(accessToken: string, reverseOrderId: string): Promise<string> {
-    const body = await call('/reverse/getreverseordersforseller', { access_token: accessToken, reverse_order_id: reverseOrderId, page_no: '1', page_size: '10' });
-    const item = ((body.result as { items?: Row[] } | undefined)?.items ?? []).find((i) => str(i.reverse_order_id) === reverseOrderId);
+    const item = await reverseOrder(accessToken, reverseOrderId);
     const id = str(((item?.reverse_order_lines ?? []) as Row[])[0]?.reverse_order_line_id);
     if (!id) throw new MarketplaceError('rejected', 'return_not_found', 'Sàn không còn yêu cầu trả này');
     return id;
   }
 
+  /** Đơn ngược theo mã (`reverse_order_id`); không còn thì null. */
+  async function reverseOrder(accessToken: string, reverseOrderId: string): Promise<Row | null> {
+    const body = await call('/reverse/getreverseordersforseller', { access_token: accessToken, reverse_order_id: reverseOrderId, page_no: '1', page_size: '10' });
+    return ((body.result as { items?: Row[] } | undefined)?.items ?? []).find((i) => str(i.reverse_order_id) === reverseOrderId) ?? null;
+  }
+
   async function update(accessToken: string, action: string, reverseOrderId: string, lineIds: readonly string[], extra: Record<string, string> = {}) {
     if (!lineIds.length) throw new MarketplaceError('rejected', 'return_lines_missing', 'Yêu cầu trả chưa có mã dòng của sàn');
-    await call('/order/reverse/return/update', {
-      access_token: accessToken,
-      action,
-      reverse_order_id: reverseOrderId,
-      reverse_order_item_ids: idList(lineIds),
-      ...extra,
-    });
+    try {
+      await call('/order/reverse/return/update', {
+        access_token: accessToken,
+        action,
+        reverse_order_id: reverseOrderId,
+        reverse_order_item_ids: idList(lineIds),
+        ...extra,
+      });
+    } catch (err) {
+      throw err instanceof MarketplaceError ? returnUpdateError(err, action, Boolean(extra.image_info)) : err;
+    }
   }
 
   /**
@@ -217,14 +272,15 @@ export function lazadaReturnMethods(
         nextCursor: items.length < PAGE_SIZE ? null : String(page + 1),
       };
     },
-    async returnReasons(accessToken, externalReturnId, action) {
+    async returnReasons(accessToken, externalReturnId, _action) {
       const lineId = await firstLineId(accessToken, externalReturnId);
       const body = await call('/order/reverse/reason/list', { access_token: accessToken, reverse_order_line_id: lineId });
       return ((body.data ?? []) as Row[]).map((r) => ({
         id: str(r.reason_id),
         label: opt(r.muti_language_text) ?? str(r.text),
-        // E0110: từ chối hoàn tiền bắt buộc ảnh.
-        requiresImage: action === 'refuse-refund',
+        // E0110: từ chối hoàn tiền bắt buộc ảnh. Từ chối trả hàng: tài liệu ghi ảnh tuỳ chọn, nhưng gọi thật 18/11/2026
+        // (YCT-000032, LZ-TRA-B03) không ảnh thì sàn trả mã 6, kèm ảnh thì nhận (#437, LZ-TRA-U06).
+        requiresImage: true,
       }));
     },
     async decideReturn(accessToken, externalReturnId, externalLineIds, decision, opts) {
@@ -243,6 +299,19 @@ export function lazadaReturnMethods(
     },
     async confirmReturnReceived(accessToken, externalReturnId, externalLineIds) {
       await update(accessToken, 'confirmDelivery', externalReturnId, externalLineIds);
+    },
+    async approveReturnRefund(accessToken, externalReturnId, externalLineIds) {
+      // Sau phiếu kiểm hàng hoàn ghi sổ (#437): người bán đồng ý hoàn tiền mọi món của yêu cầu. Sàn từ chối vì đơn ngược đã
+      // qua bước này (người bán làm trên Seller Center, khách huỷ) thì đọc lại trạng thái, coi là xong.
+      try {
+        await update(accessToken, 'agreeRefund', externalReturnId, externalLineIds);
+      } catch (err) {
+        if (!(err instanceof MarketplaceError) || err.kind !== 'rejected') throw err;
+        const item = await reverseOrder(accessToken, externalReturnId).catch(() => null);
+        const lines = ((item?.reverse_order_lines ?? []) as Row[]).filter((l) => l && typeof l === 'object');
+        if (lines.length && lines.every((l) => REFUND_DECIDED.has(str(l.reverse_status)))) return;
+        throw err;
+      }
     },
     async returnHistory(accessToken, externalReturnId, externalLineIds) {
       const lineId = externalLineIds[0] ?? (await firstLineId(accessToken, externalReturnId));

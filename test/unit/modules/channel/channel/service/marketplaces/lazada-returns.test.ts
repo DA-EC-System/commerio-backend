@@ -5,6 +5,7 @@ import {
   lazadaReturnMethods,
   toLazadaReturn,
 } from '#src/modules/channel/channel/service/marketplaces/lazada-returns.ts';
+import { MarketplaceError } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { lazadaAmount } from '#src/modules/channel/channel/service/marketplaces/lazada.ts';
 
 /** Dạng một phần tử `result.items` gặp khi gọi thật 12/11/2026 (số liệu giả). */
@@ -117,6 +118,15 @@ describe('toLazadaReturn', () => {
     }
   });
 
+  it('sàn xác nhận hoàn tiền (#437) khi mọi món REFUND_PENDING/REFUND_SUCCESS và hàng đã về người bán', () => {
+    const atSeller = { ofc_status: 'INFO_ST_RETURN_RTM_DELIVERED' };
+    expect(toReturn(item([line(1, { reverse_status: 'REFUND_PENDING', ...atSeller }), line(2, { reverse_status: 'REFUND_SUCCESS', ...atSeller })])).refundConfirmed).toBe(true);
+    // Một món chưa quyết hoàn tiền, hàng còn đang về (`instantRefund`), hay chỉ hoàn tiền: chưa phải.
+    expect(toReturn(item([line(1, { reverse_status: 'REFUND_PENDING', ...atSeller }), line(2, { reverse_status: 'BUYER_RETURN_ITEM', ...atSeller })])).refundConfirmed).toBe(false);
+    expect(toReturn(item([line(1, { reverse_status: 'REFUND_PENDING', ofc_status: 'INFO_ST_DRIVER_ASSIGNED' })])).refundConfirmed).toBe(false);
+    expect(toReturn(item([line(1, { reverse_status: 'REFUND_SUCCESS', ...atSeller })], { request_type: 'ONLY_REFUND' })).refundConfirmed).toBe(false);
+  });
+
   it('`ONLY_REFUND` là chỉ hoàn tiền; `return_to_type` RTW là kho sàn', () => {
     expect(toReturn(item([line(1)], { request_type: 'ONLY_REFUND' })).kind).toBe('refund');
     expect(toReturn(item([line(1)], { return_to_type: 'RTW' })).returnTo).toBe('warehouse');
@@ -127,7 +137,9 @@ function fakeCall(responses: Record<string, unknown>) {
   const calls: [string, Record<string, string>][] = [];
   const call = async (path: string, params: Record<string, string>) => {
     calls.push([path, params]);
-    return (responses[path] ?? { code: '0' }) as Record<string, unknown>;
+    const res = responses[path];
+    if (res instanceof Error) throw res;
+    return (res ?? { code: '0' }) as Record<string, unknown>;
   };
   return { calls, methods: lazadaReturnMethods(call, lazadaAmount) };
 }
@@ -203,14 +215,69 @@ describe('lazadaReturnMethods', () => {
     expect(calls.map(([, q]) => q.action)).toEqual(['instantRefund', 'confirmDelivery']);
   });
 
-  it('lý do tra theo dòng đầu của yêu cầu; từ chối hoàn tiền đòi ảnh', async () => {
+  it('lý do tra theo dòng đầu của yêu cầu; từ chối trả hàng và từ chối hoàn tiền đều đòi ảnh (#437, LZ-TRA-U06)', async () => {
     const { calls, methods } = fakeCall({
       '/reverse/getreverseordersforseller': { result: { items: [item([line(1)])] } },
       '/order/reverse/reason/list': { data: [{ reason_id: 100000046, muti_language_text: 'Sản phẩm bình thường', text: 'not as claimed' }] },
     });
-    expect(await methods.returnReasons('tok', '7000', 'reject')).toEqual([{ id: '100000046', label: 'Sản phẩm bình thường', requiresImage: false }]);
+    expect(await methods.returnReasons('tok', '7000', 'reject')).toEqual([{ id: '100000046', label: 'Sản phẩm bình thường', requiresImage: true }]);
     expect(calls[1]).toEqual(['/order/reverse/reason/list', { access_token: 'tok', reverse_order_line_id: '7001' }]);
     expect((await methods.returnReasons('tok', '7000', 'refuse-refund'))[0]!.requiresImage).toBe(true);
+  });
+
+  it('đồng ý hoàn tiền sau kiểm hàng (#437) là agreeRefund mọi dòng của yêu cầu', async () => {
+    const { calls, methods } = fakeCall({});
+    await methods.approveReturnRefund('tok', '7000', ['7001', '7002']);
+    expect(calls).toEqual([
+      ['/order/reverse/return/update', { access_token: 'tok', action: 'agreeRefund', reverse_order_id: '7000', reverse_order_item_ids: '[7001,7002]' }],
+    ]);
+    await expect(methods.approveReturnRefund('tok', '7000', [])).rejects.toMatchObject({ platformCode: 'return_lines_missing' });
+  });
+
+  it('agreeRefund bị từ chối mà đơn ngược đã qua bước hoàn tiền (làm trên Seller Center) thì coi là xong', async () => {
+    const { methods } = fakeCall({
+      '/order/reverse/return/update': new MarketplaceError('rejected', '114', 'E0114: this reverse does not support this action'),
+      '/reverse/getreverseordersforseller': { result: { items: [item([line(1, { reverse_status: 'REFUND_PENDING' }), line(2, { reverse_status: 'REFUND_SUCCESS' })])] } },
+    });
+    await expect(methods.approveReturnRefund('tok', '7000', ['7001', '7002'])).resolves.toBeUndefined();
+  });
+
+  it('agreeRefund bị từ chối mà đơn ngược chưa qua bước hoàn tiền thì ném lỗi; lỗi tạm không đọc lại', async () => {
+    const { methods } = fakeCall({
+      '/order/reverse/return/update': new MarketplaceError('rejected', '113', 'E0113: reverse order line have unknown status'),
+      '/reverse/getreverseordersforseller': { result: { items: [item([line(1, { reverse_status: 'BUYER_RETURN_ITEM' })])] } },
+    });
+    await expect(methods.approveReturnRefund('tok', '7000', ['7001'])).rejects.toMatchObject({ kind: 'rejected', platformCode: '113' });
+    const busy = fakeCall({ '/order/reverse/return/update': new MarketplaceError('unavailable', '6', 'Unexpected internal error') });
+    await expect(busy.methods.approveReturnRefund('tok', '7000', ['7001'])).rejects.toMatchObject({ kind: 'unavailable' });
+    expect(busy.calls).toHaveLength(1);
+  });
+
+  it('mã 6 khi từ chối là sàn không nhận lệnh, không bảo thử lại (LZ-TRA-U05); mã 6 của lệnh khác vẫn là lỗi tạm', async () => {
+    const six = () => new MarketplaceError('unavailable', '6', 'Unexpected internal error');
+    const noImage = fakeCall({ '/order/reverse/return/update': six() });
+    await expect(noImage.methods.decideReturn('tok', '7000', ['7001'], 'reject', { reasonId: '100000046' })).rejects.toMatchObject({
+      kind: 'rejected',
+      platformCode: '6',
+      userMessage: 'Lazada không nhận lệnh từ chối, cần ít nhất 1 ảnh bằng chứng',
+    });
+    const withImage = fakeCall({ '/order/reverse/return/update': six() });
+    const images = [{ name: 'a.jpg', url: 'https://vn-live.slatic.net/p/a.jpg' }];
+    await expect(withImage.methods.decideReturn('tok', '7000', ['7001'], 'reject', { reasonId: '100000046', images })).rejects.toMatchObject({
+      kind: 'rejected',
+      userMessage: expect.stringContaining('Seller Center'),
+    });
+    const confirm = fakeCall({ '/order/reverse/return/update': six() });
+    await expect(confirm.methods.confirmReturnReceived('tok', '7000', ['7001'])).rejects.toMatchObject({ kind: 'unavailable', userMessage: null });
+  });
+
+  it('E0114 báo yêu cầu đã được xử lý trên Lazada', async () => {
+    const { methods } = fakeCall({ '/order/reverse/return/update': new MarketplaceError('rejected', '114', 'E0114: this reverse does not support this action') });
+    await expect(methods.decideReturn('tok', '7000', ['7001', '7002'], 'accept', {})).rejects.toMatchObject({
+      kind: 'rejected',
+      platformCode: '114',
+      userMessage: 'Yêu cầu này đã được xử lý trên Lazada. Tải lại để xem trạng thái mới',
+    });
   });
 
   it('lịch sử mới nhất trước, ghi người thao tác và số ảnh', async () => {

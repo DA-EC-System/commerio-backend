@@ -28,7 +28,7 @@ import {
 import { returnInspectionClaimed } from '../../../product/index.ts';
 import type { MarketplaceReturns } from './marketplace-returns.ts';
 import { claimFlag, clearRefundApprovalFlag, isConfirmFailedNote } from './return-confirm.ts';
-import { applyReturnStep, publishReturnStatusChanged, updateReturnShown } from './returns.ts';
+import { applyReturnStep, publishReturnRefunded, publishReturnStatusChanged, updateReturnShown } from './returns.ts';
 
 /** Yêu cầu trả của sàn đã chuẩn hoá (channel đổi từ `RemoteReturn`). Tiền là chuỗi thập phân. */
 export interface PlatformReturn {
@@ -52,6 +52,8 @@ export interface PlatformReturn {
   respondBy?: Date | null;
   /** Sàn báo người bán đã xử lý hàng về (`syncAction`, #392); thiếu là false. */
   sellerHandledReceipt?: boolean;
+  /** Sàn xác nhận hoàn tiền cho khách sau khi hàng về (#437): yêu cầu đã đóng chờ sàn thì ghi "Đã hoàn"; thiếu là false. */
+  refundConfirmed?: boolean;
   lines: { externalLineId: string; externalReturnLineId: string | null; quantity: number }[];
   updatedAt: Date;
 }
@@ -212,10 +214,18 @@ async function syncExisting(row: ReturnRow, r: PlatformReturn): Promise<ReturnIn
   }
   // Sàn đã qua bước đồng ý hoàn tiền (lần báo của app vừa xong, hay người bán làm trên Seller Center, sàn tự hoàn):
   // không còn gì phải báo, gỡ cờ báo lỗi của bước này.
-  if (r.sellerHandledReceipt === true && (row.refundApproval === 'pending' || row.refundApproval === 'withheld')) {
+  const handled = r.sellerHandledReceipt === true || r.refundConfirmed === true;
+  if (handled && (row.refundApproval === 'pending' || row.refundApproval === 'withheld')) {
     Object.assign(fields, { refundApproval: 'done' });
     Object.assign(fields, clearRefundApprovalFlag(row));
   }
+  // Yêu cầu đóng sau kiểm hàng chờ sàn hoàn tiền (#437, Thành chốt 24/11/2026): sàn xác nhận thì mới ghi "Đã hoàn" và
+  // `sales.return_refunded` (sổ tiền), số tiền theo sàn nếu có.
+  const refundedAt = r.refundConfirmed === true && row.status === 'closed' && row.refundApproval !== null && !row.refunded ? new Date() : null;
+  if (refundedAt) Object.assign(fields, { refunded: true, refundedAt });
+  const booked = async () => {
+    if (refundedAt) await publishReturnRefunded(row, fields.refundAmount ?? row.refundAmount, refundedAt);
+  };
   // Số tiền hoàn không đọc được (#436): nối câu cờ một lần, `refundAmount` null nên số app đang có giữ nguyên.
   if (r.refundAmountUnreadable) {
     const amountNote = unreadableAmountNote(r.refundAmountUnreadable);
@@ -234,7 +244,7 @@ async function syncExisting(row: ReturnRow, r: PlatformReturn): Promise<ReturnIn
     const note = keep ? row.attentionNote : others ? `${others}. ${conflict}` : conflict;
     const diff = changedFields(row, { ...fields, needsAttention: true, attentionNote: note });
     if (!Object.keys(diff).length) return 'unchanged';
-    await updateReturnShown(row, diff);
+    if (await updateReturnShown(row, diff)) await booked();
     return 'updated';
   }
   // Sàn đã khớp lại với app: gỡ câu mâu thuẫn của lượt trước; còn câu của luồng khác thì cờ vẫn bật với câu đó.
@@ -251,13 +261,14 @@ async function syncExisting(row: ReturnRow, r: PlatformReturn): Promise<ReturnIn
   }
   const diff = changedFields(row, fields);
   if (!Object.keys(diff).length) return 'unchanged';
-  await updateReturnShown(row, diff);
-  return RETURN_PLATFORM_SHOWN_FIELDS.some((k) => k in diff) ? 'updated' : 'unchanged';
+  if (await updateReturnShown(row, diff)) await booked();
+  return refundedAt || RETURN_PLATFORM_SHOWN_FIELDS.some((k) => k in diff) ? 'updated' : 'unchanged';
 }
 
 /**
  * `inventory.return_inspected` (§11.2): phiếu kiểm hàng hoàn của yêu cầu đã ghi sổ thì đóng yêu cầu (`close`,
- * `inspected`), chia số bán lại về dòng, tính `resellCost`, hoàn tiền (`sales.return_refunded` trong `applyReturnStep`).
+ * `inspected`), chia số bán lại về dòng, tính `resellCost`, hoàn tiền (`sales.return_refunded` trong `applyReturnStep`); sàn
+ * có bước đồng ý hoàn tiền thì hoàn tiền chờ sàn xác nhận ở lượt kéo (#437).
  * Phiếu không thuộc yêu cầu nào (kiện hoàn, kiện không khớp) thì bỏ qua.
  */
 export async function onReturnInspected(
