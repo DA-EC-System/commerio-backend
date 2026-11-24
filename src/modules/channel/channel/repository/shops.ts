@@ -1,6 +1,7 @@
 // Gian hàng (#103). Chạy trong `withCompany` của bên gọi, trừ `findLiveCompanyOf`.
 import { and, asc, count, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import { getDb, requireCompanyId } from '../../../../shared/db/client.ts';
+import { type DraftConfirmed, draftConfirmedOf } from '../domain/setup-draft.ts';
 import type { ShopStatus } from '../domain/shop.ts';
 import { listings, priceCalculations, rawOrders, remoteSkus, shopProducts, shops } from './schema.ts';
 
@@ -252,17 +253,28 @@ export async function recordOpenOrderPullError(id: string, message: string): Pro
     .where(and(eq(shops.id, id), sql`${shops.openOrdersPulledAt} is null`));
 }
 
-/** Gian hàng chưa ngắt của công ty đang chọn (cũ trước) và số trong đó đã hoàn tất thiết lập (#461 onboarding). */
-export async function shopSetupState(): Promise<{ connected: { id: string; status: ShopStatus }[]; setUp: number }> {
+/**
+ * Gian hàng chưa ngắt của công ty đang chọn (cũ trước) và số trong đó đã hoàn tất thiết lập (#461 onboarding).
+ * Cổng cho insight onboarding (Documents/21 §11.3, mục 23). `current`: gian hàng đang thiết lập (cũ nhất, chưa có
+ * `order_cutoff_at`, `connecting` hoặc `needs_reauth`: mất uỷ quyền giữa wizard không làm mất bước), `draftConfirmed`
+ * đọc từ `setup_draft` (§18.7.5, #569).
+ */
+export async function shopSetupState(): Promise<{
+  connected: { id: string; status: ShopStatus }[];
+  setUp: number;
+  current: { id: string; status: ShopStatus; draftConfirmed: DraftConfirmed } | null;
+}> {
   const companyId = requireCompanyId('shopSetupState');
   const rows = await getDb()
-    .select({ id: shops.id, status: shops.status, orderCutoffAt: shops.orderCutoffAt })
+    .select({ id: shops.id, status: shops.status, orderCutoffAt: shops.orderCutoffAt, setupDraft: shops.setupDraft })
     .from(shops)
     .where(and(eq(shops.companyId, companyId), ne(shops.status, 'disconnected')))
     .orderBy(asc(shops.createdAt), asc(shops.id));
+  const current = rows.find((r) => !r.orderCutoffAt && (r.status === 'connecting' || r.status === 'needs_reauth'));
   return {
     connected: rows.map(({ id, status }) => ({ id, status })),
     setUp: rows.filter((r) => r.orderCutoffAt).length,
+    current: current ? { id: current.id, status: current.status, draftConfirmed: draftConfirmedOf(current.setupDraft) } : null,
   };
 }
 

@@ -28,6 +28,7 @@ export type { PlatformContext } from './service/context.ts';
 
 // Hồ sơ công ty (#292): tổ chức chịu trách nhiệm hàng hoá, channel điền thuộc tính sàn.
 export { companyProfileFilled, responsibleOrgOf, type ResponsibleOrg } from './service/company-profile.ts';
+export { markOnboardingCompleted, onboardingCompletedAt } from './service/onboarding-flag.ts';
 
 // Sự kiện giữa module (Documents/21 D4–D7), cách dùng ở service/outbox/README.md.
 export type { EventEnvelope } from '../../../shared/events/envelope.ts';

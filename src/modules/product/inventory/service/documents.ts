@@ -44,7 +44,7 @@ export interface DocActor extends Viewer {
 export interface DocLineInput {
   variantId: string;
   quantity?: number | undefined;
-  counted?: number | undefined;
+  counted?: number | null | undefined;
   scanned?: number | undefined;
   resell?: number | undefined;
   damaged?: number | undefined;
@@ -126,9 +126,11 @@ async function manualLines(
   const book = type === 'stocktake' ? await stockOf(input.map((l) => l.variantId)) : new Map();
   const lines: NewDocLine[] = input.map((l, i) => {
     if (type === 'stocktake') {
-      if (!isQty(l.counted, 0)) errors[`lines.${i}.counted`] = 'Số đếm là số nguyên không âm';
+      // Ô trống là chưa đếm (`null`), không đổi thành 0 (#569, Documents/21 §18.6.2)
+      const counted = l.counted ?? null;
+      if (counted !== null && !isQty(counted, 0)) errors[`lines.${i}.counted`] = 'Số đếm là số nguyên không âm';
       const s = book.get(l.variantId);
-      return { variantId: l.variantId, bookQty: bucket === 'on_hand' ? (s?.onHand ?? 0) : (s?.quarantine ?? 0), countedQty: l.counted ?? 0 };
+      return { variantId: l.variantId, bookQty: bucket === 'on_hand' ? (s?.onHand ?? 0) : (s?.quarantine ?? 0), countedQty: counted };
     }
     if (!isQty(l.quantity, 1)) errors[`lines.${i}.quantity`] = 'Số lượng là số nguyên từ 1';
     return { variantId: l.variantId, quantity: l.quantity ?? 1 };
@@ -294,7 +296,7 @@ function movesOf(row: DocRow, lines: readonly DocLineRow[]): Move[] {
  * Ghi sổ: đổi tồn qua lõi, chốt giá vốn trên dòng. Kiểm kê đã duyệt được làm tồn âm (25 §7.1); phiếu khác thiếu hàng
  * thì 422 `stock_insufficient` theo dòng.
  */
-async function post(row: DocRow, lines: readonly DocLineRow[], actorId: string, now: Date) {
+async function post(row: DocRow, lines: readonly DocLineRow[], actorId: string | null, now: Date) {
   if (row.kind === 'return_inspection') {
     const errors: Errors = {};
     lines.forEach((l, i) => {
@@ -332,7 +334,11 @@ async function post(row: DocRow, lines: readonly DocLineRow[], actorId: string, 
       },
     });
   }
-  if (row.kind === 'return_inspection') await afterInspection(row, lines, actorId);
+  if (row.kind === 'return_inspection') {
+    // Kiểm hàng về luôn do người ghi sổ; chỉ kiểm kê đầu kỳ rỗng ghi sổ không người làm.
+    if (!actorId) throw new Error(`Phiếu kiểm hàng về ${row.id} ghi sổ thiếu người làm`);
+    await afterInspection(row, lines, actorId);
+  }
 }
 
 /** Kiểm hàng về ghi sổ: hỏng sinh phiếu xuất huỷ nháp, trả NCC sinh phiếu trả NCC nháp; nguồn yêu cầu trả thì phát sự kiện. */
@@ -394,6 +400,15 @@ async function publishLockChanges(variantIds: readonly string[], before: Readonl
   }
 }
 
+/** Kiểm kê: gửi duyệt, ghi sổ khi còn dòng chưa đếm (`counted_qty` null) thì 422 theo dòng (#569, Documents/21 §18.6.2). */
+function assertAllCounted(lines: readonly DocLineRow[]) {
+  const errors: Errors = {};
+  lines.forEach((l, i) => {
+    if (l.countedQty === null) errors[`lines.${i}.counted`] = 'Nhập số đếm, đếm không thấy thì ghi 0';
+  });
+  if (Object.keys(errors).length) throw invalid(errors);
+}
+
 export function actOnDocument(actor: DocActor, id: string, action: DocAction, input: { version: number; reason?: string | undefined }) {
   return withCompany(actor.companyId, async () => {
     const row = await load(id, 'update');
@@ -418,6 +433,7 @@ export function actOnDocument(actor: DocActor, id: string, action: DocAction, in
       throw err;
     }
     const { to, selfApproved } = result;
+    if (type === 'stocktake' && (action === 'submit' || to === 'posted')) assertAllCounted(lines);
     const now = new Date();
     const set: Parameters<typeof updateDoc>[2] = { status: to };
 
@@ -534,10 +550,12 @@ export async function createQuarantineWriteOff(
 }
 
 /**
- * Phiếu kiểm kê đầu kỳ cho gian hàng đầu tiên của công ty (Documents/21 mục 11.3, 25 §6.1; #245), channel gọi khi thiết
- * lập (#198). Lập nháp nguồn `shop_setup`, mỗi SKU đang bán một dòng, số đếm điền sẵn bằng tồn thực. Gọi lại khi gian
- * hàng đã có phiếu đang mở thì trả phiếu cũ (`created: false`); hai lần gọi đua nhau chặn bằng unique
- * `stock_documents_opening_uq`. Ghi sổ phát `inventory.stocktake_posted` kèm `source`.
+ * Phiếu kiểm kê đầu kỳ cho gian hàng đầu tiên của công ty (Documents/21 mục 11.3, 18.6.2, 25 §6.1; #245, #569), channel
+ * gọi khi thiết lập (#198). Lập nháp nguồn `shop_setup`, mỗi SKU đang bán một dòng, số đếm để trống (`counted_qty` null),
+ * `bookQty` là tồn thực lúc lập. Công ty không có biến thể chưa lưu trữ nào thì lập phiếu 0 dòng và Hệ thống ghi sổ ngay
+ * trong cùng giao dịch (không đổi tồn nên không vi phạm người duyệt khác người lập), phát `inventory.stocktake_posted` như
+ * phiếu thường. Gọi lại khi gian hàng đã có phiếu đang mở thì trả phiếu cũ (`created: false`); hai lần gọi đua nhau chặn
+ * bằng unique `stock_documents_opening_uq`.
  */
 export async function createOpeningStocktake(
   shopId: string,
@@ -548,16 +566,17 @@ export async function createOpeningStocktake(
   const companyId = currentCompanyId()!;
   const variants = (await getVariants()).filter((v) => !v.archived);
   const stock = await stockOf(variants.map((v) => v.id));
+  const now = new Date();
   const row = await insertOpeningDoc({
     companyId,
     number: await number('stocktake'),
     kind: 'stocktake',
     area: 'on_hand',
-    countedAt: new Date(),
+    countedAt: now,
     isOpening: true,
     sourceType: 'shop_setup',
     sourceId: shopId,
-    note: 'Kiểm kê đầu kỳ khi kết nối gian hàng đầu tiên',
+    note: variants.length ? 'Kiểm kê đầu kỳ khi kết nối gian hàng đầu tiên' : 'Phiếu đầu kỳ rỗng, không có biến thể',
     // Hệ thống lập; người bấm thiết lập chỉ ghi ở lịch sử, người gửi duyệt mới thành người lập (`actOnDocument`)
     createdBy: null,
   });
@@ -568,11 +587,25 @@ export async function createOpeningStocktake(
   await insertDocLines(
     companyId,
     row.id,
-    variants.map((v) => {
-      const onHand = stock.get(v.id)?.onHand ?? 0;
-      return { variantId: v.id, bookQty: onHand, countedQty: Math.max(0, onHand) };
-    }),
+    variants.map((v) => ({ variantId: v.id, bookQty: stock.get(v.id)?.onHand ?? 0, countedQty: null })),
   );
   await recordTransition({ entityType: DOC_ENTITY, entityId: row.id, from: null, to: 'draft', action: 'create', actorId: opts.actorId });
+  if (!variants.length) await postEmptyOpening(row, now);
   return { documentId: row.id, number: row.number, created: true };
+}
+
+/** Phiếu đầu kỳ 0 dòng: Hệ thống ghi sổ ngay (người lập, người duyệt null), chuỗi sau ghi sổ của channel chạy như thường. */
+async function postEmptyOpening(row: DocRow, now: Date) {
+  const posted = await updateDoc(row.id, row.version, { status: 'posted', postedBy: null, postedAt: now });
+  if (!posted) throw new Error(`Phiếu đầu kỳ ${row.number} vừa lập đã bị đổi`);
+  await post(row, [], null, now);
+  await recordTransition({
+    entityType: DOC_ENTITY,
+    entityId: row.id,
+    from: 'draft',
+    to: 'posted',
+    action: 'post',
+    actorId: null,
+    reason: 'Phiếu đầu kỳ rỗng, không có biến thể',
+  });
 }

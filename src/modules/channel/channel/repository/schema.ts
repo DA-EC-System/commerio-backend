@@ -33,6 +33,7 @@ import type {
   SpecCategoryStatus,
 } from '../domain/product-spec.ts';
 import type { RemoteSkusFullError } from '../domain/remote-skus-refresh.ts';
+import type { SetupDraft } from '../domain/setup-draft.ts';
 
 // Mọi bảng của module con `channel` khai báo trong schema của module lớn `channel` (Documents/19 D1).
 export const channelSchema = pgSchema('channel');
@@ -135,6 +136,13 @@ export const shops = channelSchema.table(
      * được cập nhật tồn lên mọi gian hàng của công ty (`domain/shop.ts` `ordersStale`; Documents/19 `shops`, 21 §18.6.6).
      */
     ordersPulledOkAt: timestamp('orders_pulled_ok_at', { withTimezone: true }),
+    /**
+     * Bản nháp thiết lập (#569, Documents/21 §18.7.5): lựa chọn từng SKU sàn, danh mục theo sản phẩm sàn, cách đẩy tồn,
+     * mốc xác nhận từng bước. Xoá khi hoàn tất thiết lập hoặc ngắt gian hàng. `POST /setup` chỉ đọc từ đây.
+     */
+    setupDraft: jsonb('setup_draft').$type<SetupDraft>(),
+    /** Bộ đếm của nháp (`draftVersion`), dùng chung cho `PUT /setup/draft` và `POST sku-links`; tách khỏi `version` của gian hàng. */
+    setupDraftVersion: integer('setup_draft_version').notNull().default(0),
     ...timestamps,
     ...version,
   },
