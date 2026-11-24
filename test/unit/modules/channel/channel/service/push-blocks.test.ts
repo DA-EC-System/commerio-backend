@@ -1,7 +1,7 @@
 import { Decimal } from 'decimal.js';
 import { describe, expect, it } from 'vitest';
 import type { ListingVariant } from '#src/modules/channel/channel/service/product-port.ts';
-import { blockerScope, feeBlock, pushBlock, pushBlocks, type SpecCheck } from '#src/modules/channel/channel/service/push-block.ts';
+import { blockerScope, feeBlock, groupBlockers, pushBlock, pushBlocks, type SpecCheck } from '#src/modules/channel/channel/service/push-block.ts';
 
 // Readiness theo gian hàng (be#564, Documents/21 §18.10): mọi mục chặn, mỗi mục có scope và chỗ sửa.
 const variant: ListingVariant = {
@@ -83,8 +83,9 @@ describe('pushBlocks: trả mọi mục, thứ tự như pushBlock', () => {
     ]);
   });
 
-  it('SKU tạm ngừng chặn trước, kèm các mục còn lại', () => {
-    expect(pushBlocks({ ...variant, businessStatus: 'paused' }, null, spec(), true).map((b) => b.code)).toEqual(['sku_not_ready', 'price_missing']);
+  it('SKU tạm ngừng: mã cụ thể trả trước sku_not_ready (21 §18.6.4)', () => {
+    expect(pushBlocks({ ...variant, businessStatus: 'paused' }, null, spec(), true).map((b) => b.code)).toEqual(['price_missing', 'sku_not_ready']);
+    expect(pushBlock({ ...variant, businessStatus: 'paused' }, price, spec(), true)?.code).toBe('sku_not_ready');
   });
 });
 
@@ -103,6 +104,10 @@ describe('blockerScope (§18.10)', () => {
     ['variant_images_missing', 'platform'],
     ['size_chart_missing', 'platform'],
     ['platform_product_ambiguous', 'platform'],
+    ['axis_shape', 'platform'],
+    ['axis_unmapped', 'platform'],
+    ['not_found', 'shop'],
+    ['already_listed', 'shop'],
   ] as const)('%s → %s', (code, scope) => {
     expect(blockerScope(code)).toBe(scope);
   });
@@ -120,5 +125,18 @@ describe('feeBlock (21 §18.9 R5, điều kiện của be#559)', () => {
     expect(feeBlock(shop, undefined, true)).toBeNull();
     expect(feeBlock(shop, { status: 'push_failed', contentSource: 'platform', externalProductId: 'P', externalSkuId: 'S' }, false)).toBeNull();
     expect(feeBlock(shop, { status: 'rejected' }, false)).toBeNull();
+  });
+});
+
+describe('groupBlockers', () => {
+  it('gom theo mã và chỗ sửa, giữ thứ tự gặp, gắn scope', () => {
+    const price = { code: 'price_missing' as const, label: 'Chưa có giá chuẩn', target: { kind: 'variant_field' as const, field: 'price' as const } };
+    const a = { code: 'spec_incomplete' as const, label: 'Chất liệu', target: { kind: 'spec_attribute' as const, attributeCode: 'a' } };
+    const b = { ...a, label: 'Kiểu', target: { kind: 'spec_attribute' as const, attributeCode: 'b' } };
+    expect(groupBlockers([{ variantId: 'v1', items: [price, a] }, { variantId: 'v2', items: [price, b] }])).toEqual([
+      { ...price, scope: 'common', variantIds: ['v1', 'v2'] },
+      { ...a, scope: 'platform', variantIds: ['v1'] },
+      { ...b, scope: 'platform', variantIds: ['v2'] },
+    ]);
   });
 });

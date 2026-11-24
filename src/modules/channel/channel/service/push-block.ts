@@ -1,6 +1,7 @@
 // Điều kiện dữ liệu để đẩy một biến thể lên sàn (#219, #400, Documents/21 §18.5, §18.6.4); dùng chung cho request `push`
 // (`listings.ts`) và việc nền (`listing-push.ts`), tách riêng để hai file không import vòng.
 import type { Decimal } from 'decimal.js';
+import type { BlockerCode, BlockItem } from '../domain/blocker.ts';
 import type { CategoryPermission, MissingItem } from '../domain/product-spec.ts';
 import type { SizeChartRule } from '../repository/schema.ts';
 import type { ListingVariant } from './product-port.ts';
@@ -106,42 +107,7 @@ export const variantImagesMissing = (gap: VariantImageGap): PushBlock => ({
   message: `Sàn bắt buộc ảnh cho mọi giá trị của ${gap.attributeName}: thêm ảnh cho ${gap.values.join(', ')} rồi đăng lại`,
 });
 
-/** Mã chặn của readiness (Documents/21 §18.10): mã của `pushBlock` cộng mã kiểm ngoài hàm này. */
-export type BlockerCode =
-  | PushBlock['code']
-  | 'axis_limit'
-  | 'axis_unmapped_required'
-  | 'fee_not_configured'
-  | 'below_floor'
-  | 'platform_product_ambiguous';
-
-/** Chỗ sửa của một mục chặn (21 §18.10 `BlockerTarget`). */
-export type BlockerTarget =
-  | { kind: 'category' }
-  | { kind: 'spec_attribute'; attributeCode: string }
-  | { kind: 'axis'; attributeId?: string }
-  | { kind: 'variant_field'; field: 'price' | 'weight' | 'dimensions' }
-  | { kind: 'product_field'; field: 'images' | 'variantImages' | 'sizeChart' | 'name' }
-  | { kind: 'shop'; field: 'fee_config' | 'category_permission' }
-  | { kind: 'platform_product'; externalProductIds: string[] };
-
-export type BlockerScope = 'common' | 'platform' | 'shop';
-
-/** Một mục chặn của một biến thể ở một gian hàng; `label` là câu cho người bán. */
-export interface BlockItem {
-  code: BlockerCode;
-  label: string;
-  target: BlockerTarget;
-}
-
-const COMMON_CODES: ReadonlySet<BlockerCode> = new Set(['sku_not_ready', 'price_missing', 'dimensions_missing', 'images_missing']);
-const SHOP_CODES: ReadonlySet<BlockerCode> = new Set(['fee_not_configured', 'below_floor', 'category_not_permitted']);
-
-/**
- * `common`: không theo sàn, lặp ở mọi gian hàng; `shop`: riêng gian hàng; còn lại là thông tin sàn, chung mọi gian hàng cùng sàn
- * (21 §18.10).
- */
-export const blockerScope = (code: BlockerCode): BlockerScope => (COMMON_CODES.has(code) ? 'common' : SHOP_CODES.has(code) ? 'shop' : 'platform');
+export { blockerScope, groupBlockers, type Blocker, type BlockerCode, type BlockerScope, type BlockerTarget, type BlockItem } from '../domain/blocker.ts';
 
 /** Mục chặn từ một dòng `missing` của spec: mỗi attribute, trục một mục (21 §18.10). */
 function specItem(m: MissingItem): BlockItem {
@@ -162,7 +128,7 @@ function specItem(m: MissingItem): BlockItem {
 }
 
 /**
- * Mọi mục chặn đẩy của một biến thể, theo thứ tự cố định (thứ tự trước #400, chèn spec ngay sau `category_unmapped`, A14).
+ * Mọi mục chặn đẩy của một biến thể, theo thứ tự cố định (thứ tự trước #400, chèn spec ngay sau `category_unmapped`, A14; `sku_not_ready` cuối, 21 §18.6.4).
  * Dùng chung cho request, việc nền và readiness (be#564): `pushBlock` là mục đầu.
  * `hasImages`: listing đã có ảnh trên sàn, hoặc sản phẩm có ảnh trong catalog (#303). `hasSizeChart`: sản phẩm có ảnh bảng
  * kích cỡ trong catalog (#347); category sàn `required` mà chưa có thì chặn `size_chart_missing`.
@@ -177,10 +143,6 @@ export function pushBlocks(
   imageGap: VariantImageGap | null = null,
 ): BlockItem[] {
   const out: BlockItem[] = [];
-  // Tạm dùng trạng thái kinh doanh tới khi #204 trả `readiness` của SKU (#219 A2, Documents/25 §6.3).
-  if (v.businessStatus === 'paused') {
-    out.push({ code: 'sku_not_ready', label: 'SKU đang tạm ngừng kinh doanh, chưa đẩy được', target: { kind: 'variant_field', field: 'price' } });
-  }
   if (price === null) out.push({ code: 'price_missing', label: 'Chưa có giá chuẩn', target: { kind: 'variant_field', field: 'price' } });
   if (!spec) {
     out.push({ code: 'category_unmapped', label: 'Chưa chọn category của sàn cho sản phẩm', target: { kind: 'category' } });
@@ -211,6 +173,11 @@ export function pushBlocks(
       label: 'Danh mục này bắt buộc ảnh bảng kích cỡ: thêm ảnh bảng kích cỡ cho sản phẩm',
       target: { kind: 'product_field', field: 'sizeChart' },
     });
+  }
+  // Mã cụ thể trả trước `sku_not_ready` (21 §18.6.4). Tạm dùng trạng thái kinh doanh tới khi #204 trả `readiness` của SKU
+  // (#219 A2, Documents/25 §6.3).
+  if (v.businessStatus === 'paused') {
+    out.push({ code: 'sku_not_ready', label: 'SKU đang tạm ngừng kinh doanh, chưa đẩy được', target: { kind: 'variant_field', field: 'price' } });
   }
   return out;
 }
