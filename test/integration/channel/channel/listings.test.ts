@@ -15,7 +15,7 @@ import { withCompany } from '#src/shared/db/client.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
-import { activateShop, fakeAdapter, seedSpecs } from './helpers.ts';
+import { activateShop, fakeAdapter, seedFeeConfig, seedSpecs } from './helpers.ts';
 
 const productId = randomUUID();
 const variant = (sku: string, extra: Partial<ListingVariant> = {}): ListingVariant => ({
@@ -157,6 +157,7 @@ beforeAll(async () => {
   const res = await auth(app().post('/api/v1/channel/shops/lazada/token')).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
   shopId = res.body.shop.id;
   await activateShop(shopId);
+  await seedFeeConfig(company.companyId, shopId);
 });
 
 describe('đẩy listing: request chỉ kiểm và xếp việc', () => {
@@ -576,5 +577,25 @@ describe('AC-11: lỗi cả request theo thứ tự 21 §18.6.11, không dòng n
     expect(res.status).toBe(409);
     expect(res.body).toMatchObject({ code: 'shop_awaiting_allocation', waitingFor });
     await expectNothingWritten(id);
+  });
+});
+
+describe('21 §18.9 R5: gian hàng chưa có cấu hình phí không đăng được', () => {
+  it('lần đăng đầu: dòng fee_not_configured, không ghi listing, không xếp việc; có phí rồi thì đăng được', async () => {
+    const res0 = await auth(app().post('/api/v1/channel/shops/lazada/token')).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
+    const id = res0.body.shop.id as string;
+    await activateShop(id);
+    await seedAll();
+    const res = await auth(app().post(`/api/v1/channel/shops/${id}/listings/push`)).send({ variantIds: [ok.id], listPrices: { [ok.id]: 500000 } });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(PushResults.parse(res.body).results).toEqual([
+      { variantId: ok.id, listingId: null, status: null, code: 'fee_not_configured', message: expect.stringContaining('chưa có cấu hình phí') },
+    ]);
+    expect((await testPool().query('select 1 from channel.listings where shop_id = $1', [id])).rows).toEqual([]);
+    expect((await testPool().query("select 1 from pgboss.job where name = 'channel.product_push' and data->>'shopId' = $1", [id])).rows).toEqual([]);
+
+    await seedFeeConfig(company.companyId, id);
+    const again = await auth(app().post(`/api/v1/channel/shops/${id}/listings/push`)).send({ variantIds: [ok.id] });
+    expect(PushResults.parse(again.body).results).toEqual([expect.objectContaining({ variantId: ok.id, status: 'pushing', code: null })]);
   });
 });

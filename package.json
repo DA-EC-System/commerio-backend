@@ -32,6 +32,8 @@
     "db:migrate:check": "node --env-file-if-exists=.env scripts/db/migrate.ts --check",
     "db:migrate:staging": "node --env-file=.env.staging scripts/db/migrate.ts",
     "db:migrate:check:staging": "node --env-file=.env.staging scripts/db/migrate.ts --check",
+    "db:reset": "node --env-file-if-exists=.env scripts/db/reset.ts",
+    "db:reset:staging": "node --env-file=.env.staging scripts/db/reset.ts",
     "db:seed": "node --env-file-if-exists=.env db/seed/index.ts",
     "platform-admin": "node --env-file-if-exists=.env db/platform-admin.ts",
     "smoke:lazada": "node --env-file-if-exists=.env scripts/smoke/lazada.ts",

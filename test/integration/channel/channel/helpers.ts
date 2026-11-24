@@ -66,6 +66,18 @@ export async function activateShop(shopId: string): Promise<void> {
 }
 
 /**
+ * Cấu hình phí đang áp dụng của gian hàng, ghi thẳng bảng (role chủ bảng), không qua luồng duyệt. Từ 21 §18.9 R5 gian hàng
+ * chưa có phí không đăng được (`fee_not_configured`); mặc định phí 0 để giá đăng như trước (giá chuẩn khi chưa có giá muốn bán).
+ */
+export async function seedFeeConfig(companyId: string, shopId: string, payload: object = { fixedPct: 0, transactionPct: 0, servicePct: 0, optionalPct: 0, returnFee: 0 }) {
+  await testPool().query(
+    `insert into finance.config_versions (company_id, kind, shop_id, status, payload, effective_from, created_by, approved_by, approved_at)
+     values ($1, 'fee', $2, 'active', $3, '2026-01-01', gen_random_uuid(), gen_random_uuid(), now())`,
+    [companyId, shopId, JSON.stringify(payload)],
+  );
+}
+
+/**
  * Spec sàn của sản phẩm (#400 lát 15): dữ liệu đẩy dựng thẳng bằng spec thay cho ghép danh mục cũ (bỏ ở BE3).
  * Mỗi sản phẩm một dòng `version = 1`, trục của biến thể ánh xạ `__custom`; sản phẩm đã có spec của sàn thì giữ.
  */

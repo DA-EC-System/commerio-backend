@@ -17,7 +17,7 @@ import { type ListingVariant, setProductPort } from '#src/modules/channel/channe
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
-import { activateShop, fakeAdapter, seedSpecs } from './helpers.ts';
+import { activateShop, fakeAdapter, seedFeeConfig, seedSpecs } from './helpers.ts';
 
 const variants: ListingVariant[] = [];
 const noPrice = new Set<string>();
@@ -65,6 +65,7 @@ beforeAll(async () => {
     .set('Authorization', `Bearer ${company.ceo.token}`)
     .send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
   shopId = res.body.shop.id;
+  await seedFeeConfig(company.companyId, shopId);
 
 });
 
