@@ -108,7 +108,7 @@ export const variantImagesMissing = (gap: VariantImageGap): PushBlock => ({
   message: `Sàn bắt buộc ảnh cho mọi giá trị của ${gap.attributeName}: thêm ảnh cho ${gap.values.join(', ')} rồi đăng lại`,
 });
 
-export { blockerScope, groupBlockers, type Blocker, type BlockerCode, type BlockerScope, type BlockerTarget, type BlockItem } from '../domain/blocker.ts';
+export { blockerScope, displayBlockers, groupBlockers, type Blocker, type BlockerCode, type BlockerScope, type BlockerTarget, type BlockItem } from '../domain/blocker.ts';
 
 /** Mục chặn từ một dòng `missing` của spec: mỗi attribute, trục một mục (21 §18.10). */
 function specItem(m: MissingItem): BlockItem {

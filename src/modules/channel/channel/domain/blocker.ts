@@ -87,3 +87,13 @@ export function groupBlockers(rows: readonly { variantId: string; items: readonl
   }
   return [...byKey.values()];
 }
+
+/** Thứ tự hiển thị cố định: mục của sản phẩm theo sàn, rồi mục của SKU, rồi mục của gian hàng (21 §18.10). */
+const SCOPE_ORDER: Record<BlockerScope, number> = { platform: 0, common: 1, shop: 2 };
+
+/**
+ * Gom rồi xếp theo thứ tự hiển thị (sắp ổn định: cùng scope giữ thứ tự gặp). `PushResult.code` vẫn lấy theo thứ tự ưu tiên của
+ * push (`firstBlock`), không theo thứ tự này.
+ */
+export const displayBlockers = (rows: readonly { variantId: string; items: readonly BlockItem[] }[]): Blocker[] =>
+  groupBlockers(rows).sort((a, b) => SCOPE_ORDER[a.scope] - SCOPE_ORDER[b.scope]);

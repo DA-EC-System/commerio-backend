@@ -398,6 +398,36 @@ const listingStatus = z.enum(['pushing', 'push_failed', 'under_review', 'rejecte
 const syncState = z.enum(['synced', 'pending', 'error']);
 const syncError = z.object({ code: z.string(), message: z.string(), at: iso }).strict().nullable();
 
+/** Chỗ sửa của mục chặn (21 §18.10 `BlockerTarget`, cộng `listing` của 18.11; kiểu ở `domain/blocker.ts`). */
+export const BlockerTarget = z
+  .discriminatedUnion('kind', [
+    z.object({ kind: z.literal('category') }).strict(),
+    z.object({ kind: z.literal('spec_attribute'), attributeCode: z.string() }).strict(),
+    z.object({ kind: z.literal('axis'), attributeId: z.string().optional() }).strict(),
+    z.object({ kind: z.literal('variant_field'), field: z.enum(['price', 'weight', 'dimensions']) }).strict(),
+    z.object({ kind: z.literal('product_field'), field: z.enum(['images', 'variantImages', 'sizeChart', 'name']) }).strict(),
+    z.object({ kind: z.literal('shop'), field: z.enum(['fee_config', 'category_permission']) }).strict(),
+    z.object({ kind: z.literal('platform_product'), externalProductIds: z.array(z.string()) }).strict(),
+    z.object({ kind: z.literal('listing'), listingId: z.uuid().nullable() }).strict(),
+  ])
+  .meta({ id: 'BlockerTarget' });
+
+/** Lỗi lượt đẩy đã dịch (#567, 21 §18.6.4 "Dịch lỗi đẩy của sàn"); bản ghi trước #567 trả `null` ở các trường mới. */
+const pushError = z
+  .object({
+    code: z.string(),
+    kind: z.enum(['data', 'platform', 'connection']).nullable(),
+    message: z.string(),
+    target: BlockerTarget.nullable(),
+    variantId: z.string().nullable(),
+    platformCode: z.string().nullable(),
+    platformMessage: z.string().nullable(),
+    requestId: z.string().nullable(),
+    at: iso,
+  })
+  .strict()
+  .nullable();
+
 const pendingRevision = z
   .object({ status: z.enum(['auditing', 'failed']), rejectReason: z.string().nullable(), at: iso })
   .strict()
@@ -447,9 +477,9 @@ export const ChannelListing = z
     sellerSku: z.string().nullable(),
     status: listingStatus,
     rejectReason: z.string().nullable(),
-    pushError: syncError.meta({
+    pushError: pushError.meta({
       description:
-        'Lỗi của lượt đẩy (21 §18.6.4): `marketplace_rejected`, `marketplace_unavailable` (`message` là câu của sàn); `shop_not_eligible`, `listing_check_failed` (sàn kiểm trước khi tạo sản phẩm, #305); `shop_not_connected` (gian hàng ngắt khi việc chạy); `sku_exists_on_platform` (#399: SellerSku đã có trên sàn từ trước lượt đẩy, sản phẩm của người bán; dùng Ghép SKU); mã chặn theo dòng (`not_found`, `sku_not_ready`, `price_missing`…) khi dữ liệu đổi giữa lúc xếp việc và lúc chạy',
+        'Lỗi của lượt đẩy (21 §18.6.4). `code` là mã đã dịch: mã của bảng dịch sàn (`attribute_value_invalid`, `weight_out_of_range`, `attribute_required`, `axis_unmapped`, `images_missing`, `image_rejected`, `category_not_leaf`, `name_length`, `variant_images_missing`), không dịch được thì `marketplace_rejected`; lỗi tạm `marketplace_unavailable`; `shop_not_eligible`, `listing_check_failed` (#305); `shop_not_connected`; `sku_exists_on_platform` (#399); mã chặn theo dòng khi dữ liệu đổi giữa lúc xếp việc và lúc chạy. `message` là câu tiếng Việt cho người bán. `kind`: `data` (sửa được trong app), `platform` (sàn từ chối vì lý do ngoài dữ liệu), `connection` (lỗi tạm). `target` chỉ chỗ sửa (`BlockerTarget`), null khi không suy được. `platformCode`, `platformMessage` là mã và câu gốc của sàn (Lazada lấy từ `detail`), `requestId` của sàn. Lỗi ghi trước #567 có `kind`, `target`, `variantId`, `platformCode`, `platformMessage`, `requestId` là null',
     }),
     pushAttempts: z.number().int().meta({ description: 'Số lần đã gọi sàn trong lượt đẩy hiện tại (đặt về 0 khi bấm đẩy)' }),
     hiddenBy: z.enum(['platform', 'zero_stock']).nullable(),
@@ -741,20 +771,6 @@ export const ProductListingsParams = z.object({ productId: z.string().max(60) })
 export const ProductListingRow = ListingRow.extend({ shopId: z.uuid(), shopName: z.string(), platform: z.string() }).meta({ id: 'ProductListingRow' });
 export const ProductListingList = z.object({ items: z.array(ProductListingRow) }).strict().meta({ id: 'ProductListingList' });
 
-
-/** Chỗ sửa của mục chặn (21 §18.10 `BlockerTarget`, cộng `listing` của 18.11; kiểu ở `domain/blocker.ts`). */
-export const BlockerTarget = z
-  .discriminatedUnion('kind', [
-    z.object({ kind: z.literal('category') }).strict(),
-    z.object({ kind: z.literal('spec_attribute'), attributeCode: z.string() }).strict(),
-    z.object({ kind: z.literal('axis'), attributeId: z.string().optional() }).strict(),
-    z.object({ kind: z.literal('variant_field'), field: z.enum(['price', 'weight', 'dimensions']) }).strict(),
-    z.object({ kind: z.literal('product_field'), field: z.enum(['images', 'variantImages', 'sizeChart', 'name']) }).strict(),
-    z.object({ kind: z.literal('shop'), field: z.enum(['fee_config', 'category_permission']) }).strict(),
-    z.object({ kind: z.literal('platform_product'), externalProductIds: z.array(z.string()) }).strict(),
-    z.object({ kind: z.literal('listing'), listingId: z.uuid().nullable() }).strict(),
-  ])
-  .meta({ id: 'BlockerTarget' });
 
 export const Blocker = z
   .object({

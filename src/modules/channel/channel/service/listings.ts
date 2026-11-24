@@ -43,10 +43,11 @@ import { currentPrices, type ListingPrice, listingPrices } from './listing-price
 import { pushAttributes, specChecks, specStatusOf } from './product-specs.ts';
 import { PUSH_IMAGE_MAX, sendListingPush, sendProductPush } from './shop-jobs.ts';
 import { checkVariant, loadPushContext } from './push-check.ts';
-import { type Blocker, firstBlock, groupBlockers, listingText, pushBlock, specBlock } from './push-block.ts';
+import { type Blocker, displayBlockers, firstBlock, listingText, pushBlock, specBlock } from './push-block.ts';
 import { findAppShopProduct, findShopProduct, insertAppShopProduct, matchShopProductsOf, setShopProductPushStarted } from '../repository/shop-products.ts';
 import { MarketplaceError } from './marketplaces/index.ts';
 import { type Actor, onMarketplace, ownShop, platformOf, shopSession } from './shops.ts';
+import { pushErrorView, type PushErrorView } from './push-error.ts';
 
 export const ENTITY = 'listings';
 /** Mỗi lần đẩy tối đa 20 biến thể (`PushBody`). */
@@ -59,7 +60,7 @@ export interface ChannelListing {
   sellerSku: string | null;
   status: ListingStatus;
   rejectReason: string | null;
-  pushError: SyncError | null;
+  pushError: PushErrorView | null;
   pushAttempts: number;
   hiddenBy: ListingRow['hiddenBy'];
   stockSync: ListingRow['stockSync'];
@@ -159,7 +160,7 @@ export function toListing(r: ListingRow, names: ReadonlyMap<string, string> = ne
     sellerSku: r.sellerSku,
     status: r.status,
     rejectReason: r.rejectReason,
-    pushError: r.pushError,
+    pushError: pushErrorView(r.pushError),
     pushAttempts: r.pushAttempts,
     hiddenBy: r.hiddenBy,
     stockSync: r.stockSync,
@@ -411,7 +412,7 @@ export async function pushListings(
     const { items, existing } = checkVariant(ctx, variantId);
     const first = firstBlock(items);
     if (first) {
-      results.push({ ...blocked(variantId, existing, first.code, first.message), blockers: groupBlockers([{ variantId, items }]) });
+      results.push({ ...blocked(variantId, existing, first.code, first.message), blockers: displayBlockers([{ variantId, items }]) });
       continue;
     }
     const v = ctx.variants.get(variantId)!;

@@ -1,7 +1,7 @@
 // Readiness đăng của một sản phẩm theo từng gian hàng (be#564, Documents/21 §18.10). Không ghi, không gọi sàn. Mục chặn lấy từ
 // `checkVariant`, cùng hàm với `push` và `push-preview`, nên ba nơi không lệch nhau.
 import { AppError } from '../../../../shared/errors/app-error.ts';
-import { type Blocker, type BlockerScope, groupBlockers } from '../domain/blocker.ts';
+import { type Blocker, displayBlockers } from '../domain/blocker.ts';
 import { pickSources } from '../domain/category-sources.ts';
 import type { Marketplace } from '../repository/schema.ts';
 import { categoryInfoOf } from '../repository/platform-categories.ts';
@@ -36,9 +36,6 @@ export interface ShopReadiness {
 /** Listing đang ở trên sàn hoặc đang đẩy: không cần đăng, không tính vào đăng được hay bị chặn. */
 const LISTED_OR_PUSHING = new Set<string>([...LISTED, 'pushing']);
 
-/** Thứ tự cố định: mục của sản phẩm theo sàn, rồi mục của SKU, rồi mục của gian hàng (21 §18.10). */
-const SCOPE_ORDER: Record<BlockerScope, number> = { platform: 0, common: 1, shop: 2 };
-
 /** Gọi trong `withCompany`. `shopId` chỉ lấy một gian hàng. */
 export async function productReadiness(port: ProductPort, productId: string, shopId?: string): Promise<{ items: ShopReadiness[] }> {
   const catalog = await port.variants(undefined, { productIds: [productId] });
@@ -72,9 +69,7 @@ export async function productReadiness(port: ProductPort, productId: string, sho
       variants.push({ variantId: id, status: found.length ? 'blocked' : 'ready', blockerCodes: found.map((b) => b.code) });
     }
     const category = await categoryState(shop.platform, productId, sameGroupOf, ctx.specs.get(productId));
-    const blockers = groupBlockers(rows)
-      .map((b) => (b.code === 'axis_limit' ? { ...b, label: axisLimitLabel(category, live) ?? b.label } : b))
-      .sort((a, b) => SCOPE_ORDER[a.scope] - SCOPE_ORDER[b.scope]);
+    const blockers = displayBlockers(rows).map((b) => (b.code === 'axis_limit' ? { ...b, label: axisLimitLabel(category, live) ?? b.label } : b));
     const counts = {
       ready: variants.filter((v) => v.status === 'ready').length,
       blocked: variants.filter((v) => v.status === 'blocked').length,
