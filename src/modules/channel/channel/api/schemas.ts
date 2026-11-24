@@ -763,7 +763,7 @@ export const MatchBulkResult = z
   .strict()
   .meta({ id: 'ListingMatchBulkResult' });
 export const CreateVariantParams = z.object({ id: z.string(), externalSkuId: z.string().trim().min(1).max(200) });
-export const CreateVariantBody = z.object({ groupId: z.uuid('Chọn nhóm hàng') }).meta({ id: 'RemoteSkuCreateVariantInput' });
+export const CreateVariantBody = z.object({ groupId: z.uuid('Chọn danh mục sản phẩm') }).meta({ id: 'RemoteSkuCreateVariantInput' });
 export const CreateVariantResult = z
   .object({
     variantId: z.uuid(),
@@ -1007,9 +1007,9 @@ export const SetupBody = z
           'Biến thể người dùng chọn cho từng SKU sàn, `null` là bỏ qua; SKU không có trong mảng cũng bỏ qua. Dòng sai: 422 `errors["decisions.<i>"]` (21 §18.7.5)',
       }),
     createGroupId: z
-      .uuid('Chọn nhóm hàng')
+      .uuid('Chọn danh mục sản phẩm')
       .optional()
-      .meta({ description: 'Nhóm hàng cho sản phẩm tạo từ SKU sàn; bắt buộc khi có dòng `create` (#500, 21 §18.7.5)' }),
+      .meta({ description: 'Danh mục sản phẩm cho sản phẩm tạo từ SKU sàn; bắt buộc khi có dòng `create` (#500, 21 §18.7.5)' }),
     openingStock: z.enum(['push', 'stocktake'], 'Chọn cách xử lý tồn đầu kỳ'),
     returnWindowDays: z.number('Hạn trả hàng là số ngày').int('Hạn trả hàng là số ngày nguyên').nullable().optional().meta({
       description:
@@ -1433,7 +1433,7 @@ export const CategorySuggestionsView = z
         })
         .strict(),
     ),
-    group: z.array(UsedCategory).max(5).meta({ description: 'Category của sản phẩm cùng nhóm hàng trên sàn này, nhiều sản phẩm nhất trước (không đếm sản phẩm đang đẩy), tối đa 5' }),
+    group: z.array(UsedCategory).max(5).meta({ description: 'Category của sản phẩm cùng danh mục sản phẩm trên sàn này, nhiều sản phẩm nhất trước (không đếm sản phẩm đang đẩy), tối đa 5' }),
     recent: z.array(UsedCategory).max(5).meta({ description: 'Category công ty dùng gần đây, bỏ phần đã ở items, group, tối đa 5' }),
     cached: z.boolean(),
     suggestError: z

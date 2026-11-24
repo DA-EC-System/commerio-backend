@@ -42,7 +42,7 @@ const ENTITY = 'product.product_groups';
 const SETTINGS_ENTITY = 'product.company_group_settings';
 const PRODUCT_ENTITY = 'product.products';
 const collator = new Intl.Collator('vi');
-const taken = () => nameTaken('Đã có nhóm hàng cùng tên');
+const taken = () => nameTaken('Đã có danh mục sản phẩm cùng tên');
 const notInGroup = () => invalid({ productIds: 'Có sản phẩm không thuộc nhóm này' });
 const badTarget = (message: string) => invalid({ targetGroupId: message });
 
@@ -77,7 +77,7 @@ async function findGroup(id: string): Promise<GroupRow> {
 }
 
 const viewOf = async (g: GroupRow) => toView(g, await findGroupAxes([g.id]));
-const conflict = async (current: GroupRow) => versionConflict('Nhóm hàng vừa được người khác sửa', await viewOf(current));
+const conflict = async (current: GroupRow) => versionConflict('Danh mục sản phẩm vừa được người khác sửa', await viewOf(current));
 
 /** Nhóm nguồn để chép mẫu: đọc qua RLS, khác nhóm đích. */
 async function templateSource(sourceId: string | undefined, targetId?: string): Promise<GroupRow | undefined> {
@@ -133,8 +133,8 @@ export async function createGroup(caller: Caller, input: GroupInput): Promise<Gr
 /** Nhóm nền tảng: công ty chỉ đặt gợi ý của mình (`company_group_settings`); không đổi tên, không chép mẫu. */
 async function updatePlatformGroup(caller: Caller, group: GroupRow, input: GroupInput & { version: number }): Promise<GroupView> {
   const errors: Record<string, string> = {};
-  if (input.name !== undefined) errors.name = 'Nhóm chuẩn không đổi tên được';
-  if (input.copyTemplateFromGroupId !== undefined) errors.copyTemplateFromGroupId = 'Mẫu của nhóm chuẩn do nền tảng đặt';
+  if (input.name !== undefined) errors.name = 'Danh mục mặc định không đổi tên được';
+  if (input.copyTemplateFromGroupId !== undefined) errors.copyTemplateFromGroupId = 'Mẫu của danh mục mặc định do nền tảng đặt';
   if (Object.keys(errors).length) throw invalid(errors);
   if (group.version !== input.version) throw await conflict(group);
   const suggest = mergeSuggest(suggestOf(group), input.suggest);
@@ -201,7 +201,7 @@ export async function deleteGroup(caller: Caller, id: string, version: number): 
     await recordAudit({ ...auditOf(caller, 'delete', ENTITY, id), label: group.name, before: snapshot(group.name, suggestOf(group)) });
   }).catch((err: unknown) => {
     // Người khác vừa thêm sản phẩm vào nhóm: khoá ngoại chặn xoá.
-    if (pgError(err).code === '23503') throw inUse('Nhóm hàng đang có sản phẩm');
+    if (pgError(err).code === '23503') throw inUse('Danh mục sản phẩm đang có sản phẩm');
     throw err;
   });
 }
@@ -220,7 +220,7 @@ export async function moveProducts(
     if (input.targetGroupId === source.id) throw badTarget('Chọn nhóm khác nhóm hiện tại');
     // Đọc qua RLS: khoá ngoại bỏ qua RLS nên nhóm của công ty khác phải chặn ở đây.
     const [target] = isUuid(input.targetGroupId) ? await findGroups(input.targetGroupId) : [];
-    if (!target) throw badTarget('Không tìm thấy nhóm hàng đích');
+    if (!target) throw badTarget('Không tìm thấy danh mục sản phẩm đích');
     const ids = input.productIds && [...new Set(input.productIds)];
     if (ids && !ids.every(isUuid)) throw notInGroup();
     const rows = await lockGroupProducts(source.id, ids);
@@ -240,7 +240,7 @@ export async function moveProducts(
     return { moved: rows.length };
   }).catch((err: unknown) => {
     // Nhóm đích vừa bị xoá giữa lúc đọc và ghi.
-    if (pgError(err).code === '23503') throw badTarget('Không tìm thấy nhóm hàng đích');
+    if (pgError(err).code === '23503') throw badTarget('Không tìm thấy danh mục sản phẩm đích');
     throw err;
   });
 }

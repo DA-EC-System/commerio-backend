@@ -288,7 +288,7 @@ export async function createProduct(ctx: CatalogContext, caller: Caller, input: 
     const imageError = await fileProblem(imageIds, 'product_image', MAX_PRODUCT_IMAGES);
     const sizeChartError = sizeChartId ? await fileProblem([sizeChartId], 'product_image', 1) : null;
     const errors: Record<string, string> = { ...checked.errors, ...specCheck.errors };
-    if (!group) errors.groupId = 'Chọn nhóm hàng';
+    if (!group) errors.groupId = 'Chọn danh mục sản phẩm';
     if (imageError) errors.images = imageError;
     if (sizeChartError) errors.sizeChart = sizeChartError;
     for (const v of valueImages) {
@@ -375,7 +375,7 @@ export async function updateProduct(ctx: CatalogContext, caller: Caller, id: str
     // Đổi nhóm (P6): nhóm đọc qua RLS, nhóm công ty khác hay id lạ là 422; SKU không đổi.
     const changesGroup = input.groupId !== undefined && input.groupId !== product.groupId;
     const [newGroup] = changesGroup && isUuid(input.groupId!) ? await findGroups(input.groupId) : [];
-    if (changesGroup && !newGroup) errors.groupId = 'Chọn nhóm hàng';
+    if (changesGroup && !newGroup) errors.groupId = 'Chọn danh mục sản phẩm';
     const specCheck = await checkSpecs(input.specs ?? []);
     Object.assign(errors, specCheck.errors);
     if (Object.keys(errors).length) throw invalid(errors);

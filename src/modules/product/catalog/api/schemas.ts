@@ -105,7 +105,7 @@ export const AttributeValueParams = z.object({ id: z.string(), valueId: z.string
 /** Không gửi `productIds` là chuyển cả nhóm (21 mục 5.2). */
 export const MoveProductsBody = z
   .object({
-    targetGroupId: z.string('Chọn nhóm hàng đích').min(1, 'Chọn nhóm hàng đích'),
+    targetGroupId: z.string('Chọn danh mục sản phẩm đích').min(1, 'Chọn danh mục sản phẩm đích'),
     productIds: z.array(z.string()).min(1, 'Chọn sản phẩm').max(1000, 'Tối đa 1000 sản phẩm mỗi lần').optional(),
   })
   .meta({ id: 'MoveProductsRequest' });
@@ -409,7 +409,7 @@ const sizeChartFileId = z
 export const CreateProductBody = z
   .object({
     name: name('sản phẩm', 200),
-    groupId: z.string('Chọn nhóm hàng').min(1, 'Chọn nhóm hàng'),
+    groupId: z.string('Chọn danh mục sản phẩm').min(1, 'Chọn danh mục sản phẩm'),
     description,
     imageFileIds,
     sizeChartFileId,
@@ -468,7 +468,7 @@ const brand = z
   .nullish()
   .meta({ description: 'Thương hiệu, tối đa 100 ký tự; rỗng hoặc `null` là không thương hiệu' });
 
-const groupId = z.string('Chọn nhóm hàng').min(1, 'Chọn nhóm hàng').optional().meta({ description: 'Đổi nhóm hàng (P6); SKU không đổi' });
+const groupId = z.string('Chọn danh mục sản phẩm').min(1, 'Chọn danh mục sản phẩm').optional().meta({ description: 'Đổi danh mục sản phẩm (P6); SKU không đổi' });
 
 /** Không có biến thể: gửi kèm thì bỏ qua (AC-13). */
 export const UpdateProductBody = z
@@ -541,7 +541,7 @@ const blankAsMissing = <T extends z.ZodType>(schema: T) => z.preprocess((v) => (
 
 export const ProductListQuery = z.object({
   search: blankAsMissing(z.string('Chỉ gửi một từ khoá').trim().optional()),
-  groupId: blankAsMissing(z.uuid('Nhóm hàng không hợp lệ').optional()),
+  groupId: blankAsMissing(z.uuid('Danh mục sản phẩm không hợp lệ').optional()),
   /** `active`: còn SKU chưa lưu trữ; `archived`: mọi SKU đã lưu trữ (#204). */
   status: blankAsMissing(z.enum(['active', 'archived'], 'Trạng thái là active hoặc archived').default('active')),
   /** Có ít nhất một SKU ở trạng thái này; lọc lưu trữ dùng `status=archived` (#204). */
@@ -829,7 +829,7 @@ export { BulkRowInput };
 
 export const BulkEditQuery = z.object({
   search: blankAsMissing(z.string('Chỉ gửi một từ khoá').trim().max(100, 'Từ khoá tối đa 100 ký tự').optional()),
-  groupId: blankAsMissing(z.uuid('Nhóm hàng không hợp lệ').optional()),
+  groupId: blankAsMissing(z.uuid('Danh mục sản phẩm không hợp lệ').optional()),
   incomplete: blankAsMissing(
     z
       .enum(['true', 'false'], 'incomplete là true hoặc false')

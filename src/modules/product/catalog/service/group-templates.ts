@@ -110,7 +110,7 @@ export async function putGroupTemplate(caller: Caller, groupId: string, input: T
     const platformGroup = group.companyId === null;
     // Thứ tự lỗi Documents/21 mục 5.6: 422 trước 409.
     const errors: Record<string, string> = {};
-    if (platformGroup && input.axisAttributeIds !== undefined) errors.axisAttributeIds = 'Trục của nhóm chuẩn do nền tảng đặt';
+    if (platformGroup && input.axisAttributeIds !== undefined) errors.axisAttributeIds = 'Thuộc tính biến thể của danh mục mặc định do nền tảng đặt';
     // Khoá ngoại bỏ qua RLS: thuộc tính, thông số phải đọc được trong công ty (dòng nền tảng hoặc của công ty).
     const attrs = new Map((await findAttributes()).map((a) => [a.id, a.name]));
     if (!platformGroup && input.axisAttributeIds?.some((id) => !attrs.has(id))) errors.axisAttributeIds = 'Có thuộc tính không tồn tại';
@@ -132,7 +132,7 @@ export async function putGroupTemplate(caller: Caller, groupId: string, input: T
     }
     if (Object.keys(errors).length) throw invalid(errors);
     if (group.version !== input.version)
-      throw versionConflict('Nhóm hàng vừa được người khác sửa', await templateOf(group.id, group.version));
+      throw versionConflict('Danh mục sản phẩm vừa được người khác sửa', await templateOf(group.id, group.version));
 
     const before = await templateOf(group.id, group.version);
     const axisIds = platformGroup ? before.axes.map((a) => a.attributeId) : (input.axisAttributeIds ?? before.axes.map((a) => a.attributeId));
@@ -149,7 +149,7 @@ export async function putGroupTemplate(caller: Caller, groupId: string, input: T
       ? await upsertGroupSettingsIfVersion(caller.companyId, group.id, input.version, {})
       : (await bumpGroupVersion(group.id, input.version)) !== null;
     const current = await findGroup(group.id);
-    if (!written) throw versionConflict('Nhóm hàng vừa được người khác sửa', await templateOf(current.id, current.version));
+    if (!written) throw versionConflict('Danh mục sản phẩm vừa được người khác sửa', await templateOf(current.id, current.version));
     const describe = (t: { axes: { name: string }[]; fields: { name: string; required: boolean }[]; allowed: { name: string }[] }) => ({
       axes: t.axes.map((a) => a.name),
       fields: t.fields.map((f) => (f.required ? `${f.name} (bắt buộc)` : f.name)),
