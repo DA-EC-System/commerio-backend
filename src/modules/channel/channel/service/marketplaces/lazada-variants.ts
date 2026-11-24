@@ -47,8 +47,9 @@ export function lazadaVariation(
 
 /**
  * Khai báo `variation` của sản phẩm đang có trên sàn (`/product/item/get` `data.variation`), theo thứ tự `Variation1`, `Variation2`…
- * Hình dạng đo qua đọc lại item trên shop thử 24/11/2026 (khoá viết hoa `Variation1 { name, label, hasImage, customize, options }`);
- * request_id của riêng lời gọi `item/get` chưa ghi. Trống thì `lazadaAddVariation` tính như lúc tạo nên vẫn an toàn.
+ * Đo 24/11/2026 trên shop thử, `GET /product/item/get`, request_id 2140fd6c17955250341897588: `data.variation` có khoá viết hoa
+ * `Variation1 { name, label, hasImage, customize, options[] }`, `Variation2 …`. Trống thì `lazadaAddVariation` tính như lúc tạo
+ * nên vẫn an toàn.
  */
 export function existingVariation(data: unknown): { name: string; hasImage: boolean }[] {
   const v = (data as { variation?: Record<string, { name?: unknown; hasImage?: unknown }> | null } | undefined)?.variation;
