@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V148**, 21 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
+Phiên bản **V150**, 22 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
 **Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
 
@@ -45,6 +45,10 @@ Cột:
 - `supersedes_id` uuid · null → `finance.config_versions.id` (khoá ngoại)
 - `is_correction` boolean · not null · mặc định `false`
 - `retroactive_from` date · null
+- `source_template_id` uuid · null → `finance.fee_templates.id` (khoá ngoại)
+  Biểu phí mẫu đã chọn khi soạn (chỉ `fee`, Documents/21 §21.6); chỉ để biết nguồn và nhắc khi mẫu đổi.
+- `source_template_version` integer · null
+  `version` của mẫu lúc chọn; mẫu có `version` lớn hơn thì cấu hình đang áp dụng được nhắc xem lại.
 - `dry_run_result` jsonb · null
 - `status_reason` text · null
 - `created_by` uuid · null → `core.accounts` (người thao tác)
@@ -64,6 +68,7 @@ Ràng buộc và index:
 - check `config_versions_range`: `effective_to is null or effective_to >= effective_from`
 - check `config_versions_retroactive`: `retroactive_from is null or is_correction`
 - check `config_versions_approved`: `status not in ('scheduled', 'active', 'superseded') or approved_by is not null`
+- check `config_versions_source_template`: `(source_template_id is null or kind = 'fee') and (source_template_id is null) = (source_template_version is null)`
 - EXCLUDE `config_versions_no_overlap`: `EXCLUDE USING gist ( company_id WITH =, kind WITH =, (coalesce(shop_id, '00000000-0000-0000-0000-000000000000'::uuid)) WITH =, daterange(effective_from, effective_to, '[]') WITH && ) WHERE (status IN ('scheduled', 'active'))`, ở `db/migrations/0002_rls-quyen.sql`
 
 Trỏ vào bảng này:
@@ -91,6 +96,43 @@ Cột:
 Ràng buộc và index:
 
 - khoá chính (`company_id`, `doc_type`, `period`)
+
+## `finance.fee_templates`
+
+Biểu phí mẫu của nền tảng (Documents/21 §21.6, 19; Thành chốt 22/11/2026): dữ liệu chuẩn dùng chung, không có `company_id`, mọi công ty đọc; chỉ quản trị nền tảng (route `/platform/fee-templates`) và migration ghi. Chỉ là gợi ý để soạn `config_versions` `fee`, không phải cấu hình của khách thuê. `platform` tham chiếu `channel.marketplaces.code` (không khoá ngoại vì khác module; service kiểm qua cổng channel). `payload` cùng hình dạng `fee` của `config_versions`.
+
+Khai ở `src/modules/finance/finance/repository/schema.ts` · module con `finance`
+
+Cột:
+
+- `id` uuid · khoá chính · mặc định `gen_random_uuid()`
+- `platform` text · not null
+  Mã sàn (`channel.marketplaces.code`).
+- `shop_type` text · not null
+  Mã loại shop do nền tảng đặt (`standard`, `mall`); thêm sàn mới chỉ thêm dữ liệu.
+- `shop_type_label` text · not null
+  Chữ hiển thị của loại shop theo sàn ("Shop thường", "Mall", "LazMall").
+- `payload` jsonb · not null
+- `sources` jsonb · not null · mặc định `'[]'::jsonb`
+  Trang chính sách đã dùng: `{ title, url, updatedAt }[]`.
+- `effective_from` date · not null
+  Ngày hiệu lực của biểu phí trên sàn.
+- `note` text · not null · mặc định `''`
+  Điều mẫu không biểu diễn được (ưu đãi shop mới, giảm phí theo bậc quảng cáo, trần phí), FE hiện cạnh form.
+- `updated_by` uuid · null → `core.accounts` (người thao tác)
+- `created_at` timestamptz · not null · mặc định `now()`
+- `updated_at` timestamptz · not null · mặc định `now()`
+- `version` integer · not null · mặc định `1`
+
+Ràng buộc và index:
+
+- unique (`platform`, `shop_type`) `fee_templates_platform_shop_type_uq`
+- check `fee_templates_shop_type`: `shop_type ~ '^[a-z][a-z0-9_]{0,29}$'`
+- check `fee_templates_label`: `length(shop_type_label) between 1 and 40`
+
+Trỏ vào bảng này:
+
+- `finance.config_versions.source_template_id` (khoá ngoại)
 
 ## `finance.gateway_configs`
 
