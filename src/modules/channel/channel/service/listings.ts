@@ -43,15 +43,15 @@ import { currentPrices, type ListingPrice, listingPrices } from './listing-price
 import { pushAttributes, specChecks, specStatusOf } from './product-specs.ts';
 import { PUSH_IMAGE_MAX, sendListingPush, sendProductPush } from './shop-jobs.ts';
 import { checkVariant, loadPushContext } from './push-check.ts';
-import { type Blocker, firstBlock, groupBlockers, listingText, pushBlock, specBlock } from './push-block.ts';
+import { type Blocker, byDisplayOrder, firstBlock, groupBlockers, listingText, pushBlock, specBlock } from './push-block.ts';
 import { findAppShopProduct, findShopProduct, insertAppShopProduct, matchShopProductsOf, setShopProductPushStarted } from '../repository/shop-products.ts';
 import { MarketplaceError } from './marketplaces/index.ts';
 import { type Actor, onMarketplace, ownShop, platformOf, shopSession } from './shops.ts';
+import { pushErrorView, type PushErrorView } from './push-error.ts';
 
 export const ENTITY = 'listings';
 /** Mỗi lần đẩy tối đa 20 biến thể (`PushBody`). */
 export const PUSH_LIMIT = 20;
-/** Trạng thái đã có trên sàn: đẩy nữa là `already_listed` (sửa nội dung listing đang bán là #293). */
 
 export interface ChannelListing {
   id: string;
@@ -60,14 +60,14 @@ export interface ChannelListing {
   sellerSku: string | null;
   status: ListingStatus;
   rejectReason: string | null;
-  pushError: SyncError | null;
+  pushError: PushErrorView | null;
   pushAttempts: number;
   hiddenBy: ListingRow['hiddenBy'];
   stockSync: ListingRow['stockSync'];
   priceSync: ListingRow['priceSync'];
   platformStock: number | null;
-  stockSyncError: SyncError | null;
-  priceSyncError: SyncError | null;
+  stockSyncError: PushErrorView | null;
+  priceSyncError: PushErrorView | null;
   /** Cảnh báo QC (§18.4): chưa đọc từ sàn, luôn null. */
   qcAlert: null;
   lastPushedAt: Date | null;
@@ -160,14 +160,14 @@ export function toListing(r: ListingRow, names: ReadonlyMap<string, string> = ne
     sellerSku: r.sellerSku,
     status: r.status,
     rejectReason: r.rejectReason,
-    pushError: r.pushError,
+    pushError: pushErrorView(r.pushError),
     pushAttempts: r.pushAttempts,
     hiddenBy: r.hiddenBy,
     stockSync: r.stockSync,
     priceSync: r.priceSync,
     platformStock: r.platformStock,
-    stockSyncError: r.stockSyncError,
-    priceSyncError: r.priceSyncError,
+    stockSyncError: pushErrorView(r.stockSyncError),
+    priceSyncError: pushErrorView(r.priceSyncError),
     qcAlert: null,
     lastPushedAt: r.lastPushedAt,
     lastPushedPrice: r.listedPrice === null ? null : Number(r.listedPrice),
@@ -412,7 +412,7 @@ export async function pushListings(
     const { items, existing } = checkVariant(ctx, variantId);
     const first = firstBlock(items);
     if (first) {
-      results.push({ ...blocked(variantId, existing, first.code, first.message), blockers: groupBlockers([{ variantId, items }]) });
+      results.push({ ...blocked(variantId, existing, first.code, first.message), blockers: groupBlockers([{ variantId, items }]).sort(byDisplayOrder) });
       continue;
     }
     const v = ctx.variants.get(variantId)!;

@@ -2,13 +2,14 @@
 // `checkVariant`, cùng hàm với `push` và `push-preview`, nên ba nơi không lệch nhau.
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { type Blocker, byDisplayOrder, groupBlockers } from '../domain/blocker.ts';
+import { combineTarget } from '../domain/axis-combine.ts';
 import { pickSources } from '../domain/category-sources.ts';
 import type { Marketplace } from '../repository/schema.ts';
 import { categoryInfoOf } from '../repository/platform-categories.ts';
 import { specUsesOf } from '../repository/product-specs.ts';
 import { listShopRows } from '../repository/shops.ts';
 import type { ProductPort } from './product-port.ts';
-import { maxAxesOf } from './platform-categories.ts';
+import { leafVariantInfoOf } from './platform-categories.ts';
 import { checkVariant, LISTED, loadPushContext } from './push-check.ts';
 import { platformOf } from './shops.ts';
 
@@ -18,7 +19,7 @@ export interface CategoryState {
   path: string | null;
   source: 'push' | 'match' | 'group' | 'recent' | null;
   maxAxes: number | null;
-  /** Leaf có đích ghép thuộc tính biến thể (18.8.3, be#568); `null` tới khi có `combineTarget` hoặc khi chưa lấy attribute. */
+  /** Leaf có đích ghép thuộc tính biến thể (18.8.3, be#568, `combineTarget`); `null` khi chưa lấy attribute. */
   combinable: boolean | null;
 }
 
@@ -46,6 +47,13 @@ export async function productReadiness(port: ProductPort, productId: string, sho
   if (shopId && !shops.length) throw new AppError(404, 'not_found', 'Không tìm thấy gian hàng');
 
   const items: ShopReadiness[] = [];
+  // Sản phẩm cùng nhóm hàng cho gợi ý `group`: đọc một lần, chỉ khi cần (gian hàng nào đó chưa có spec).
+  let sameGroup: Set<string> | undefined;
+  const sameGroupOf = async () => {
+    const groupId = live[0]?.groupId;
+    sameGroup ??= groupId ? new Set((await port.variants()).filter((v) => v.groupId === groupId).map((v) => v.productId)) : new Set();
+    return sameGroup;
+  };
   // Cùng một kết nối của giao dịch: đọc tuần tự từng gian hàng.
   for (const shop of shops) {
     const ctx = await loadPushContext(port, shop, ids);
@@ -61,10 +69,8 @@ export async function productReadiness(port: ProductPort, productId: string, sho
       rows.push({ variantId: id, items: found });
       variants.push({ variantId: id, status: found.length ? 'blocked' : 'ready', blockerCodes: found.map((b) => b.code) });
     }
-    const category = await categoryState(port, shop.platform, productId, live[0]?.groupId ?? null, ctx.specs.get(productId));
-    const blockers = groupBlockers(rows)
-      .map((b) => (b.code === 'axis_limit' ? { ...b, label: axisLimitLabel(category, live) ?? b.label } : b))
-      .sort(byDisplayOrder);
+    const category = await categoryState(shop.platform, productId, sameGroupOf, ctx.specs.get(productId));
+    const blockers = groupBlockers(rows).sort(byDisplayOrder).map((b) => (b.code === 'axis_limit' ? { ...b, label: axisLimitLabel(category, live) ?? b.label } : b));
     const counts = {
       ready: variants.filter((v) => v.status === 'ready').length,
       blocked: variants.filter((v) => v.status === 'blocked').length,
@@ -92,10 +98,9 @@ export function axisLimitLabel(category: CategoryState, variants: readonly { att
 }
 
 export async function categoryState(
-  port: ProductPort,
   platform: Marketplace,
   productId: string,
-  groupId: string | null,
+  sameGroupOf: () => Promise<ReadonlySet<string>>,
   spec: Awaited<ReturnType<typeof loadPushContext>>['specs'] extends ReadonlyMap<string, infer S> ? S | undefined : never,
 ): Promise<CategoryState> {
   const { adapter } = platformOf(platform);
@@ -108,23 +113,24 @@ export async function categoryState(
       path: info?.path ?? null,
       source: spec.row.source,
       maxAxes: caps?.maxAxes ?? null,
-      combinable: null,
+      combinable: spec.attributes ? combineTarget(spec.attributes) !== null : null,
     };
   }
   // Gợi ý không gọi sàn: `group` rồi `recent`, như hai nguồn cùng tên của `category-suggestions`.
   const specs = await specUsesOf(platform);
-  const sameGroup = groupId === null ? new Set<string>() : new Set((await port.variants()).filter((v) => v.groupId === groupId).map((v) => v.productId));
+  const sameGroup = await sameGroupOf();
   const infos = await categoryInfoOf(platform, specs.map((s) => s.externalCategoryId));
   const removedIds = new Set([...infos].filter(([, i]) => i.status === 'removed').map(([id]) => id));
   const { group, recent } = pickSources({ specs, productId, sameGroupProductIds: sameGroup, itemIds: new Set(), removedIds });
   const pick = group[0] ? { use: group[0], source: 'group' as const } : recent[0] ? { use: recent[0], source: 'recent' as const } : null;
   if (!pick) return { state: 'none', externalCategoryId: null, path: null, source: null, maxAxes: null, combinable: null };
+  const info = (await leafVariantInfoOf(platform, [pick.use.externalId])).get(pick.use.externalId);
   return {
     state: 'suggested',
     externalCategoryId: pick.use.externalId,
     path: infos.get(pick.use.externalId)?.path ?? null,
     source: pick.source,
-    maxAxes: (await maxAxesOf(platform, [pick.use.externalId])).get(pick.use.externalId) ?? null,
-    combinable: null,
+    maxAxes: info?.maxAxes ?? null,
+    combinable: info?.combinable ?? null,
   };
 }

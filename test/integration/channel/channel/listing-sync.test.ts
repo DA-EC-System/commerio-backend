@@ -227,7 +227,16 @@ describe('đồng bộ tồn và giá', () => {
     const rowA = await listing(a.id);
     // Đẩy lỗi giữ pending kèm lỗi (Documents/21 mục 18.6.6); `error` dành cho Lệch tồn.
     expect(rowA).toMatchObject({ stock_sync: 'pending', price_sync: 'error' });
-    expect(rowA.stock_sync_error).toMatchObject({ code: 'E0501', message: 'Update product failed' });
+    // Sàn giả không có bảng dịch: mã gốc nằm ở `platformCode`, câu chung kèm câu sàn (#571).
+    expect(rowA.stock_sync_error).toMatchObject({
+      code: 'marketplace_rejected',
+      kind: 'platform',
+      message: 'Sàn giả không nhận cập nhật tồn: Update product failed',
+      platformCode: 'E0501',
+      platformMessage: 'Update product failed',
+      variantId: a.id,
+    });
+    expect(rowA.price_sync_error).toMatchObject({ code: 'marketplace_rejected', message: 'Sàn giả không nhận cập nhật giá: Update product failed' });
     expect(await listing(b.id)).toMatchObject({ stock_sync: 'synced', stock_sync_error: null });
     skuErrors.clear();
   });
@@ -259,7 +268,7 @@ describe('đồng bộ tồn và giá', () => {
     const row = await listing(b.id);
     expect(row).toMatchObject({ stock_sync: 'pending', price_sync: 'error' });
     expect(row.stock_sync_error).toMatchObject({ code: 'variant_missing' });
-    expect(row.price_sync_error).toMatchObject({ code: 'E0501' });
+    expect(row.price_sync_error).toMatchObject({ code: 'marketplace_rejected', platformCode: 'E0501' });
     skuErrors.clear();
     available.set(b.id, 5);
     await sync();

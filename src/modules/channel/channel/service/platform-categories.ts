@@ -2,6 +2,7 @@
 // từ DB, không gọi sàn; attribute của leaf dùng lại 7 ngày, quá hạn thì gọi sàn rồi ghi qua `replaceLeaf` (ngoài
 // `withCompany`, A3). Lazada không cần token (G2.1, G2.2); TikTok gọi bằng token gian hàng (A4).
 import { AppError } from '../../../../shared/errors/app-error.ts';
+import { combineTarget } from '../domain/axis-combine.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { responsibleOrgOf } from '../../../core/index.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
@@ -39,7 +40,7 @@ export interface PlatformCategory {
   pathIds: string[];
   /** Số thuộc tính biến thể tối đa của leaf (21 §18.10, be#564); null khi không phải leaf, chưa lấy attribute, sàn không khai. */
   maxAxes: number | null;
-  /** Leaf có đích ghép thuộc tính biến thể (18.8.3, be#568); null tới khi #568 có `combineTarget`. */
+  /** Leaf có đích ghép thuộc tính biến thể (18.8.3, be#568); null khi không phải leaf hoặc chưa lấy attribute. */
   combinable: boolean | null;
 }
 
@@ -65,18 +66,28 @@ export interface LeafDetail {
   products: { productId: string; code: string; name: string; source: SpecSource }[];
 }
 
-/**
- * `maxAxes` của các leaf theo `variantCapabilities` của adapter, chỉ với leaf đã lấy attribute (A2: không gọi sàn); leaf chưa
- * lấy hoặc sàn không khai hook thì vắng trong Map. Gọi được cả trong lẫn ngoài `withCompany` (bảng tham chiếu, chỉ đọc).
- */
-export async function maxAxesOf(platform: Marketplace, leafIds: readonly string[]): Promise<Map<string, number>> {
-  const { adapter } = platformOf(platform);
-  if (!adapter.variantCapabilities || !leafIds.length) return new Map();
-  const leaves = await fetchedLeafAttributesOf(platform, leafIds);
-  return new Map([...leaves].map(([id, attrs]) => [id, adapter.variantCapabilities!(attrs).maxAxes]));
+/** Khả năng biến thể của một leaf đã lấy attribute (21 §18.10, be#564, be#568). */
+export interface LeafVariantInfo {
+  /** Theo `variantCapabilities` của adapter; null khi sàn không khai hook. */
+  maxAxes: number | null;
+  /** Có đích ghép thuộc tính biến thể (`combineTarget(leaf) !== null`). */
+  combinable: boolean;
 }
 
-const toCategory = (r: CategoryRow, pathIds: ReadonlyMap<string, string[]>, maxAxes: ReadonlyMap<string, number>): PlatformCategory => ({
+/**
+ * `maxAxes`, `combinable` của các leaf, chỉ với leaf đã lấy attribute (A2: không gọi sàn); leaf chưa lấy thì vắng trong Map.
+ * Gọi được cả trong lẫn ngoài `withCompany` (bảng tham chiếu, chỉ đọc).
+ */
+export async function leafVariantInfoOf(platform: Marketplace, leafIds: readonly string[]): Promise<Map<string, LeafVariantInfo>> {
+  if (!leafIds.length) return new Map();
+  const { adapter } = platformOf(platform);
+  const leaves = await fetchedLeafAttributesOf(platform, leafIds);
+  return new Map(
+    [...leaves].map(([id, attrs]) => [id, { maxAxes: adapter.variantCapabilities?.(attrs).maxAxes ?? null, combinable: combineTarget(attrs) !== null }]),
+  );
+}
+
+const toCategory = (r: CategoryRow, pathIds: ReadonlyMap<string, string[]>, info: ReadonlyMap<string, LeafVariantInfo>): PlatformCategory => ({
   externalId: r.externalId,
   parentExternalId: r.parentExternalId,
   name: r.name,
@@ -84,8 +95,8 @@ const toCategory = (r: CategoryRow, pathIds: ReadonlyMap<string, string[]>, maxA
   isLeaf: r.isLeaf,
   status: r.status,
   pathIds: pathIds.get(r.externalId) ?? [r.externalId],
-  maxAxes: r.isLeaf ? (maxAxes.get(r.externalId) ?? null) : null,
-  combinable: null,
+  maxAxes: r.isLeaf ? (info.get(r.externalId)?.maxAxes ?? null) : null,
+  combinable: r.isLeaf ? (info.get(r.externalId)?.combinable ?? null) : null,
 });
 
 /**
@@ -103,8 +114,8 @@ export async function listPlatformCategories(
   if (query.shopId !== undefined) await assertShopOn(companyId!, platform, query.shopId);
   const rows = query.search ? await searchLeaves(platform, query.search) : await childrenOf(platform, query.parentId ?? null);
   const pathIds = await pathIdsOf(platform, rows.map((r) => r.externalId));
-  const maxAxes = await maxAxesOf(platform, rows.filter((r) => r.isLeaf).map((r) => r.externalId));
-  const items = rows.map((r) => toCategory(r, pathIds, maxAxes));
+  const info = await leafVariantInfoOf(platform, rows.filter((r) => r.isLeaf).map((r) => r.externalId));
+  const items = rows.map((r) => toCategory(r, pathIds, info));
   if (query.shopId === undefined) return { items, syncedAt: await treeSyncedAt(platform) };
   const shopId = query.shopId;
   const leafIds = rows.filter((r) => r.isLeaf).map((r) => r.externalId);
@@ -186,7 +197,7 @@ export async function leafDetail(
   }));
   return {
     category: {
-      ...toCategory(category, await pathIdsOf(platform, [externalId]), await maxAxesOf(platform, category.isLeaf ? [externalId] : [])),
+      ...toCategory(category, await pathIdsOf(platform, [externalId]), await leafVariantInfoOf(platform, category.isLeaf ? [externalId] : [])),
       sizeChartRule: category.sizeChartRule,
     },
     attributes: attributes.map(({ raw: _raw, ...a }) => {

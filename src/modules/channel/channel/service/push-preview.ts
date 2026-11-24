@@ -72,7 +72,9 @@ export async function previewPush(
     for (const id of ids) {
       const v = variants.get(id)!;
       if (axisLabels.has(v.productId) || !checked.get(id)!.items.some((b) => b.code === 'axis_limit')) continue;
-      const category = await categoryState(port, shop.platform, v.productId, v.groupId ?? null, pushCtx.specs.get(v.productId));
+      const groupId = v.groupId ?? null;
+      const sameGroupOf = async () => new Set(groupId ? (await port.variants()).filter((x) => x.groupId === groupId).map((x) => x.productId) : []);
+      const category = await categoryState(shop.platform, v.productId, sameGroupOf, pushCtx.specs.get(v.productId));
       axisLabels.set(v.productId, axisLimitLabel(category, [...variants.values()].filter((x) => x.productId === v.productId && !x.archived)));
     }
     const rows = ids.map((id): PushPreviewRow => {
