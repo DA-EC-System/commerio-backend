@@ -313,7 +313,7 @@ export function toAppError(err: MarketplaceError): AppError {
     case 'unauthorized':
       return new AppError(409, 'marketplace_unauthorized', 'Sàn từ chối token của gian hàng, cần kết nối lại', platform);
     default:
-      return new AppError(409, 'marketplace_rejected', 'Sàn từ chối yêu cầu', platform);
+      return new AppError(409, 'marketplace_rejected', err.userMessage ?? 'Sàn từ chối yêu cầu', platform);
   }
 }
 
