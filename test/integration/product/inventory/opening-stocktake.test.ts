@@ -18,18 +18,57 @@ async function setup() {
 }
 
 describe('createOpeningStocktake (#245)', () => {
-  it('lập nháp nguồn shop_setup, mỗi SKU đang bán một dòng, số đếm điền sẵn bằng tồn thực', async () => {
+  it('lập nháp nguồn shop_setup, mỗi SKU đang bán một dòng, số đếm để trống (#569)', async () => {
     const s = await setup();
     const res = await withCompany(s.companyId, () => createOpeningStocktake(s.shopId, { actorId: null }));
     expect(res).toMatchObject({ created: true, number: expect.stringMatching(/^KK-/) });
     const doc = (await inv(s.ceo.token).get(`/documents/${res.documentId}`)).body;
     expect(doc).toMatchObject({ type: 'stocktake', status: 'draft', kind: 'auto', area: 'stock', source: null });
-    expect(doc.lines.map((l: { variantId: string; bookQty: number; counted: number }) => [l.variantId, l.bookQty, l.counted]).sort()).toEqual(
+    expect(
+      doc.lines.map((l: { variantId: string; bookQty: number; counted: number | null; quantity: number }) => [l.variantId, l.bookQty, l.counted, l.quantity]).sort(),
+    ).toEqual(
       [
-        [s.v1, 7, 7],
-        [s.v2, 0, 0],
+        [s.v1, 7, null, 0],
+        [s.v2, 0, null, 0],
       ].sort(),
     );
+  });
+
+  it('gửi duyệt khi còn dòng chưa đếm: 422 theo dòng, không đổi trạng thái; PUT giữ ô trống là null (#569)', async () => {
+    const s = await setup();
+    const { documentId } = await withCompany(s.companyId, () => createOpeningStocktake(s.shopId, { actorId: null }));
+    const doc = (await inv(s.ceo.token).get(`/documents/${documentId}`)).body;
+    const saved = await inv(s.ceo.token).put(`/documents/${documentId}`, {
+      note: doc.note,
+      lines: [
+        { variantId: s.v1, counted: 5 },
+        { variantId: s.v2, counted: null },
+      ],
+      version: doc.version,
+    });
+    expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+    const byVariant = new Map(saved.body.lines.map((l: { variantId: string; counted: number | null }) => [l.variantId, l.counted]));
+    expect([byVariant.get(s.v1), byVariant.get(s.v2)]).toEqual([5, null]);
+    const sent = await inv(s.ceo.token).post(`/documents/${documentId}/submit`, { version: saved.body.version });
+    expect([sent.status, sent.body.code]).toEqual([422, 'validation_failed']);
+    const i2 = saved.body.lines.findIndex((l: { variantId: string }) => l.variantId === s.v2);
+    expect(Object.keys(sent.body.errors)).toEqual([`lines.${i2}.counted`]);
+    expect((await inv(s.ceo.token).get(`/documents/${documentId}`)).body.status).toBe('draft');
+  });
+
+  it('công ty chưa có SKU nào: phiếu rỗng ghi sổ ngay do hệ thống, phát stocktake_posted (#569)', async () => {
+    const c = await createCompany();
+    const shopId = randomUUID();
+    const res = await withCompany(c.companyId, () => createOpeningStocktake(shopId, { actorId: null }));
+    const doc = (await inv(c.ceo.token).get(`/documents/${res.documentId}`)).body;
+    expect(doc).toMatchObject({ type: 'stocktake', status: 'posted', lines: [] });
+    expect(doc.statusHistory.at(-1)).toMatchObject({ from: 'draft', to: 'posted' });
+    const { rows } = await testPool().query(
+      "select payload from core.outbox_messages where type = 'inventory.stocktake_posted' and key = $1",
+      [res.documentId],
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].payload).toMatchObject({ source: { type: 'shop_setup', shopId }, lines: [] });
   });
 
   it('gọi hai lần chỉ ra một phiếu nháp; hai lần đua nhau cũng vậy', async () => {
@@ -117,7 +156,9 @@ describe('createOpeningStocktake (#245)', () => {
     }
     async function submitAndApprove(submitter: string, approver: string, documentId: string) {
       const doc = (await inv(submitter).get(`/documents/${documentId}`)).body;
-      const sent = await inv(submitter).post(`/documents/${documentId}/submit`, { version: doc.version });
+      const lines = doc.lines.map((l: { variantId: string; bookQty: number }) => ({ variantId: l.variantId, counted: l.bookQty }));
+      const counted = (await inv(submitter).put(`/documents/${documentId}`, { note: doc.note, lines, version: doc.version })).body;
+      const sent = await inv(submitter).post(`/documents/${documentId}/submit`, { version: counted.version });
       expect(sent.status, JSON.stringify(sent.body)).toBe(200);
       return inv(approver).post(`/documents/${documentId}/approve`, { version: sent.body.version });
     }

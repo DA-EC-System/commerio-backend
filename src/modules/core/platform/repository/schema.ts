@@ -39,6 +39,9 @@ export const companies = platformSchema.table('companies', {
   status: companyStatus('status').notNull().default('active'),
   lockReason: text('lock_reason'),
   lockedAt: timestamp('locked_at', { withTimezone: true }),
+  // Lần đầu mọi mục bắt buộc của onboarding cùng xong, đặt một lần qua `POST /onboarding/complete`, không xoá (#569,
+  // Documents/21 mục 23). Chỉ quyết định có ép vào wizard hay không; `done` của từng mục vẫn suy từ dữ liệu.
+  onboardingCompletedAt: timestamp('onboarding_completed_at', { withTimezone: true }),
   ...timestamps,
   ...version,
 });
