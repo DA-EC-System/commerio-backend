@@ -230,7 +230,13 @@ describe('đẩy listing: request chỉ kiểm và xếp việc', () => {
 
   it('hai biến thể cùng sản phẩm trong một request: đọc ảnh một lần, một việc theo cha (#303, #295)', async () => {
     const a = ownProduct('CMR-PAIR-A', ['https://files.commerio.test/pair.jpg']);
-    const b = variant(`CMR-PAIR-B-${randomUUID().slice(0, 6)}`, { productId: a.productId });
+    // Sản phẩm nhiều SKU phải có thuộc tính phân loại (gom biến thể kiểm ngay lúc bấm, 21 §18.11).
+    const axis = randomUUID();
+    a.attributes = [{ attributeId: axis, attributeName: 'Màu', platformKind: null, valueId: randomUUID(), value: 'Đen' }];
+    const b = variant(`CMR-PAIR-B-${randomUUID().slice(0, 6)}`, {
+      productId: a.productId,
+      attributes: [{ attributeId: axis, attributeName: 'Màu', platformKind: null, valueId: randomUUID(), value: 'Trắng' }],
+    });
     all.push(b);
     productImageUrls.mockClear();
     const res = await results([a.id, b.id]);
@@ -589,7 +595,7 @@ describe('21 §18.9 R5: gian hàng chưa có cấu hình phí không đăng đư
     const res = await auth(app().post(`/api/v1/channel/shops/${id}/listings/push`)).send({ variantIds: [ok.id], listPrices: { [ok.id]: 500000 } });
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(PushResults.parse(res.body).results).toEqual([
-      { variantId: ok.id, listingId: null, status: null, code: 'fee_not_configured', message: expect.stringContaining('chưa có cấu hình phí') },
+      { variantId: ok.id, listingId: null, status: null, code: 'fee_not_configured', message: expect.stringContaining('chưa có cấu hình phí'), blockers: [expect.objectContaining({ code: 'fee_not_configured', scope: 'shop' })] },
     ]);
     expect((await testPool().query('select 1 from channel.listings where shop_id = $1', [id])).rows).toEqual([]);
     expect((await testPool().query("select 1 from pgboss.job where name = 'channel.product_push' and data->>'shopId' = $1", [id])).rows).toEqual([]);

@@ -1,0 +1,1 @@
+ALTER TYPE "finance"."ledger_kind" ADD VALUE 'fee_per_item' BEFORE 'withholding_tax';

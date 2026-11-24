@@ -119,8 +119,8 @@ describe('category-suggestions', () => {
     CategorySuggestionsView.parse(res.body);
     expect(res.body).toEqual({
       items: [
-        { externalId: lzLeaf, path: 'Thời trang nam > Áo > Áo thun', permission: null, usedByCompany: false },
-        { externalId: lzOther, path: "Women's Clothing > Tops", permission: null, usedByCompany: false },
+        { externalId: lzLeaf, path: 'Thời trang nam > Áo > Áo thun', permission: null, usedByCompany: false, maxAxes: null, combinable: null },
+        { externalId: lzOther, path: "Women's Clothing > Tops", permission: null, usedByCompany: false, maxAxes: null, combinable: null },
       ],
       group: [],
       recent: [],
@@ -146,7 +146,7 @@ describe('category-suggestions', () => {
     const res = await get(tiktokShop, product('Giày sneaker nam vải canvas đế cao su', false));
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(res.body.items).toEqual([
-      { externalId: ttLeaf, path: 'Giày dép > Giày dép nam > Giày thể thao', permission: 'invite_only', usedByCompany: false },
+      { externalId: ttLeaf, path: 'Giày dép > Giày dép nam > Giày thể thao', permission: 'invite_only', usedByCompany: false, maxAxes: null, combinable: null },
     ]);
     const { rows } = await testPool().query(
       'select status, company_id, checked_at from channel.shop_category_permissions where shop_id = $1 and external_category_id = $2',
@@ -256,10 +256,10 @@ describe('category-suggestions: group, recent', () => {
       [lzOther, false],
     ]);
     expect(res.body.group).toEqual([
-      { externalId: catA, path: 'Nhóm > A', productCount: 3, permission: null },
-      { externalId: catB, path: 'Nhóm > B', productCount: 1, permission: null },
+      { externalId: catA, path: 'Nhóm > A', productCount: 3, permission: null, maxAxes: null, combinable: null },
+      { externalId: catB, path: 'Nhóm > B', productCount: 1, permission: null, maxAxes: null, combinable: null },
     ]);
-    expect(res.body.recent).toEqual([{ externalId: catC, path: 'Khác > C', productCount: 1, permission: null }]);
+    expect(res.body.recent).toEqual([{ externalId: catC, path: 'Khác > C', productCount: 1, permission: null, maxAxes: null, combinable: null }]);
   });
 
   it('sản phẩm nhóm khác: group chỉ có category của nhóm đó, recent có category nhóm 1; thiếu ảnh vẫn trả group', async () => {

@@ -46,6 +46,8 @@ import {
   TakeOverContentParams,
   ListingList,
   ProductListingsParams,
+  ProductReadiness,
+  ReadinessQuery,
   ProductListingListWithSeparate,
   RegroupParams,
   RegroupQueued,
@@ -64,6 +66,8 @@ import {
   RemoteSkusQuery,
   OrderPullResult,
   PushBody,
+  PushPreview,
+  PushPreviewBody,
   MatchBulkBody,
   MatchBulkResult,
   CreateVariantBody,
@@ -385,7 +389,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/shops/:id/category-suggestions',
     summary: 'Gợi ý category của sàn cho một sản phẩm (#400)',
     description:
-      'Cần `channel.listing.manage`. Gọi sàn bằng token gian hàng theo tên và ảnh đầu của sản phẩm: sàn trả tối đa 5 gợi ý theo thứ tự của sàn; sàn có quyền category theo gian hàng thì kèm `permission` và ghi vào `shop_category_permissions`, không thì `permission: null`. `path` lấy từ cây đã đồng bộ khi có, không thì đường dẫn sàn trả. Sàn `unavailable` thì gọi lại một lần. Chưa có cache: `cached` luôn false. `group` (category của sản phẩm cùng nhóm hàng) và `recent` (công ty dùng gần đây) đọc từ DB, luôn trả (#448). Không gọi được sàn thì 200 `items: []` kèm `suggestError` (`product_name_too_short` kèm `min`, `images_missing`, `marketplace_unavailable`), hai lỗi đầu không gọi sàn; adapter có thể gửi thêm mô tả sản phẩm.',
+      'Cần `channel.listing.manage`. Gọi sàn bằng token gian hàng theo tên và ảnh đầu của sản phẩm: sàn trả tối đa 5 gợi ý theo thứ tự của sàn; sàn có quyền category theo gian hàng thì kèm `permission` và ghi vào `shop_category_permissions`, không thì `permission: null`. `path` lấy từ cây đã đồng bộ khi có, không thì đường dẫn sàn trả. Sàn `unavailable` thì gọi lại một lần. Chưa có cache: `cached` luôn false. `group` (category của sản phẩm cùng danh mục sản phẩm) và `recent` (công ty dùng gần đây) đọc từ DB, luôn trả (#448). Không gọi được sàn thì 200 `items: []` kèm `suggestError` (`product_name_too_short` kèm `min`, `images_missing`, `marketplace_unavailable`), hai lỗi đầu không gọi sàn; adapter có thể gửi thêm mô tả sản phẩm.',
     security: bearer,
     request: { params: ShopParams, query: CategorySuggestionsQuery },
     responses: {
@@ -516,6 +520,21 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
   });
   registry.registerPath({
     method: 'get',
+    path: '/products/:productId/readiness',
+    summary: 'Readiness đăng của sản phẩm theo từng gian hàng (21 §18.10, be#564)',
+    description:
+      'Cần `channel.shop.view`. Mỗi gian hàng chưa `disconnected` một phần tử (hoặc chỉ `shopId`). Mục chặn cùng hàm với `listings/push` và `push-preview`. Không ghi, không gọi sàn.',
+    security: bearer,
+    request: { params: ProductListingsParams, query: ReadinessQuery },
+    responses: {
+      200: { description: 'Readiness theo gian hàng', ...json(ProductReadiness) },
+      ...auth,
+      404: problemResponse('`not_found`: sản phẩm, hoặc `shopId`, không có, của công ty khác, hay gian hàng đã ngắt'),
+      422: problemResponse('`validation_failed`: `shopId` sai dạng'),
+    },
+  });
+  registry.registerPath({
+    method: 'get',
     path: '/products/:productId/listings',
     summary: 'Listing của một sản phẩm ở mọi gian hàng chưa ngắt (21 §18.5, #467)',
     description:
@@ -549,6 +568,21 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
       200: { description: 'Kết quả theo biến thể', ...json(PushResults) },
       ...onShop,
       409: problemResponse('`shop_not_active`, `shop_awaiting_stocktake`, `shop_awaiting_allocation` kèm `waitingFor`, `shop_not_connected`; `marketplace_rejected` kèm `platformCode`, `platformMessage`'),
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/shops/:id/listings/push-preview',
+    summary: 'Kiểm trước khi đăng hàng loạt (21 §18.11)',
+    description:
+      'Cần `channel.listing.manage`. Không ghi, không gọi sàn. Mỗi biến thể một dòng: `status`, `blockers` từ cùng hàm với readiness (18.10) và `push`, kể cả phần gom biến thể (`axis_shape`, `axis_unmapped`); giá lần đăng sẽ gửi, `rounding` (null khi giá gõ tay), tồn sẽ đẩy, thực nhận, `feePct`. Người gọi thiếu `inventory.cost.view` không nhận `below_floor` (R4); `push` vẫn chặn. `push` chạy lại kiểm từng dòng lúc nhận, không dùng kết quả xem trước. Lỗi cả request như `push`: 409 `shop_not_active`, `shop_awaiting_stocktake`, `shop_awaiting_allocation`, `shop_not_connected`. `variantIds` rỗng, quá 200 (đếm cả id trùng, trước khi bỏ trùng): 422 `errors.variantIds`; biến thể không có hay của công ty khác: 422 `errors["variantIds.<i>"]`.',
+    security: bearer,
+    request: { params: ShopParams, body: json(PushPreviewBody) },
+    responses: {
+      200: { description: 'Kết quả theo biến thể, cùng thứ tự `variantIds` (bỏ trùng)', ...json(PushPreview) },
+      ...onShop,
+      409: problemResponse('`shop_not_active`, `shop_awaiting_stocktake`, `shop_awaiting_allocation` kèm `waitingFor`, `shop_not_connected`'),
+      422: problemResponse('`errors.variantIds`, `errors["variantIds.<i>"]`, `errors["listPrices.<id>"]`'),
     },
   });
   registry.registerPath({

@@ -3,22 +3,13 @@
 <!-- Sinh tự động bởi `npm run db:docs` từ db/migrations. Không sửa tay. -->
 
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
-Mới nhất: **V152**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+Mới nhất: **V151**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
 
-## V152 · 24/11/2026 · dong-bo-category-du-lieu
+## V151 · 24/11/2026 · phi-moi-mon
 
-`db/migrations/20261124114527_dong-bo-category-du-lieu.sql` · viết tay
+`db/migrations/20261124115024_phi-moi-mon.sql` · sinh từ schema
 
-- viết tay: quyền, khoá ngoại, dữ liệu
-- #569 (Documents/21 §18.5): bảng ánh xạ category sàn → danh mục chuẩn là dữ liệu của nền tảng.
-
-## V151 · 24/11/2026 · dong-bo-category
-
-`db/migrations/20261124114525_dong-bo-category.sql` · sinh từ schema
-
-- + bảng `channel.platform_category_group_maps`
-- `channel.marketplaces`: + cột `category_sync_state`, `category_sync_error`, `category_sync_at`; + check `marketplaces_category_sync_state`
-- `channel.shops`: + cột `category_permissions_state`, `category_permissions_error`, `category_permissions_checked_at`; + check `shops_category_permissions_state`
+- enum `finance.ledger_kind`: + `fee_per_item`
 
 ## V150 · 24/11/2026 · lien-ket-sku-565
 
