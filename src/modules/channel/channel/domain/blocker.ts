@@ -71,6 +71,14 @@ const SHOP_CODES: ReadonlySet<BlockerCode> = new Set([
  */
 export const blockerScope = (code: BlockerCode): BlockerScope => (COMMON_CODES.has(code) ? 'common' : SHOP_CODES.has(code) ? 'shop' : 'platform');
 
+const SCOPE_ORDER: Record<BlockerScope, number> = { platform: 0, common: 1, shop: 2 };
+
+/**
+ * Thứ tự hiển thị cố định (21 §18.10): mục của sản phẩm theo sàn, rồi mục của SKU, rồi mục của gian hàng; cùng phạm vi giữ
+ * thứ tự kiểm. Readiness, push-preview, kết quả push cùng dùng (Documents#248 phương án a: `code` theo thứ tự kiểm).
+ */
+export const byDisplayOrder = (a: { scope: BlockerScope }, b: { scope: BlockerScope }) => SCOPE_ORDER[a.scope] - SCOPE_ORDER[b.scope];
+
 /** Gom mục chặn của nhiều biến thể theo mã và chỗ sửa, giữ thứ tự gặp đầu tiên. */
 export function groupBlockers(rows: readonly { variantId: string; items: readonly BlockItem[] }[]): Blocker[] {
   const byKey = new Map<string, Blocker>();

@@ -1,7 +1,7 @@
 // Readiness đăng của một sản phẩm theo từng gian hàng (be#564, Documents/21 §18.10). Không ghi, không gọi sàn. Mục chặn lấy từ
 // `checkVariant`, cùng hàm với `push` và `push-preview`, nên ba nơi không lệch nhau.
 import { AppError } from '../../../../shared/errors/app-error.ts';
-import { type Blocker, type BlockerScope, groupBlockers } from '../domain/blocker.ts';
+import { type Blocker, byDisplayOrder, groupBlockers } from '../domain/blocker.ts';
 import { pickSources } from '../domain/category-sources.ts';
 import type { Marketplace } from '../repository/schema.ts';
 import { categoryInfoOf } from '../repository/platform-categories.ts';
@@ -36,9 +36,6 @@ export interface ShopReadiness {
 /** Listing đang ở trên sàn hoặc đang đẩy: không cần đăng, không tính vào đăng được hay bị chặn. */
 const LISTED_OR_PUSHING = new Set<string>([...LISTED, 'pushing']);
 
-/** Thứ tự cố định: mục của sản phẩm theo sàn, rồi mục của SKU, rồi mục của gian hàng (21 §18.10). */
-const SCOPE_ORDER: Record<BlockerScope, number> = { platform: 0, common: 1, shop: 2 };
-
 /** Gọi trong `withCompany`. `shopId` chỉ lấy một gian hàng. */
 export async function productReadiness(port: ProductPort, productId: string, shopId?: string): Promise<{ items: ShopReadiness[] }> {
   const catalog = await port.variants(undefined, { productIds: [productId] });
@@ -67,7 +64,7 @@ export async function productReadiness(port: ProductPort, productId: string, sho
     const category = await categoryState(port, shop.platform, productId, live[0]?.groupId ?? null, ctx.specs.get(productId));
     const blockers = groupBlockers(rows)
       .map((b) => (b.code === 'axis_limit' ? { ...b, label: axisLimitLabel(category, live) ?? b.label } : b))
-      .sort((a, b) => SCOPE_ORDER[a.scope] - SCOPE_ORDER[b.scope]);
+      .sort(byDisplayOrder);
     const counts = {
       ready: variants.filter((v) => v.status === 'ready').length,
       blocked: variants.filter((v) => v.status === 'blocked').length,
@@ -88,13 +85,13 @@ export async function productReadiness(port: ProductPort, productId: string, sho
 }
 
 /** "Category {path} chỉ nhận {maxAxes} thuộc tính biến thể, sản phẩm có {n}" (21 §18.10). */
-function axisLimitLabel(category: CategoryState, variants: readonly { attributes: readonly { attributeId: string }[] }[]): string | null {
+export function axisLimitLabel(category: CategoryState, variants: readonly { attributes: readonly { attributeId: string }[] }[]): string | null {
   if (category.maxAxes === null) return null;
   const axes = new Set(variants.flatMap((v) => v.attributes.map((a) => a.attributeId))).size;
   return `Category ${category.path ?? category.externalCategoryId} chỉ nhận ${category.maxAxes} thuộc tính biến thể, sản phẩm có ${axes}`;
 }
 
-async function categoryState(
+export async function categoryState(
   port: ProductPort,
   platform: Marketplace,
   productId: string,

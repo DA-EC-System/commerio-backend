@@ -191,6 +191,17 @@ describe('push-preview: dòng bị chặn, mỗi mục một Blocker kèm scope 
     expect(row).toMatchObject({ netReceived: null, feePct: null, rounding: null, feeConfigId: null });
   });
 
+  it('mục chặn xếp theo phạm vi như readiness: sàn, SKU, rồi gian hàng (21 §18.10); `code` của push vẫn theo thứ tự kiểm', async () => {
+    const v = await variant(200000, 150000, { weightG: null }, { spec: false });
+    const [row] = PushPreview.parse((await preview({ variantIds: [v.id] }, company.ceo.token, noFeeShopId)).body).rows;
+    // Thứ tự kiểm là fee_not_configured → dimensions_missing → category_unmapped; hiển thị thì mục sàn trước, gian hàng sau.
+    expect(row!.blockers.map((b) => [b.scope, b.code])).toEqual([
+      ['platform', 'category_unmapped'],
+      ['common', 'dimensions_missing'],
+      ['shop', 'fee_not_configured'],
+    ]);
+  });
+
   it('biến thể đã lưu trữ: not_found chỉ tới listing (21 §18.11)', async () => {
     const v = await variant(200000, 150000, { archived: true });
     const [row] = PushPreview.parse((await preview({ variantIds: [v.id] })).body).rows;

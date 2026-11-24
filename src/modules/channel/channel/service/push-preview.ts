@@ -11,7 +11,8 @@ import { assertPushable, stockToPushView } from './listings.ts';
 import { evaluatePrices, shopPriceConfig } from './price-inputs.ts';
 import type { ProductPort } from './product-port.ts';
 import { checkVariant, loadPushContext } from './push-check.ts';
-import { type Blocker, blockerScope } from './push-block.ts';
+import { type Blocker, blockerScope, byDisplayOrder } from './push-block.ts';
+import { axisLimitLabel, categoryState } from './readiness.ts';
 import { type Actor, ownShop } from './shops.ts';
 
 export interface PushPreviewRow {
@@ -66,12 +67,27 @@ export async function previewPush(
     const counted = port.countedOf ? await port.countedOf(ids) : new Set(ids);
     const holdStock = holdsStock(shop);
 
+    // Câu `axis_limit` như readiness (category, số trục): chỉ đọc category của sản phẩm có mục này.
+    const axisLabels = new Map<string, string | null>();
+    for (const id of ids) {
+      const v = variants.get(id)!;
+      if (axisLabels.has(v.productId) || !checked.get(id)!.items.some((b) => b.code === 'axis_limit')) continue;
+      const category = await categoryState(port, shop.platform, v.productId, v.groupId ?? null, pushCtx.specs.get(v.productId));
+      axisLabels.set(v.productId, axisLimitLabel(category, [...variants.values()].filter((x) => x.productId === v.productId && !x.archived)));
+    }
     const rows = ids.map((id): PushPreviewRow => {
       const v = variants.get(id)!;
       const row = checked.get(id)!;
       // Luật R4 (21 §18.9, §18.11): người không xem được giá vốn không nhận `below_floor`; lệnh đăng vẫn chặn.
       const items = canSeeCost ? row.items : row.items.filter((b) => b.code !== 'below_floor');
-      const blockers = items.map((b): Blocker => ({ ...b, scope: blockerScope(b.code), variantIds: [id] }));
+      const blockers = items
+        .map((b): Blocker => ({
+          ...b,
+          ...(b.code === 'axis_limit' && { label: axisLabels.get(v.productId) ?? b.label }),
+          scope: blockerScope(b.code),
+          variantIds: [id],
+        }))
+        .sort(byDisplayOrder);
       const listPrice = row.price.value;
       const r = listPrice && hasFee ? results.get(id) : undefined;
       const net = r?.ok ? r.net : null;
