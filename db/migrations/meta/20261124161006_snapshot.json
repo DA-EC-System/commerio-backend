@@ -1,6 +1,6 @@
 {
-  "id": "3d2251ea-cbfe-4ce8-bc0b-fe765ae2a499",
-  "prevId": "5b07e287-b835-486c-af85-70e09fb7910f",
+  "id": "4bf20e59-6675-4e6c-b921-4740335315bf",
+  "prevId": "c0855841-7497-4b56-a136-0156b196ddfa",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -16053,7 +16053,8 @@
         "tax_regime",
         "tax_rules",
         "mismatch_threshold",
-        "min_margin"
+        "min_margin",
+        "account_map"
       ]
     },
     "finance.config_status": {
