@@ -147,6 +147,27 @@ describe('lượt đồng bộ do người bấm', () => {
     expect(res.status).toBe(404);
   });
 
+  it('lượt queued quá 30 phút: POST ghi lượt cũ thành failed run_stale rồi tạo lượt mới, không dùng lại', async () => {
+    const { rows } = await testPool().query<{ id: string }>(
+      `insert into channel.listing_sync_runs (company_id, shop_id, status, requested_at)
+       values ($1, $2, 'queued', now() - interval '2 hours') returning id`,
+      [company.companyId, shopId],
+    );
+    const old = rows[0]!.id;
+    const res = await auth(app().post(`/api/v1/channel/shops/${shopId}/listings/sync`));
+    expect(res.status, JSON.stringify(res.body)).toBe(202);
+    const { runId } = ListingSyncResult.parse(res.body);
+    expect(runId).not.toBe(old);
+    expect(await getRun(runId)).toMatchObject({ status: 'queued', error: null });
+    const stored = await testPool().query<{ status: string; error: { code: string } | null; finished_at: Date | null }>(
+      'select status, error, finished_at from channel.listing_sync_runs where id = $1',
+      [old],
+    );
+    expect(stored.rows[0]).toMatchObject({ status: 'failed', error: { code: 'run_stale' }, finished_at: expect.any(Date) });
+    // Dọn lượt chờ cho ca sau.
+    await runListingSync(port, { companyId: company.companyId, shopId });
+  });
+
   it('gian hàng không còn active lúc việc chạy: lượt chờ thành failed shop_not_connected', async () => {
     const { runId } = ListingSyncResult.parse((await auth(app().post(`/api/v1/channel/shops/${shopId}/listings/sync`))).body);
     await testPool().query("update channel.shops set status = 'needs_reauth', orders_pulled_ok_at = null where id = $1", [shopId]);
@@ -156,5 +177,64 @@ describe('lượt đồng bộ do người bấm', () => {
       await activateShop(shopId);
     }
     expect(await getRun(runId)).toMatchObject({ status: 'failed', error: { code: 'shop_not_connected' } });
+  });
+});
+
+describe('số của lượt đồng bộ', () => {
+  const connect = async (c: Awaited<ReturnType<typeof createCompany>>) => {
+    const res = await app()
+      .post('/api/v1/channel/shops/lazada/token')
+      .set('Authorization', `Bearer ${c.ceo.token}`)
+      .send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    await activateShop(res.body.shop.id);
+    return res.body.shop.id as string;
+  };
+  const sync = async (c: Awaited<ReturnType<typeof createCompany>>, id: string) => {
+    const res = await app().post(`/api/v1/channel/shops/${id}/listings/sync`).set('Authorization', `Bearer ${c.ceo.token}`);
+    expect(res.status, JSON.stringify(res.body)).toBe(202);
+    return ListingSyncResult.parse(res.body).runId;
+  };
+  const runOf = async (c: Awaited<ReturnType<typeof createCompany>>, id: string, runId: string) =>
+    SyncRun.parse((await app().get(`/api/v1/channel/shops/${id}/listings/sync-runs/${runId}`).set('Authorization', `Bearer ${c.ceo.token}`)).body);
+
+  it('gian hàng không có listing nào phải đẩy: lượt done với total = 0, không để null', async () => {
+    const c = await createCompany({ optionalModules: [] });
+    const id = await connect(c);
+    const runId = await sync(c, id);
+    await runListingSync(port, { companyId: c.companyId, shopId: id });
+    expect(await runOf(c, id, runId)).toMatchObject({ status: 'done', progress: { processed: 0, total: 0 }, succeeded: 0, failed: 0 });
+  });
+
+  it('listing lệch version giữa lúc gọi sàn và lúc ghi: không tính thành công, trừ khỏi total, processed vẫn bằng total', async () => {
+    const c = await createCompany({ optionalModules: [] });
+    const id = await connect(c);
+    const a = variant(`VA-${randomUUID().slice(0, 6)}`, 'Mũ', 'Đỏ');
+    const b = variant(`VB-${randomUUID().slice(0, 6)}`, 'Mũ', 'Xanh');
+    all.push(a, b);
+    try {
+      for (const v of [a, b]) {
+        await testPool().query(
+          `insert into channel.listings (company_id, shop_id, variant_id, external_product_id, external_sku_id, seller_sku, status, stock_sync, price_sync)
+           values ($1, $2, $3, $4, $5, $6, 'live', 'pending', 'pending')`,
+          [c.companyId, id, v.id, `item-${v.sku}`, `sku-${v.sku}`, v.sku],
+        );
+      }
+      // Tồn đổi giữa lúc đọc và lúc ghi (vd đơn mới đánh dấu lại pending): `version` của listing b tăng trong lúc gọi sàn.
+      updatePriceQuantity.mockImplementationOnce(async (_t, items) => {
+        await testPool().query('update channel.listings set version = version + 1 where shop_id = $1 and variant_id = $2', [id, b.id]);
+        return items.map((i) => ({ externalSkuId: i.externalSkuId, ok: true }));
+      });
+      const runId = await sync(c, id);
+      await runListingSync(port, { companyId: c.companyId, shopId: id });
+      expect(await runOf(c, id, runId)).toMatchObject({ status: 'done', progress: { processed: 1, total: 1 }, succeeded: 1, failed: 0 });
+      const { rows } = await testPool().query<{ stock_sync: string }>(
+        'select stock_sync from channel.listings where shop_id = $1 and variant_id = $2',
+        [id, b.id],
+      );
+      expect(rows[0]!.stock_sync).toBe('pending');
+    } finally {
+      all.splice(all.indexOf(a), 2);
+    }
   });
 });

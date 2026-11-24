@@ -598,4 +598,30 @@ describe('21 §18.9 R5: gian hàng chưa có cấu hình phí không đăng đư
     const again = await auth(app().post(`/api/v1/channel/shops/${id}/listings/push`)).send({ variantIds: [ok.id] });
     expect(PushResults.parse(again.body).results).toEqual([expect.objectContaining({ variantId: ok.id, status: 'pushing', code: null })]);
   });
+
+  // Ranh giới của R5 (review be#559): "lần đăng đầu, đăng lại sau gỡ hay sau lỗi"; bật lại SKU người bán
+  // (`content_source = platform`, còn mã sàn) là liên kết sẵn có; `rejected` đã có trên sàn nên không phải lần đăng đầu.
+  it.each([
+    ['delisted', 'app', true],
+    ['push_failed', 'app', true],
+    ['push_failed', 'platform', false],
+    ['rejected', 'app', false],
+  ] as const)('listing %s, content_source %s, gian hàng chưa có phí: chặn fee_not_configured = %s', async (status, source, blockedByFee) => {
+    const res0 = await auth(app().post('/api/v1/channel/shops/lazada/token')).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
+    const id = res0.body.shop.id as string;
+    await activateShop(id);
+    const v = fresh(`CMR-R5-${status}-${source}`);
+    await seedAll();
+    await testPool().query(
+      `insert into channel.listings (company_id, shop_id, variant_id, seller_sku, status, external_product_id, external_sku_id,
+         external_image_urls, content_source, reject_reason)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [company.companyId, id, v.id, v.sku, status, `P-${v.sku}`, `S-${v.sku}`, ['https://slatic.test/cu.png'], source, status === 'rejected' ? 'Ảnh mờ' : null],
+    );
+    const res = await auth(app().post(`/api/v1/channel/shops/${id}/listings/push`)).send({ variantIds: [v.id], listPrices: { [v.id]: 500000 } });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const [row] = PushResults.parse(res.body).results;
+    if (blockedByFee) expect(row).toMatchObject({ code: 'fee_not_configured', status });
+    else expect(row).toMatchObject({ code: null, status: 'pushing' });
+  });
 });

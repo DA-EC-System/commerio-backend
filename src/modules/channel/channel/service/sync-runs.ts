@@ -13,6 +13,14 @@ import { type Actor, ownShop } from './shops.ts';
 /** Lượt `queued`, `running` quá ngưỡng này (việc mất, worker chết) đọc ra `failed` `run_stale`. */
 export const SYNC_RUN_STALE_MS = STALE_PUSH_MS;
 
+/** Lỗi của lượt quá `SYNC_RUN_STALE_MS`: GET đọc ra, và POST ghi hẳn vào lượt `queued` cũ trước khi tạo lượt mới. */
+export const RUN_STALE_ERROR = { code: 'run_stale', message: 'Quá 30 phút chưa có kết quả, bấm Đồng bộ lại' } as const;
+
+/** Ngưỡng lượt `queued` cũ cho `queuedRunOrInsert`: xếp trước mốc này thì thành `failed` `run_stale`, không dùng lại. */
+export function staleRunCutoff(now = Date.now()): { before: Date; error: { code: string; message: string } } {
+  return { before: new Date(now - SYNC_RUN_STALE_MS), error: { ...RUN_STALE_ERROR } };
+}
+
 export interface SyncRunView {
   id: string;
   shopId: string;
@@ -41,7 +49,7 @@ export function toSyncRunView(row: SyncRunRow, now = Date.now()): SyncRunView {
     succeeded: row.succeeded,
     failed: row.failed,
     errors: row.errors,
-    error: stale ? { code: 'run_stale', message: 'Quá 30 phút chưa có kết quả, bấm Đồng bộ lại' } : (row.error ?? null),
+    error: stale ? { ...RUN_STALE_ERROR } : (row.error ?? null),
   };
 }
 

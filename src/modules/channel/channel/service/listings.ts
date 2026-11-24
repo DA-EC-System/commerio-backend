@@ -378,8 +378,11 @@ const inProgress = (variantId: string, existing: ListingRow | undefined) =>
 
 /**
  * Xếp việc đẩy các biến thể lên gian hàng (Documents/21 §18.6.4). Kiểm cả request trước (gian hàng gọi được sàn, không
- * chờ kiểm kê), rồi từng dòng: `not_found`, `push_in_progress`, `already_listed`, `sku_not_ready`, `price_missing`,
- * `category_unmapped`, `dimensions_missing`, `images_missing`, `size_chart_missing`. Dòng hợp lệ: mỗi dòng một giao dịch chuyển `pushing`,
+ * chờ kiểm kê), rồi từng dòng: `not_found`, `push_in_progress`, `mapping_pending` (listing chờ CEO duyệt liên kết SKU sàn),
+ * `already_listed`, `fee_not_configured` (21 §18.9 R5: lần đăng đầu, đăng lại sau gỡ hay sau `push_failed` do app soạn nội
+ * dung mà gian hàng chưa có phí đang áp dụng; `push_failed` với `content_source = platform` và `rejected` không chặn), rồi
+ * `pushBlock`: `sku_not_ready`, `price_missing`, `category_unmapped`, `dimensions_missing`, `images_missing`,
+ * `size_chart_missing`; cuối cùng `below_floor` (giá theo bộ lọc hoặc giá gõ tay có thực nhận dưới giá thấp nhất). Dòng hợp lệ: mỗi dòng một giao dịch chuyển `pushing`,
  * ghi lịch sử, xếp việc; hai request đua cùng SKU thì dòng thua ra `push_in_progress` (unique của bảng, `version`).
  * Listing đã gỡ thì tạo bản ghi mới trỏ bản cũ (`replaces_listing_id`), chép mã sàn, SellerSku, ảnh của bản cũ: gỡ chỉ
  * tắt sản phẩm trên sàn nên đẩy lại là bật lại đúng sản phẩm đó.
