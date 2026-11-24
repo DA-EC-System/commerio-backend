@@ -16,6 +16,7 @@ import { attributeCatalog, listSpecMappings, putSpecMapping } from '../service/s
 import { pushZeroStock, restoreAfterZeroStock, requestListingSync } from '../service/listing-sync.ts';
 import { getLatestSyncRun, getSyncRun } from '../service/sync-runs.ts';
 import * as listings from '../service/listings.ts';
+import { productReadiness } from '../service/readiness.ts';
 import * as mapping from '../service/mapping.ts';
 import { createVariantFromRemote, matchBulk } from '../service/remote-link.ts';
 import { matchPreview } from '../service/match-preview.ts';
@@ -76,6 +77,7 @@ import {
   CategorySyncBody,
   ProductSpecBody,
   ProductListingsParams,
+  ReadinessQuery,
   RegroupParams,
   ProductSpecParams,
   ProductSpecQuery,
@@ -366,6 +368,13 @@ export function channelRouter(ctx: ModuleContext): Router {
         separateProducts: await separateProductsOf(productPort(ctx), productId),
       })),
     );
+  });
+
+  // Readiness đăng theo gian hàng (be#564, 21 §18.10): không ghi, không gọi sàn.
+  router.get('/products/:productId/readiness', view, validate({ params: ProductListingsParams, query: ReadinessQuery }), async (_req, res) => {
+    const { productId } = validated<typeof ProductListingsParams>(res, 'params');
+    const { shopId } = validated<typeof ReadinessQuery>(res, 'query');
+    res.json(await withCompany(actor(res).companyId, () => productReadiness(productPort(ctx), productId, shopId)));
   });
 
   router.get('/shops/:id/listings', view, validate({ params: ShopParams }), async (_req, res) => {
