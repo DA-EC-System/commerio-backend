@@ -83,7 +83,7 @@ describe('lập và sửa đề nghị', () => {
       'lines.0.variantId': 'SKU đã ngừng nhập',
       'lines.2.variantId': 'Sản phẩm bị lặp',
       'lines.3.newProduct.parentName': 'Đã có sản phẩm cùng tên',
-      'lines.4.newProduct.groupId': 'Chọn nhóm hàng',
+      'lines.4.newProduct.groupId': 'Chọn danh mục sản phẩm',
     });
   });
 

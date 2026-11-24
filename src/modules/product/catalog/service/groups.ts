@@ -42,7 +42,7 @@ const ENTITY = 'product.product_groups';
 const SETTINGS_ENTITY = 'product.company_group_settings';
 const PRODUCT_ENTITY = 'product.products';
 const collator = new Intl.Collator('vi');
-const taken = () => nameTaken('Đã có nhóm hàng cùng tên');
+const taken = () => nameTaken('Đã có danh mục sản phẩm cùng tên');
 const notInGroup = () => invalid({ productIds: 'Có sản phẩm không thuộc nhóm này' });
 const badTarget = (message: string) => invalid({ targetGroupId: message });
 
@@ -72,25 +72,25 @@ const snapshot = (name: string, suggest: SuggestConfig) => withSuggest({ name },
 
 async function findGroup(id: string): Promise<GroupRow> {
   const [group] = isUuid(id) ? await findGroups(id) : [];
-  if (!group) throw notFound('nhóm hàng');
+  if (!group) throw notFound('danh mục sản phẩm');
   return group;
 }
 
 const viewOf = async (g: GroupRow) => toView(g, await findGroupAxes([g.id]));
-const conflict = async (current: GroupRow) => versionConflict('Nhóm hàng vừa được người khác sửa', await viewOf(current));
+const conflict = async (current: GroupRow) => versionConflict('Danh mục sản phẩm vừa được người khác sửa', await viewOf(current));
 
 /** Nhóm nguồn để chép mẫu: đọc qua RLS, khác nhóm đích. */
 async function templateSource(sourceId: string | undefined, targetId?: string): Promise<GroupRow | undefined> {
   if (sourceId === undefined) return undefined;
   const [source] = isUuid(sourceId) && sourceId !== targetId ? await findGroups(sourceId) : [];
-  if (!source) throw invalid({ copyTemplateFromGroupId: 'Chọn nhóm khác để chép mẫu' });
+  if (!source) throw invalid({ copyTemplateFromGroupId: 'Chọn danh mục khác để chép mẫu' });
   return source;
 }
 
 /** Ghi có điều kiện version không trúng: người khác vừa sửa (409 kèm bản mới) hoặc vừa xoá (404). */
 async function lostRace(id: string): Promise<never> {
   const [current] = await findGroups(id);
-  throw current ? await conflict(current) : notFound('nhóm hàng');
+  throw current ? await conflict(current) : notFound('danh mục sản phẩm');
 }
 
 /** Tên trùng lọt qua bước kiểm (hai người cùng tạo): unique index chặn người sau. */
@@ -110,7 +110,7 @@ export async function listGroups(companyId: string, opts: { includeHidden?: bool
   });
 }
 
-const NAME_REQUIRED = () => invalid({ name: 'Nhập tên nhóm hàng' });
+const NAME_REQUIRED = () => invalid({ name: 'Nhập tên danh mục sản phẩm' });
 
 export async function createGroup(caller: Caller, input: GroupInput): Promise<GroupView> {
   return withCompany(caller.companyId, async () => {
@@ -133,8 +133,8 @@ export async function createGroup(caller: Caller, input: GroupInput): Promise<Gr
 /** Nhóm nền tảng: công ty chỉ đặt gợi ý của mình (`company_group_settings`); không đổi tên, không chép mẫu. */
 async function updatePlatformGroup(caller: Caller, group: GroupRow, input: GroupInput & { version: number }): Promise<GroupView> {
   const errors: Record<string, string> = {};
-  if (input.name !== undefined) errors.name = 'Nhóm chuẩn không đổi tên được';
-  if (input.copyTemplateFromGroupId !== undefined) errors.copyTemplateFromGroupId = 'Mẫu của nhóm chuẩn do nền tảng đặt';
+  if (input.name !== undefined) errors.name = 'Danh mục mặc định không đổi tên được';
+  if (input.copyTemplateFromGroupId !== undefined) errors.copyTemplateFromGroupId = 'Mẫu của danh mục mặc định do nền tảng đặt';
   if (Object.keys(errors).length) throw invalid(errors);
   if (group.version !== input.version) throw await conflict(group);
   const suggest = mergeSuggest(suggestOf(group), input.suggest);
@@ -174,7 +174,7 @@ export async function updateGroup(caller: Caller, id: string, input: GroupInput 
 export async function setHidden(caller: Caller, id: string, hidden: boolean): Promise<GroupView> {
   return withCompany(caller.companyId, async () => {
     const group = await findGroup(id);
-    if (group.companyId !== null) throw invalid({ hidden: 'Chỉ ẩn được nhóm chuẩn của nền tảng' });
+    if (group.companyId !== null) throw invalid({ hidden: 'Chỉ ẩn được danh mục mặc định của nền tảng' });
     if (group.hidden !== hidden) {
       await setGroupHidden(caller.companyId, id, hidden);
       await recordAudit({
@@ -195,13 +195,13 @@ export async function deleteGroup(caller: Caller, id: string, version: number): 
     if (group.version !== version) throw await conflict(group);
     // Kể cả sản phẩm đã lưu trữ (V25): chuyển sang nhóm khác bằng `move-products` rồi xoá.
     if (group.productCount > 0) {
-      throw inUse(`Không xoá được nhóm ${group.name} vì có ${group.productCount} sản phẩm, chuyển sản phẩm sang nhóm khác trước`);
+      throw inUse(`Không xoá được danh mục ${group.name} vì có ${group.productCount} sản phẩm, chuyển sản phẩm sang danh mục khác trước`);
     }
     if (!(await deleteGroupIfVersion(id, version))) await lostRace(id);
     await recordAudit({ ...auditOf(caller, 'delete', ENTITY, id), label: group.name, before: snapshot(group.name, suggestOf(group)) });
   }).catch((err: unknown) => {
     // Người khác vừa thêm sản phẩm vào nhóm: khoá ngoại chặn xoá.
-    if (pgError(err).code === '23503') throw inUse('Nhóm hàng đang có sản phẩm');
+    if (pgError(err).code === '23503') throw inUse('Danh mục sản phẩm đang có sản phẩm');
     throw err;
   });
 }
@@ -217,10 +217,10 @@ export async function moveProducts(
 ): Promise<{ moved: number }> {
   return withCompany(caller.companyId, async () => {
     const source = await findGroup(sourceId);
-    if (input.targetGroupId === source.id) throw badTarget('Chọn nhóm khác nhóm hiện tại');
+    if (input.targetGroupId === source.id) throw badTarget('Chọn danh mục khác danh mục hiện tại');
     // Đọc qua RLS: khoá ngoại bỏ qua RLS nên nhóm của công ty khác phải chặn ở đây.
     const [target] = isUuid(input.targetGroupId) ? await findGroups(input.targetGroupId) : [];
-    if (!target) throw badTarget('Không tìm thấy nhóm hàng đích');
+    if (!target) throw badTarget('Không tìm thấy danh mục sản phẩm đích');
     const ids = input.productIds && [...new Set(input.productIds)];
     if (ids && !ids.every(isUuid)) throw notInGroup();
     const rows = await lockGroupProducts(source.id, ids);
@@ -240,7 +240,7 @@ export async function moveProducts(
     return { moved: rows.length };
   }).catch((err: unknown) => {
     // Nhóm đích vừa bị xoá giữa lúc đọc và ghi.
-    if (pgError(err).code === '23503') throw badTarget('Không tìm thấy nhóm hàng đích');
+    if (pgError(err).code === '23503') throw badTarget('Không tìm thấy danh mục sản phẩm đích');
     throw err;
   });
 }

@@ -257,7 +257,7 @@ export async function dailyFigures(
       net: sumWhere(sql`${cash}`),
       cogs: sumWhere(sql`${inArray(e.kind, NON_CASH)}`),
       cashCollected: sumWhere(sql`${cash} and not ${e.isEstimate}`),
-      platformFee: sumWhere(sql`${inArray(e.kind, ['fee_fixed', 'fee_transaction', 'fee_service', 'fee_optional'])}`),
+      platformFee: sumWhere(sql`${inArray(e.kind, ['fee_fixed', 'fee_transaction', 'fee_service', 'fee_optional', 'fee_per_item'])}`),
       shippingFee: sumWhere(sql`${inArray(e.kind, ['shipping_cost', 'shipping_income'])}`),
       estimated: sql<boolean>`coalesce(bool_or(${e.isEstimate} and ${cash}), false)`,
       lastAt: sql<Date>`max(${e.createdAt})`.mapWith((v: string | Date) => new Date(v)),
