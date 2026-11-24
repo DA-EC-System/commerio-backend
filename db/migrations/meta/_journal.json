@@ -1044,6 +1044,20 @@
       "when": 1795516258691,
       "tag": "20261124103058_onboarding-trang-thai",
       "breakpoints": true
+    },
+    {
+      "idx": 149,
+      "version": "7",
+      "when": 1795518367637,
+      "tag": "20261124110607_bieu-phi-mau",
+      "breakpoints": true
+    },
+    {
+      "idx": 150,
+      "version": "7",
+      "when": 1795518370380,
+      "tag": "20261124110610_bieu-phi-mau-quyen-du-lieu",
+      "breakpoints": true
     }
   ]
 }
