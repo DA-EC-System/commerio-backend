@@ -6,6 +6,10 @@ import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ListingList, PriceQuoteList, PushPreview } from '#src/modules/channel/channel/api/schemas.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
+import { firstBlock } from '#src/modules/channel/channel/service/push-block.ts';
+import { checkVariant, loadPushContext } from '#src/modules/channel/channel/service/push-check.ts';
+import { ownShop } from '#src/modules/channel/channel/service/shops.ts';
+import { withCompany } from '#src/shared/db/client.ts';
 import { type ListingVariant, setProductPort } from '#src/modules/channel/channel/service/product-port.ts';
 import { stopJobs } from '#src/modules/core/platform/service/jobs/boss.ts';
 import { createVariant } from '../../helpers/catalog.ts';
@@ -225,10 +229,16 @@ describe('push-preview và push cho cùng một kết quả', () => {
     const rows = PushPreview.parse((await preview({ variantIds: ids })).body).rows;
     const pushed = await push({ variantIds: ids });
     expect(pushed.status, JSON.stringify(pushed.body)).toBe(200);
+    // Mục chặn đầu theo thứ tự kiểm của #564 (`firstBlock`), không theo `blockers[0]`: xem trước được xếp lại theo phạm vi 18.10
+    // để hiển thị (Documents#248 phương án a).
+    const first = await withCompany(company.companyId, async () => {
+      const ctx = await loadPushContext(port, await ownShop(shopId), ids);
+      return new Map(ids.map((id) => [id, firstBlock(checkVariant(ctx, id).items)?.code ?? null]));
+    });
     for (const row of rows) {
       const result = pushed.body.results.find((r: { variantId: string }) => r.variantId === row.variantId);
       expect(result.blockers.map((b: { code: string }) => b.code).sort(), row.variantId).toEqual(codes(row).sort());
-      expect(result.code).toBe(row.blockers[0]!.code);
+      expect(result.code ?? null, row.variantId).toBe(first.get(row.variantId));
     }
   });
 
