@@ -76,7 +76,7 @@ export const RequestListQuery = z.object({
 
 /**
  * Dòng sản phẩm mới (Documents/21 mục 16.3): cha có sẵn (`parentId`) hoặc cha mới (`parentName` + `groupId`).
- * `optionValues` là `{ tên trục: giá trị }` theo thứ tự trục; luật 15/20 ký tự như trục ở mục 5.2. Số trục, trùng
+ * `optionValues` là `{ tên trục: giá trị }` theo thứ tự trục; luật 20/20 ký tự như trục ở mục 5.2. Số trục, trùng
  * tổ hợp, trục của cha kiểm ở service (`too_many_axes` là mã riêng, mục 16.4).
  */
 const NewProductInput = z
@@ -85,7 +85,7 @@ const NewProductInput = z
     parentName: z.string('Nhập tên sản phẩm cha').trim().max(120, 'Tối đa 120 ký tự').nullable(),
     groupId: z.string('Chọn nhóm hàng').nullable(),
     optionValues: z.record(
-      z.string().trim().min(1, 'Nhập tên trục phân loại').max(15, 'Tên trục tối đa 15 ký tự'),
+      z.string().trim().min(1, 'Nhập tên thuộc tính biến thể').max(20, 'Tên thuộc tính biến thể tối đa 20 ký tự'),
       z.string('Nhập giá trị phân loại').trim().min(1, 'Nhập giá trị phân loại').max(20, 'Giá trị tối đa 20 ký tự'),
       'Nhập giá trị phân loại',
     ),
@@ -416,7 +416,7 @@ export const ProductDraftUpdateInput = z
     imageFileIds: z.array(z.uuid('Ảnh không hợp lệ')).max(9, 'Tối đa 9 ảnh').optional(),
     sizeChartFileId: z.uuid('Ảnh không hợp lệ').nullish(),
     specs: z.array(specValue).max(200).optional(),
-    imageAxis: z.string().max(15).nullish(),
+    imageAxis: z.string().max(20).nullish(),
     optionImages: z.array(z.object({ axis: z.string(), value: z.string(), fileId: z.uuid('Ảnh không hợp lệ') }).strict()).max(50).optional(),
     variantDefaults: z.object(factsIn).strict().optional(),
     variants: z.array(z.object({ optionValues: z.record(z.string(), z.string()), ...factsIn }).strict()).max(200).optional(),

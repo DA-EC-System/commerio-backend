@@ -107,6 +107,8 @@ export interface VariantCapabilities {
   maxValueLength: number | null;
   /** Số giá trị tối đa của một thuộc tính biến thể; null khi sàn không công bố. Chỉ kiểm trên thuộc tính biến thể ghép (#568) */
   maxAxisValues: number | null;
+  /** Số ký tự (code point) tối đa của tên thuộc tính biến thể tự đặt; null khi sàn không công bố. Chỉ kiểm trục `__custom` (#572) */
+  maxAxisNameLength: number | null;
 }
 
 /**
@@ -205,6 +207,7 @@ export const MISSING_REASONS = [
   'axis_shape',
   'axis_value_too_long',
   'axis_too_many_values',
+  'axis_name_too_long',
 ] as const;
 export type MissingReason = (typeof MISSING_REASONS)[number];
 export interface MissingItem {
@@ -292,6 +295,16 @@ export function specMissing(input: SpecMissingInput): MissingItem[] {
       out.push({ code: 'axes', label: `Sản phẩm có ${count} trục, category này nhận tối đa ${caps.maxAxes}`, reason: 'axis_shape' });
     }
     out.push(...combinedLimits(combined, input.variants ?? [], caps, input.platformName ?? 'sàn'));
+    if (caps.maxAxisNameLength !== null) {
+      const max = caps.maxAxisNameLength;
+      for (const axis of axes) {
+        const n = [...axis.name].length;
+        if (spec.axisMap[axis.attributeId] === CUSTOM_AXIS && n > max) {
+          const label = `Tên thuộc tính biến thể “${axis.name}” dài ${n} ký tự, ${input.platformName ?? 'sàn'} nhận tối đa ${max}`;
+          out.push({ code: axis.attributeId, label, reason: 'axis_name_too_long' });
+        }
+      }
+    }
   }
   return out;
 }

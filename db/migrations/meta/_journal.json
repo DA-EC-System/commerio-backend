@@ -1044,6 +1044,13 @@
       "when": 1795516258691,
       "tag": "20261124103058_onboarding-trang-thai",
       "breakpoints": true
+    },
+    {
+      "idx": 149,
+      "version": "7",
+      "when": 1795519691006,
+      "tag": "20261124112811_ten-thuoc-tinh-20",
+      "breakpoints": true
     }
   ]
 }

@@ -1077,7 +1077,7 @@ export const ProductSpecSchema = z
 export const VariantCapabilitiesSchema = z
   .object({
     maxAxes: z.number().int().min(0),
-    customAxisName: z.boolean().meta({ description: 'false: sàn từ chối tên trục tự đặt' }),
+    customAxisName: z.boolean().meta({ description: 'false: sàn từ chối tên thuộc tính biến thể tự đặt' }),
     salesRequired: z.array(z.string()).meta({ description: 'Sales attribute bắt buộc phải có trong `axisMap`' }),
     addVariant: z.boolean().meta({ description: 'true: thêm được phân loại vào sản phẩm sàn đã có; false thì SKU bị chặn ở lần đẩy đầu chặn cả cha (§18.8.4)' }),
     combineTarget: z.string().nullable().meta({
@@ -1085,6 +1085,9 @@ export const VariantCapabilitiesSchema = z
     }),
     maxValueLength: z.number().int().positive().nullable().meta({ description: 'Số ký tự tối đa của giá trị thuộc tính biến thể ghép; null: sàn không công bố' }),
     maxAxisValues: z.number().int().positive().nullable().meta({ description: 'Số giá trị tối đa của thuộc tính biến thể ghép; null: sàn không công bố' }),
+    maxAxisNameLength: z.number().int().positive().nullable().meta({
+      description: 'Số ký tự tối đa của tên thuộc tính biến thể tự đặt (`__custom`); dài hơn thì `missing` `axis_name_too_long` (#572). Lazada 50, TikTok 20',
+    }),
   })
   .strict()
   .meta({ id: 'VariantCapabilities' });

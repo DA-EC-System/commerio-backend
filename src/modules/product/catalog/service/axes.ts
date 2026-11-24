@@ -1,5 +1,5 @@
 // Trục phân loại khai ngay trong form tạo sản phẩm (Documents/21 mục 5.2, #447): thuộc tính, giá trị chưa có thì tạo
-// cùng giao dịch với sản phẩm. Luật hình dạng (15/20/50 ký tự, trùng trong trục, `options` khớp trục) đã kiểm ở Zod.
+// cùng giao dịch với sản phẩm. Luật hình dạng (20/20/50 ký tự, trùng trong trục, `options` khớp trục) đã kiểm ở Zod.
 import { uniqueValueCode } from '../domain/sku.ts';
 import { bumpAttributeVersion, ensureAttribute, findAttributeIdByName, findAttributes, insertValues } from '../repository/attributes.ts';
 import { isUuid } from './errors.ts';

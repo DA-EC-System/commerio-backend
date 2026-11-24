@@ -47,7 +47,7 @@ import {
 } from './common.ts';
 import { lazadaCategoryNodes, lazadaLeafAttributes, lazadaVariantCapabilities } from './lazada-categories.ts';
 import { lazadaCategoryMismatch, lazadaReactivated, lazadaSkuViews, lazadaUnderReview } from './lazada-category-change.ts';
-import { type LazadaCreatedSku, associatedSkuId, lazadaSkuIdentity, lazadaVariation, matchCreatedSkus } from './lazada-variants.ts';
+import { type LazadaCreatedSku, associatedSkuId, lazadaAddVariation, lazadaSkuIdentity, lazadaVariation, matchCreatedSkus } from './lazada-variants.ts';
 import { lazadaReturnMethods } from './lazada-returns.ts';
 import { downloadDocument } from './image-source.ts';
 import { lazadaPackingMethods, type LazadaPackingDeps } from './lazada-packing.ts';
@@ -683,8 +683,8 @@ function toRemoteOrder(o: Row, items: Row[]): RemoteOrder {
  * Sale prop mặc định theo loại thuộc tính phân loại (việc #3 luồng sản phẩm, 21/11/2026): mã đổi theo leaf, lấy mã đầu tiên
  * leaf có. Đo bằng `GetCategoryAttributes` (`attribute_type = sku`, `is_sale_prop = 1`) khoảng 100 leaf (api.lazada.vn,
  * shop thử, 21/11/2026; cache `channel.platform_category_attributes` trên staging); bảng ở Documents/21 §18.8.3 và
- * `.claude/issues/luong-san-pham/anh-xa-bien-the-san.md`. Lazada không nhận tên trục tự đặt: kind không có mã (age,
- * style) hay leaf thiếu mã thì `axis_unmapped`.
+ * `.claude/issues/luong-san-pham/anh-xa-bien-the-san.md`. Kind không có mã (age, style) hay leaf thiếu mã thì
+ * thuộc tính biến thể lên sàn bằng tên tự đặt (`__custom`, #572).
  */
 const LAZADA_SALES_ATTRIBUTES = {
   color: ['color_family'],
@@ -1252,7 +1252,7 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
             // request_id 2141336017948496094571739). Việc đẩy luôn gửi brand (catalog, trống thì `defaultBrand`); mặc định
             // ở đây chỉ chặn trường hợp bên gọi không gửi. Đẩy lại (`/product/update`) không gửi mặc định để không đè brand đang có.
             Attributes: { brand: DEFAULT_BRAND, ...flatAttributes(p.attributes), name: p.name, description: p.description },
-            ...(multi && p.salesAttributes?.length && { Variation: lazadaVariation(p.salesAttributes) }),
+            ...(multi && p.salesAttributes?.length && { variation: lazadaVariation(p.salesAttributes) }),
             Skus: { Sku: skus.map((s) => ({ ...lazadaSkuIdentity(s, p.salesAttributes), ...skuPayload(s) })) },
           },
         },
@@ -1271,8 +1271,9 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
       };
     },
     // Thêm phân loại vào sản phẩm sẵn có (#295): UpdateProduct không thêm được SKU (mọi SKU phải có SkuId, 4216), nên gọi
-    // CreateProduct với `AssociatedSku` = sku_id của một SKU sẵn có (đo 21/11/2026, L2f). Chỉ gửi SKU mới, không gửi
-    // Variation (sàn tự thêm giá trị trục). BẪY: truyền item_id vào AssociatedSku thì sàn không báo lỗi mà tạo item mới (L2g);
+    // CreateProduct với `AssociatedSku` = sku_id của một SKU sẵn có (đo 21/11/2026, L2f). Gửi SKU mới kèm khai báo `variation`
+    // chữ thường chỉ với giá trị mới (#572: không khai báo thì thuộc tính tên tự đặt bị từ chối).
+    // BẪY: truyền item_id vào AssociatedSku thì sàn không báo lỗi mà tạo item mới (L2g);
     // nên lấy sku_id từ sàn và kiểm item_id trả về.
     async addVariants(accessToken, itemId, input: NewVariants) {
       const associated = associatedSkuId((await call(config.apiUrl, '/product/item/get', { access_token: accessToken, item_id: itemId }, 'GET')).data);
@@ -1284,6 +1285,7 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
             AssociatedSku: associated,
             Images: { Image: input.imageUrls },
             Attributes: { brand: DEFAULT_BRAND, ...flatAttributes(input.attributes), name: input.name, description: input.description },
+            ...(input.salesAttributes?.length && { variation: lazadaAddVariation(input.salesAttributes, input.skus) }),
             Skus: { Sku: input.skus.map((s) => ({ ...lazadaSkuIdentity(s, input.salesAttributes), ...skuPayload(s) })) },
           },
         },

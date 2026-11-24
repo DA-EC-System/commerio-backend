@@ -429,13 +429,13 @@ describe('nhập kho sinh sản phẩm (Documents/21 mục 16.3)', () => {
 });
 
 describe('hình dạng newProduct', () => {
-  it('trường lạ (name), cả parentId lẫn parentName, cha mới thiếu nhóm, tên trục, giá trị quá dài, parentId rỗng → 422', async () => {
+  it('trường lạ (name), cả parentId lẫn parentName, cha mới thiếu nhóm, tên thuộc tính, giá trị quá dài, parentId rỗng → 422', async () => {
     const parent = await parentWithAxes(A, [['Đen', 'M']]);
     const res = await post(A, [
       { newProduct: { parentId: null, parentName: uniq('Áo'), groupId: A.groupId, optionValues: {}, name: 'x' }, quantity: 1, unitCost: 1000 },
       { newProduct: { parentId: parent.id, parentName: uniq('Áo'), groupId: null, optionValues: {} }, quantity: 1, unitCost: 1000 },
       { newProduct: { parentId: null, parentName: uniq('Áo'), groupId: null, optionValues: {} }, quantity: 1, unitCost: 1000 },
-      fresh(uniq('Áo'), { 'Tên trục rất là dài': 'Đen' }),
+      fresh(uniq('Áo'), { 'Tên thuộc tính rất là dài': 'Đen' }), // 25 ký tự > 20
       fresh(uniq('Áo'), { 'Màu sắc': 'Đen tuyền pha xanh rêu' }),
       { newProduct: { parentId: '', parentName: uniq('Áo'), groupId: A.groupId, optionValues: {} }, quantity: 1, unitCost: 1000 },
     ]);
