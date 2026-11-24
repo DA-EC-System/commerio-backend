@@ -90,20 +90,7 @@ export async function remoteSkus(
 ): Promise<{ items: RemoteSkuItem[]; syncedAt: Date | null; refresh: RefreshState; accepted: boolean }> {
   return withCompany(actor.companyId, async () => {
     const shop = await ownShop(shopId);
-    const now = new Date();
-    const state = refreshState(shop, now);
-    let accepted = false;
-    let requestedAt: Date | undefined;
-    if (refresh) {
-      const synced = shop.remoteSkusSyncedAt?.getTime();
-      if (synced === undefined || now.getTime() - synced >= REFRESH_COOLDOWN_MS) {
-        if (state.status === 'failed' && state.retryAfterSeconds !== null) throw new RemoteSkusRetryLater(state.retryAfterSeconds);
-        if (state.status !== 'running') requestedAt = await requestRemoteSkusRefresh(shop);
-        accepted = true;
-      }
-    } else if (!shop.remoteSkusSyncedAt && state.status === 'idle') {
-      requestedAt = await requestRemoteSkusRefresh(shop);
-    }
+    const { refresh: refreshNow, accepted } = await snapshotRefresh(shop, refresh);
     const remote = await listRemoteSkuRows(shop.id);
     const rows = await liveListingRows(shop.id);
     const names = await requesterNames(rows);
@@ -146,11 +133,33 @@ export async function remoteSkus(
     return {
       items: unmatched ? items.filter((i) => i.mode === null) : items,
       syncedAt: shop.remoteSkusSyncedAt,
-      // Chỉ lượt vừa xếp đổi trạng thái so với dòng đã đọc: không đọc lại `shops` (FE hỏi lại GET liên tục).
-      refresh: requestedAt ? refreshState({ ...shop, remoteSkusRefreshRequestedAt: requestedAt }, now) : state,
+      refresh: refreshNow,
       accepted,
     };
   });
+}
+
+/**
+ * Bản sao và lượt Tải lại khi đọc danh sách SKU sàn (`remote-skus`, `remote-products` #565; luật ở JSDoc `remoteSkus`).
+ * Gọi trong `withCompany`. `refresh` trả trạng thái sau lượt vừa xếp; chỉ lượt vừa xếp đổi trạng thái so với dòng đã đọc
+ * nên không đọc lại `shops` (FE hỏi lại GET liên tục).
+ */
+export async function snapshotRefresh(shop: ShopRow, refresh: boolean): Promise<{ refresh: RefreshState; accepted: boolean }> {
+  const now = new Date();
+  const state = refreshState(shop, now);
+  let accepted = false;
+  let requestedAt: Date | undefined;
+  if (refresh) {
+    const synced = shop.remoteSkusSyncedAt?.getTime();
+    if (synced === undefined || now.getTime() - synced >= REFRESH_COOLDOWN_MS) {
+      if (state.status === 'failed' && state.retryAfterSeconds !== null) throw new RemoteSkusRetryLater(state.retryAfterSeconds);
+      if (state.status !== 'running') requestedAt = await requestRemoteSkusRefresh(shop);
+      accepted = true;
+    }
+  } else if (!shop.remoteSkusSyncedAt && state.status === 'idle') {
+    requestedAt = await requestRemoteSkusRefresh(shop);
+  }
+  return { refresh: requestedAt ? refreshState({ ...shop, remoteSkusRefreshRequestedAt: requestedAt }, now) : state, accepted };
 }
 
 /** Người làm có vai trò CEO (route duyệt ghép, §18.3 "`listing.manage` + vai trò CEO"). */

@@ -1,6 +1,10 @@
 import type { OpenAPIRegistry } from '@asteasolutions/zod-to-openapi';
 import { problemResponse } from '../../../../shared/http/openapi.ts';
 import {
+  RemoteProductList,
+  RemoteProductsQuery,
+  SkuLinksBody,
+  SkuLinksResult,
   AuthorizeUrl,
   AuthorizeUrlQuery,
   CallbackBody,
@@ -581,6 +585,34 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
       202: { description: 'Chờ CEO duyệt: listing có `pendingMapping`', ...json(ChannelListing) },
       ...onShop,
       409: problemResponse('`shop_not_active`, `mapping_pending`, `invalid_transition`, `version_conflict` kèm `current`'),
+    },
+  });
+  registry.registerPath({
+    method: 'get',
+    path: '/shops/:id/remote-products',
+    summary: 'SKU sàn gom theo sản phẩm sàn (21 §18.12)',
+    description:
+      'Cần `channel.listing.match`. Đọc bản sao SKU sàn, không gọi sàn; chưa có bản sao thì xếp lượt tải nền như `remote-skus`. Phân trang theo sản phẩm sàn (mỗi sản phẩm kèm đủ SKU khớp lọc), xếp theo tên rồi mã sản phẩm sàn. `search` bỏ dấu, không phân biệt hoa thường. `counts` đếm SKU cả gian hàng. Gợi ý chỉ cho SKU `unlinked` của trang: trùng SKU người bán (`high`), rồi giống tên (tên sản phẩm cộng nhãn biến thể, bỏ dấu; pg_trgm từ 0,4; `medium` từ 0,7, còn lại `low`). `decision`, `suggestedGroupId` luôn null tới be#569.',
+    security: bearer,
+    request: { params: ShopParams, query: RemoteProductsQuery },
+    responses: {
+      200: { description: 'Một trang sản phẩm sàn', ...json(RemoteProductList) },
+      ...onShop,
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/shops/:id/sku-links',
+    summary: 'Liên kết SKU sàn hàng loạt (21 §18.12)',
+    description:
+      'Cần `channel.listing.match`; có dòng `create` thì thêm `catalog.product.manage` (thiếu: 403). Gian hàng `active` áp ngay: `link`, `unmanaged` mỗi dòng một giao dịch theo luật `listings/match`; các dòng `create` cùng sản phẩm sàn chung một giao dịch (một dòng lỗi thì cả nhóm không tạo), thêm biến thể vào sản phẩm kho có sẵn khi SKU anh em đã liên kết vào một sản phẩm một trục, ở nhiều sản phẩm kho thì `platform_product_split`. HTTP 200 kể cả khi có dòng lỗi. Lỗi cả request: 422 trùng `externalSkuId` / `externalProductId`, `link` thiếu `variantId` → 404 → 409 `shop_not_connected` (`needs_reauth`, `disconnected`) → 501 `not_implemented` cho gian hàng `connecting` (ghi nháp, be#569) → 403 → 422 `skip` ở gian hàng `active`, `errors.groups` kèm `externalProductIds` (sản phẩm sàn có dòng `create` mà thiếu danh mục), `errors["groups.N.groupId"]`.',
+    security: bearer,
+    request: { params: ShopParams, body: json(SkuLinksBody) },
+    responses: {
+      200: { description: 'Kết quả theo dòng, theo thứ tự `items`', ...json(SkuLinksResult) },
+      ...onShop,
+      409: problemResponse('`shop_not_connected`'),
+      501: problemResponse('`not_implemented`: gian hàng đang thiết lập, chờ commerio-backend#569'),
     },
   });
   registry.registerPath({
