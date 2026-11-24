@@ -90,6 +90,7 @@ export const Shop = z
     platform: z.string().meta({ description: 'Mã sàn (`ShopPlatform.platform`)' }),
     externalShopId: z.string().meta({ description: 'Mã gian hàng (người bán) phía sàn' }),
     shopName: z.string(),
+    displayName: z.string().nullable().meta({ description: 'Tên người dùng đặt (1–60 ký tự); null thì hiện `shopName` (#565)' }),
     region: z.string().nullable(),
     status: z.enum(['connecting', 'active', 'needs_reauth', 'disconnected']),
     accessExpiresAt: iso.nullable(),
@@ -103,6 +104,8 @@ export const Shop = z
     lastOrderSyncAt: iso.nullable(),
     orderCutoffAt: iso.nullable().meta({ description: 'Mốc kéo đơn, null khi chưa thiết lập' }),
     ordersPulledOkAt: iso.nullable().meta({ description: 'Giờ bắt đầu lượt lấy đơn gần nhất chạy xong trọn (#223)' }),
+    openOrdersPulledAt: iso.nullable().meta({ description: 'Lượt kéo đơn còn mở sau thiết lập đã xong; null khi chưa xong (#198)' }),
+    unlinkedSkuCount: z.number().int().meta({ description: 'Số SKU sàn chưa liên kết, không tính SKU chờ CEO duyệt (#565)' }),
     ordersStale: z.boolean().meta({
       description:
         'Đơn chưa cập nhật (21 §18.6.6): mất uỷ quyền, hoặc 15 phút chưa có lượt lấy đơn chạy trọn. SKU bán ở gian hàng này tạm không đẩy tăng tồn trên mọi gian hàng; listing bị giữ có `stockSyncError.code = orders_stale`',
@@ -598,6 +601,131 @@ export const RemoteSkuList = z
   .strict()
   .meta({ id: 'RemoteSkuList' });
 
+// ---- Liên kết SKU sàn gom theo sản phẩm sàn (#565, Documents/21 §18.12) ----
+
+/** Lượt Tải lại chạy nền (#361), dùng chung cho `remote-skus` và `remote-products`. */
+const RemoteSkuRefresh = RemoteSkuList.shape.refresh;
+
+export const RemoteProductsQuery = z.object({
+  status: z.enum(['unlinked', 'linked', 'pending', 'all']).default('unlinked').meta({
+    description:
+      '`unlinked`: SKU chưa có listing chưa gỡ và không chờ duyệt; `linked`: có listing chưa gỡ (`mapped`, hoặc `unmanaged` đã duyệt); `pending`: chỉ có yêu cầu chờ CEO duyệt',
+  }),
+  search: z
+    .string()
+    .trim()
+    .max(200, 'Tối đa 200 ký tự')
+    .refine((s) => s.length === 0 || s.length >= 2, 'Nhập ít nhất 2 ký tự')
+    .optional()
+    .meta({ description: 'Tên (cả tên tiếng Anh), SKU người bán, mã SKU sàn, mã sản phẩm sàn; bỏ dấu, không phân biệt hoa thường' }),
+  decision: z
+    .enum(['create', 'link', 'skip', 'unmanaged', 'none'])
+    .optional()
+    .meta({ description: 'Chỉ gian hàng `connecting` (lọc theo nháp thiết lập, be#569); gian hàng khác bỏ qua' }),
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(50, 'Tối đa 50 sản phẩm mỗi trang').default(20),
+});
+
+const RemoteSkuRowSchema = z
+  .object({
+    externalSkuId: z.string(),
+    sellerSku: z.string(),
+    title: z.string().meta({ description: 'Tên SKU trên sàn người mua VN thấy' }),
+    titleEn: z.string().nullable().meta({ description: 'Tên tiếng Anh; null khi sàn không có (#396)' }),
+    variantLabel: z.string().nullable().meta({ description: 'Nhãn biến thể sàn trả (giá trị thuộc tính bán, vd "Đỏ, M"); null khi sàn không có' }),
+    platformStock: z.number().int().meta({ description: 'Tồn trên sàn theo bản sao' }),
+    matchedVariantId: z.uuid().nullable(),
+    mode: z.enum(['mapped', 'unmanaged']).nullable().meta({ description: 'Ghép hiện hành; null khi chưa ghép (kể cả đang chờ CEO duyệt "không quản tồn")' }),
+    listingId: z.uuid().nullable().meta({ description: 'Listing chưa gỡ của SKU sàn này (kể cả dòng chỉ chờ duyệt); CEO dùng để gọi `mapping/approve|reject`' }),
+    listingVersion: z.number().int().nullable(),
+    pendingMapping,
+    remoteTitleChanged: RemoteTitleChanged,
+    suggestion: z
+      .object({
+        variantId: z.uuid(),
+        sku: z.string(),
+        productName: z.string(),
+        match: z.enum(['sku', 'name']),
+        score: z.number().min(0).max(1).nullable().meta({ description: 'Độ giống tên 0..1, chỉ khi `match = name`' }),
+        confidence: z.enum(['high', 'medium', 'low']).meta({ description: '`high`: trùng SKU người bán; `medium`: tên giống từ 0,7; `low`: dưới 0,7' }),
+      })
+      .strict()
+      .nullable()
+      .meta({ description: 'Gợi ý liên kết cho SKU `unlinked` của trang; FE không tự chọn sẵn gợi ý `name`' }),
+    canCreate: z.boolean(),
+    cannotCreateReason: z.enum(['no_seller_sku', 'sku_too_long', 'sku_taken', 'no_permission', 'already_matched']).nullable(),
+    decision: z
+      .object({ action: z.enum(['link', 'create', 'skip', 'unmanaged']), variantId: z.uuid().nullable(), groupId: z.uuid().nullable() })
+      .strict()
+      .nullable()
+      .meta({ description: 'Lựa chọn trong nháp thiết lập; chỉ gian hàng `connecting`' }),
+  })
+  .strict()
+  .meta({ id: 'RemoteSkuRow' });
+
+export const RemoteProductList = z
+  .object({
+    items: z.array(
+      z
+        .object({
+          externalProductId: z.string(),
+          title: z.string().meta({ description: 'Tên sản phẩm sàn (theo SKU đầu, bỏ phần nhãn biến thể)' }),
+          titleEn: z.string().nullable(),
+          imageUrl: z.string().nullable().meta({ description: 'Ảnh sản phẩm trên sàn; null khi sàn chưa trả' }),
+          externalCategoryId: z.string().nullable().meta({ description: 'Category lá trên sàn; null khi sàn chưa trả' }),
+          suggestedGroupId: z.uuid().nullable().meta({ description: 'Danh mục gợi ý; null tới khi có bảng ánh xạ category (be#569)' }),
+          skus: z.array(RemoteSkuRowSchema),
+        })
+        .strict()
+        .meta({ id: 'RemoteProduct' }),
+    ),
+    total: z.number().int().meta({ description: 'Số sản phẩm sàn khớp lọc' }),
+    page: z.number().int(),
+    pageSize: z.number().int(),
+    counts: z
+      .object({ unlinked: z.number().int(), linked: z.number().int(), pending: z.number().int() })
+      .strict()
+      .meta({ description: 'Số SKU của cả gian hàng theo trạng thái, không theo `search`' }),
+    syncedAt: z.iso.datetime({ offset: true }).nullable(),
+    refresh: RemoteSkuRefresh,
+    nameMatchSkipped: z.boolean().meta({ description: 'Bỏ gợi ý theo tên vì quá nhiều cặp phải so hoặc quá giờ' }),
+  })
+  .strict()
+  .meta({ id: 'RemoteProductList' });
+
+export const SkuLinksBody = z
+  .object({
+    items: z
+      .array(
+        z.object({
+          externalSkuId: z.string('Thiếu SKU sàn').trim().min(1, 'Thiếu SKU sàn').max(200),
+          action: z.enum(['link', 'create', 'skip', 'unmanaged'], 'Thao tác không hợp lệ'),
+          variantId: z.uuid('Biến thể không hợp lệ').nullable().optional(),
+        }),
+      )
+      .max(200, 'Tối đa 200 SKU mỗi lần')
+      .optional(),
+    groups: z
+      .array(z.object({ externalProductId: z.string('Thiếu sản phẩm sàn').trim().min(1).max(200), groupId: z.uuid('Chọn danh mục sản phẩm') }))
+      .max(200, 'Tối đa 200 sản phẩm mỗi lần')
+      .optional(),
+    draftVersion: z.number().int().min(0).optional().meta({ description: 'Bắt buộc khi gian hàng `connecting`; gian hàng `active` bỏ qua' }),
+  })
+  .meta({ id: 'SkuLinksInput' });
+
+export const SkuLinkResult = z
+  .object({
+    externalSkuId: z.string(),
+    result: z.enum(['linked', 'pending', 'created', 'error']).meta({ description: '`pending`: chờ CEO duyệt; `created`: tạo SKU kho rồi liên kết' }),
+    variantId: z.uuid().nullable(),
+    productId: z.uuid().nullable(),
+    code: z.string().nullable().meta({ description: 'Mã lỗi khi `error`' }),
+    message: z.string().nullable(),
+  })
+  .strict()
+  .meta({ id: 'SkuLinkResult' });
+export const SkuLinksResult = z.object({ results: z.array(SkuLinkResult) }).strict().meta({ id: 'SkuLinksResult' });
+
 export const MatchBody = z
   .object({
     externalSkuId: z.string('Thiếu SKU sàn').trim().min(1, 'Thiếu SKU sàn').max(200),
@@ -997,9 +1125,22 @@ export const UpdateShopBody = z
       .int('Hạn trả hàng là số ngày nguyên')
       .min(1, 'Hạn trả hàng từ 1 đến 60 ngày')
       .max(60, 'Hạn trả hàng từ 1 đến 60 ngày')
-      .meta({ description: 'Hạn trả hàng (ngày); chỉ sàn `capabilities.returnWindow = days` (#362)' }),
+      .optional()
+      .meta({ description: 'Hạn trả hàng (ngày); chỉ sàn `capabilities.returnWindow = days` (#362). Bỏ trống là giữ' }),
+    displayName: z
+      .string('Tên gian hàng là chuỗi')
+      .trim()
+      .min(1, 'Tên gian hàng từ 1 đến 60 ký tự')
+      .max(60, 'Tên gian hàng từ 1 đến 60 ký tự')
+      .nullable()
+      .optional()
+      .meta({ description: 'Tên đặt riêng (#565, 21 §18.7.1); `null` bỏ tên riêng, hiện tên sàn; bỏ trống là giữ' }),
   })
   .strict()
+  .refine((b) => b.returnWindowDays !== undefined || b.displayName !== undefined, {
+    message: 'Chọn ít nhất một thông tin để sửa',
+    path: ['returnWindowDays'],
+  })
   .meta({ id: 'ShopUpdateInput' });
 
 // Category và attribute của sàn (#400, Documents/21 §18.5).
