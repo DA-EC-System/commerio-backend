@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V150** (`20261124110616_lien-ket-sku-565`): 104 bảng trong 6 schema, 94 khoá ngoại, 83 cột tham chiếu không có khoá ngoại. Lịch sử từng phiên bản: [VERSIONS.md](VERSIONS.md).
+Phiên bản **V152** (`20261124114555_can-nang-kich-thuoc-tran`): 104 bảng trong 6 schema, 94 khoá ngoại, 83 cột tham chiếu không có khoá ngoại. Lịch sử từng phiên bản: [VERSIONS.md](VERSIONS.md).
 
 Nguồn: snapshot của migration mới nhất, comment trong `src/modules/<lớn>/<con>/repository/schema.ts`, khoá ngoại, trigger, index, EXCLUDE viết tay trong migration. Cột, kiểu, ràng buộc, quan hệ của từng bảng ở `db/schema/<schema>.md`.
 

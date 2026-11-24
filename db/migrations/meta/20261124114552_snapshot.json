@@ -1,6 +1,6 @@
 {
-  "id": "8c607d6d-01f4-4b82-9f35-d2b1f123ee00",
-  "prevId": "baf85ba9-4ebf-4883-bb4a-a426938d9cbd",
+  "id": "b45cca4e-a480-4801-8730-ecc72f1cfc4c",
+  "prevId": "901ee953-e8b2-4232-9e35-76f4bdbb9890",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1897,6 +1897,24 @@
           "primaryKey": false,
           "notNull": false
         },
+        "variant_label": {
+          "name": "variant_label",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "image_url": {
+          "name": "image_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "external_category_id": {
+          "name": "external_category_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "state": {
           "name": "state",
           "type": "text",
@@ -2400,6 +2418,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "display_name": {
+          "name": "display_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "region": {
           "name": "region",
           "type": "text",
@@ -2683,6 +2707,10 @@
         "shops_return_window_days": {
           "name": "shops_return_window_days",
           "value": "\"channel\".\"shops\".\"return_window_days\" between 1 and 60"
+        },
+        "shops_display_name": {
+          "name": "shops_display_name",
+          "value": "char_length(\"channel\".\"shops\".\"display_name\") between 1 and 60"
         },
         "shops_opening_stocktake": {
           "name": "shops_opening_stocktake",
