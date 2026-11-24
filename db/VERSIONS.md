@@ -3,7 +3,13 @@
 <!-- Sinh tự động bởi `npm run db:docs` từ db/migrations. Không sửa tay. -->
 
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
-Mới nhất: **V153**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+Mới nhất: **V154**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+
+## V154 · 24/11/2026 · ten-thuoc-tinh-20
+
+`db/migrations/20261124131311_ten-thuoc-tinh-20.sql` · sinh từ schema
+
+- `product.attributes`: đổi check `attributes_name_length`
 
 ## V153 · 24/11/2026 · dong-bo-category-du-lieu
 
