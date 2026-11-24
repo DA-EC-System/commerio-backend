@@ -259,8 +259,8 @@ export async function remoteStockByVariant(shopId: string, variantIds: readonly 
         eq(listings.shopId, shopId),
         eq(listings.mode, 'mapped'),
         ne(listings.status, 'delisted'),
-        // Phiếu đầu kỳ không giới hạn số dòng: một tham số mảng thay vì mỗi biến thể một tham số
-        sql`${listings.variantId} = any(${[...variantIds]}::uuid[])`,
+        // Phiếu đầu kỳ không giới hạn số dòng: một tham số chuỗi (drizzle bung mảng JS thành từng tham số nên không truyền mảng)
+        sql`${listings.variantId} = any(string_to_array(${variantIds.join(',')}, ',')::uuid[])`,
       ),
     )
     .groupBy(listings.variantId);
