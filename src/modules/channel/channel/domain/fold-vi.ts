@@ -6,20 +6,18 @@
 /** Cặp ký tự (nguồn, đích): chữ Latin có dấu (U+00C0–U+024F, U+1E00–U+1EFF) → chữ không dấu thường; `Đ`, `đ` → `d`; A–Z → a–z. */
 function buildPairs(): [string, string][] {
   const pairs: [string, string][] = [
-    ["Đ", "d"],
-    ["đ", "d"],
+    ['Đ', 'd'],
+    ['đ', 'd'],
   ];
-  for (let c = 65; c <= 90; c++)
-    pairs.push([String.fromCharCode(c), String.fromCharCode(c + 32)]);
+  for (let c = 65; c <= 90; c++) pairs.push([String.fromCharCode(c), String.fromCharCode(c + 32)]);
   for (const [from, to] of [
     [0x00c0, 0x024f],
     [0x1e00, 0x1eff],
   ] as const) {
     for (let c = from; c <= to; c++) {
       const ch = String.fromCodePoint(c);
-      const base = ch.normalize("NFD").replace(/\p{M}/gu, "");
-      if (base.length === 1 && /[A-Za-z]/.test(base) && base !== ch)
-        pairs.push([ch, base.toLowerCase()]);
+      const base = ch.normalize('NFD').replace(/\p{M}/gu, '');
+      if (base.length === 1 && /[A-Za-z]/.test(base) && base !== ch) pairs.push([ch, base.toLowerCase()]);
     }
   }
   return pairs;
@@ -27,14 +25,14 @@ function buildPairs(): [string, string][] {
 
 const PAIRS = buildPairs();
 /** Ký tự nguồn cho `translate()` của SQL. */
-export const FOLD_FROM = PAIRS.map(([f]) => f).join("");
+export const FOLD_FROM = PAIRS.map(([f]) => f).join('');
 /** Ký tự đích, cùng vị trí với `FOLD_FROM`. */
-export const FOLD_TO = PAIRS.map(([, t]) => t).join("");
+export const FOLD_TO = PAIRS.map(([, t]) => t).join('');
 const MAP = new Map(PAIRS);
 
 /** Bỏ dấu, chữ thường: NFC rồi đổi từng ký tự theo bảng; ký tự ngoài bảng giữ nguyên (cùng kết quả với SQL `translate`). */
 export function foldVi(text: string): string {
-  let out = "";
-  for (const ch of text.normalize("NFC")) out += MAP.get(ch) ?? ch;
+  let out = '';
+  for (const ch of text.normalize('NFC')) out += MAP.get(ch) ?? ch;
   return out;
 }

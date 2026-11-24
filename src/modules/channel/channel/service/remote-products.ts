@@ -1,38 +1,22 @@
 // Danh sách SKU sàn gom theo sản phẩm sàn (#565, Documents/21 §18.12 `GET remote-products`): đọc bản sao `remote_skus`,
 // phân trang theo sản phẩm sàn, gợi ý liên kết cho SKU chưa liên kết của trang. Không gọi sàn.
-import { withCompany } from "../../../../shared/db/client.ts";
-import {
-  type MatchConfidence,
-  confidenceOf,
-} from "../domain/match-confidence.ts";
-import { type RefreshState } from "../domain/remote-skus-refresh.ts";
-import {
-  type RemoteTitleChanged,
-  remoteTitleChanged,
-} from "../domain/remote-title.ts";
-import { type ListingRow, liveListingRows } from "../repository/listings.ts";
-import {
-  type RemoteLinkStatus,
-  remoteLinkCounts,
-  remoteProductSkuTotals,
-  remoteProductsPage,
-} from "../repository/remote-skus.ts";
-import { type ChannelListing, requesterNames, toListing } from "./listings.ts";
-import { snapshotRefresh } from "./mapping.ts";
-import type { ProductPort } from "./product-port.ts";
-import {
-  type CannotCreateReason,
-  createBlocker,
-  productNameOf,
-  suggestMatches,
-} from "./setup.ts";
-import { type Actor, ownShop } from "./shops.ts";
+import { withCompany } from '../../../../shared/db/client.ts';
+import { type MatchConfidence, confidenceOf } from '../domain/match-confidence.ts';
+import { type RefreshState } from '../domain/remote-skus-refresh.ts';
+import { type RemoteTitleChanged, remoteTitleChanged } from '../domain/remote-title.ts';
+import { type ListingRow, liveListingRows } from '../repository/listings.ts';
+import { type RemoteLinkStatus, remoteLinkCounts, remoteProductSkuTotals, remoteProductsPage } from '../repository/remote-skus.ts';
+import { type ChannelListing, requesterNames, toListing } from './listings.ts';
+import { snapshotRefresh } from './mapping.ts';
+import type { ProductPort } from './product-port.ts';
+import { type CannotCreateReason, createBlocker, productNameOf, suggestMatches } from './setup.ts';
+import { type Actor, ownShop } from './shops.ts';
 
 export interface RemoteSkuSuggestion {
   variantId: string;
   sku: string;
   productName: string;
-  match: "sku" | "name";
+  match: 'sku' | 'name';
   score: number | null;
   confidence: MatchConfidence;
 }
@@ -45,14 +29,14 @@ export interface RemoteSkuRowOut {
   variantLabel: string | null;
   platformStock: number;
   matchedVariantId: string | null;
-  mode: "mapped" | "unmanaged" | null;
+  mode: 'mapped' | 'unmanaged' | null;
   listingId: string | null;
   listingVersion: number | null;
-  pendingMapping: ChannelListing["pendingMapping"];
+  pendingMapping: ChannelListing['pendingMapping'];
   remoteTitleChanged: RemoteTitleChanged | null;
   suggestion: RemoteSkuSuggestion | null;
   canCreate: boolean;
-  cannotCreateReason: CannotCreateReason | "already_matched" | null;
+  cannotCreateReason: CannotCreateReason | 'already_matched' | null;
   /** Lựa chọn trong nháp thiết lập; chỉ gian hàng `connecting` (be#569 điền), ở đây luôn null. */
   decision: null;
 }
@@ -69,7 +53,7 @@ export interface RemoteProductOut {
 }
 
 export interface RemoteProductsQuery {
-  status: RemoteLinkStatus | "all";
+  status: RemoteLinkStatus | 'all';
   search?: string | undefined;
   page: number;
   pageSize: number;
@@ -87,8 +71,7 @@ export interface RemoteProductsResult {
 }
 
 /** Ghép đang có hiệu lực: dòng chỉ để chờ duyệt "không quản tồn" (chưa ai duyệt) là chưa ghép. */
-const effectiveMode = (r: ListingRow): RemoteSkuRowOut["mode"] =>
-  r.mode === "unmanaged" && !r.approvedBy ? null : r.mode;
+const effectiveMode = (r: ListingRow): RemoteSkuRowOut['mode'] => (r.mode === 'unmanaged' && !r.approvedBy ? null : r.mode);
 
 /**
  * Một trang sản phẩm sàn (§18.12). Chưa có bản sao thì xếp lượt tải nền như `remote-skus` (`snapshotRefresh`). Gợi ý chỉ cho
@@ -114,41 +97,22 @@ export async function remoteProducts(
       syncedAt: shop.remoteSkusSyncedAt,
       refresh,
     };
-    if (!page.rows.length)
-      return { ...base, items: [], nameMatchSkipped: false };
+    if (!page.rows.length) return { ...base, items: [], nameMatchSkipped: false };
 
     const rows = await liveListingRows(shop.id);
     const names = await requesterNames(rows);
-    const byExternal = new Map(
-      rows.flatMap((r) =>
-        r.externalSkuId ? [[r.externalSkuId, r] as const] : [],
-      ),
-    );
-    const byPending = new Map(
-      rows.flatMap((r) =>
-        r.pendingExternalSkuId ? [[r.pendingExternalSkuId, r] as const] : [],
-      ),
-    );
+    const byExternal = new Map(rows.flatMap((r) => (r.externalSkuId ? [[r.externalSkuId, r] as const] : [])));
+    const byPending = new Map(rows.flatMap((r) => (r.pendingExternalSkuId ? [[r.pendingExternalSkuId, r] as const] : [])));
     const variants = await port.variants();
-    const taken = new Set(
-      rows.flatMap((r) =>
-        r.variantId && (r.externalSkuId || r.pendingExternalSkuId)
-          ? [r.variantId]
-          : [],
-      ),
-    );
-    const free = page.rows.filter((r) => r.linkStatus === "unlinked");
-    const totals = await remoteProductSkuTotals(shop.id, [
-      ...new Set(free.map((r) => r.externalProductId)),
-    ]);
+    const taken = new Set(rows.flatMap((r) => (r.variantId && (r.externalSkuId || r.pendingExternalSkuId) ? [r.variantId] : [])));
+    const free = page.rows.filter((r) => r.linkStatus === 'unlinked');
+    const totals = await remoteProductSkuTotals(shop.id, [...new Set(free.map((r) => r.externalProductId))]);
     const { chosen, nameMatchSkipped } = await suggestMatches(
       free,
       variants.filter((v) => !v.archived && !taken.has(v.id)),
       totals,
     );
-    const suggested = new Map(
-      [...chosen].map(([i, c]) => [free[i]!.externalSkuId, c] as const),
-    );
+    const suggested = new Map([...chosen].map(([i, c]) => [free[i]!.externalSkuId, c] as const));
     const cannotCreate = createBlocker(variants, actor);
 
     const items: RemoteProductOut[] = [];
@@ -167,14 +131,10 @@ export async function remoteProducts(
         };
         items.push(product);
       }
-      const listing =
-        byExternal.get(r.externalSkuId) ?? byPending.get(r.externalSkuId);
-      const mode =
-        listing?.externalSkuId === r.externalSkuId
-          ? effectiveMode(listing)
-          : null;
+      const listing = byExternal.get(r.externalSkuId) ?? byPending.get(r.externalSkuId);
+      const mode = listing?.externalSkuId === r.externalSkuId ? effectiveMode(listing) : null;
       const s = suggested.get(r.externalSkuId);
-      const reason = listing ? "already_matched" : cannotCreate(r.sellerSku);
+      const reason = listing ? 'already_matched' : cannotCreate(r.sellerSku);
       product.skus.push({
         externalSkuId: r.externalSkuId,
         sellerSku: r.sellerSku,
@@ -182,23 +142,18 @@ export async function remoteProducts(
         titleEn: r.titleEn,
         variantLabel: r.variantLabel,
         platformStock: r.quantity,
-        matchedVariantId: mode === "mapped" ? listing!.variantId : null,
+        matchedVariantId: mode === 'mapped' ? listing!.variantId : null,
         mode,
         listingId: listing?.id ?? null,
         listingVersion: listing?.version ?? null,
-        pendingMapping: listing
-          ? toListing(listing, names).pendingMapping
-          : null,
-        remoteTitleChanged:
-          listing?.externalSkuId === r.externalSkuId
-            ? remoteTitleChanged(listing, r)
-            : null,
+        pendingMapping: listing ? toListing(listing, names).pendingMapping : null,
+        remoteTitleChanged: listing?.externalSkuId === r.externalSkuId ? remoteTitleChanged(listing, r) : null,
         suggestion: s
           ? {
               variantId: s.variant.id,
               sku: s.variant.sku,
               productName: s.variant.productName,
-              match: s.score === null ? "sku" : "name",
+              match: s.score === null ? 'sku' : 'name',
               score: s.score,
               confidence: confidenceOf(s.score),
             }
