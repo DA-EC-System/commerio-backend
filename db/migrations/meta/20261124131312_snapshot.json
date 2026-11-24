@@ -1,6 +1,6 @@
 {
-  "id": "d49d206f-6d55-4d58-b617-40b6f652c898",
-  "prevId": "b8b0420d-805a-4e54-8d72-0b67fae80aee",
+  "id": "86f2113a-08cd-4884-9070-efafee9d5f89",
+  "prevId": "132e3e49-63a6-479c-b6c2-59a3fb562ce7",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -992,6 +992,25 @@
           "notNull": true,
           "default": true
         },
+        "category_sync_state": {
+          "name": "category_sync_state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'idle'"
+        },
+        "category_sync_error": {
+          "name": "category_sync_error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "category_sync_at": {
+          "name": "category_sync_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -1005,7 +1024,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "marketplaces_category_sync_state": {
+          "name": "marketplaces_category_sync_state",
+          "value": "\"channel\".\"marketplaces\".\"category_sync_state\" in ('idle', 'queued', 'running', 'failed', 'unsupported')"
+        }
+      },
       "isRLSEnabled": false
     },
     "channel.platform_categories": {
@@ -1265,6 +1289,45 @@
           "value": "\"channel\".\"platform_category_attributes\".\"tier\" in ('category', 'product', 'company')"
         }
       },
+      "isRLSEnabled": false
+    },
+    "channel.platform_category_group_maps": {
+      "name": "platform_category_group_maps",
+      "schema": "channel",
+      "columns": {
+        "platform": {
+          "name": "platform",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "external_category_id": {
+          "name": "external_category_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "group_id": {
+          "name": "group_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "platform_category_group_maps_platform_external_category_id_pk": {
+          "name": "platform_category_group_maps_platform_external_category_id_pk",
+          "columns": [
+            "platform",
+            "external_category_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "channel.price_calculations": {
@@ -2602,6 +2665,24 @@
           "primaryKey": false,
           "notNull": false
         },
+        "category_permissions_state": {
+          "name": "category_permissions_state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "category_permissions_error": {
+          "name": "category_permissions_error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "category_permissions_checked_at": {
+          "name": "category_permissions_checked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "setup_draft": {
           "name": "setup_draft",
           "type": "jsonb",
@@ -2743,6 +2824,10 @@
         "shops_orders_pulled_ok_at": {
           "name": "shops_orders_pulled_ok_at",
           "value": "\"channel\".\"shops\".\"orders_pulled_ok_at\" is null or \"channel\".\"shops\".\"order_cutoff_at\" is not null"
+        },
+        "shops_category_permissions_state": {
+          "name": "shops_category_permissions_state",
+          "value": "\"channel\".\"shops\".\"category_permissions_state\" in ('queued', 'running', 'ready', 'failed')"
         },
         "shops_reauth_orders_pulled": {
           "name": "shops_reauth_orders_pulled",

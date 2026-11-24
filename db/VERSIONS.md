@@ -3,7 +3,21 @@
 <!-- Sinh tự động bởi `npm run db:docs` từ db/migrations. Không sửa tay. -->
 
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
-Mới nhất: **V153**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+Mới nhất: **V155**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+
+## V155 · 24/11/2026 · bieu-phi-mau-quyen-du-lieu
+
+`db/migrations/20261124131312_bieu-phi-mau-quyen-du-lieu.sql` · viết tay
+
+- viết tay: quyền, dữ liệu
+- Biểu phí mẫu của nền tảng (Documents/21 §21.6): commerio_app chỉ đọc (ghi bằng role chủ bảng ở route quản trị nền tảng), dữ liệu TikTok ban đầu.
+
+## V154 · 24/11/2026 · bieu-phi-mau
+
+`db/migrations/20261124131310_bieu-phi-mau.sql` · sinh từ schema
+
+- + bảng `finance.fee_templates`
+- `finance.config_versions`: + cột `source_template_id`, `source_template_version`; + khoá ngoại `config_versions_source_template_id_fee_templates_id_fk`; + check `config_versions_source_template`
 
 ## V153 · 24/11/2026 · dong-bo-category-du-lieu
 
