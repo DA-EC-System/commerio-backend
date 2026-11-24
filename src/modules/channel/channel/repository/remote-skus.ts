@@ -259,7 +259,8 @@ export async function remoteStockByVariant(shopId: string, variantIds: readonly 
         eq(listings.shopId, shopId),
         eq(listings.mode, 'mapped'),
         ne(listings.status, 'delisted'),
-        inArray(listings.variantId, [...variantIds]),
+        // Phiếu đầu kỳ không giới hạn số dòng: một tham số mảng thay vì mỗi biến thể một tham số
+        sql`${listings.variantId} = any(${[...variantIds]}::uuid[])`,
       ),
     )
     .groupBy(listings.variantId);
