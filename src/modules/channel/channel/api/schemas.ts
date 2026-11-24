@@ -777,6 +777,7 @@ export const PushResult = z
         'Null khi đã xếp việc. Dòng bị chặn: `not_found`, `push_in_progress`, `already_listed` (`under_review`, `live`, `hidden`), `mapping_pending` (listing lỗi đang chờ CEO duyệt ghép SKU sàn có sẵn), `fee_not_configured` (lần đăng đầu, đăng lại sau gỡ hay sau lỗi mà gian hàng chưa có cấu hình phí, kể cả giá gõ tay; Documents/21 §18.9 R5), `sku_not_ready`, `price_missing`, `category_unmapped`, `dimensions_missing`, `images_missing`',
     }),
     message: z.string().nullable(),
+    blockers: z.array(Blocker).optional().meta({ description: 'Dòng bị chặn: mọi mục chặn kèm chỗ sửa (21 §18.10, §18.11); `code`, `message` là mục đầu' }),
   })
   .strict()
   .meta({ id: 'PushResult' });

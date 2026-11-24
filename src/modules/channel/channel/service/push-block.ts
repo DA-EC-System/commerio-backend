@@ -185,13 +185,17 @@ export function pushBlocks(
 
 const SPEC_CODES: ReadonlySet<BlockerCode> = new Set(['spec_incomplete', 'axis_limit', 'axis_unmapped_required']);
 
-/** Mục chặn đầu của `pushBlocks`, dạng mã + câu như trước #564; mục spec gộp nhãn mọi mục spec thành một câu. */
-export function pushBlock(...args: Parameters<typeof pushBlocks>): (Omit<PushBlock, 'code'> & { code: BlockerCode }) | null {
-  const items = pushBlocks(...args);
+/** Mục chặn đầu dạng mã + câu như trước #564; mục spec gộp nhãn mọi mục spec thành một câu. */
+export function firstBlock(items: readonly BlockItem[]): { code: BlockerCode; message: string } | null {
   const first = items[0];
   if (!first) return null;
   if (!SPEC_CODES.has(first.code)) return { code: first.code, message: first.label };
   return { code: first.code, message: items.filter((b) => SPEC_CODES.has(b.code)).map((b) => b.label).join(', ') };
+}
+
+/** Mục chặn đầu của `pushBlocks` (việc nền, `update-content`, gom lại). */
+export function pushBlock(...args: Parameters<typeof pushBlocks>): (Omit<PushBlock, 'code'> & { code: BlockerCode }) | null {
+  return firstBlock(pushBlocks(...args));
 }
 
 /**
