@@ -1,5 +1,5 @@
 // Bản sao danh sách SKU của gian hàng trên sàn (#220 đợt 2, bảng `remote_skus`). Chạy trong `withCompany` của bên gọi.
-import { and, asc, count, eq, gte, inArray, isNotNull, lt, ne, notInArray, sql, type SQL } from 'drizzle-orm';
+import { and, asc, count, eq, gte, inArray, isNotNull, lt, ne, sql, type SQL } from 'drizzle-orm';
 import { getDb, requireCompanyId } from '../../../../shared/db/client.ts';
 import { FOLD_FROM, FOLD_TO, foldVi } from '../domain/fold-vi.ts';
 import type { RemoteSkusFullError } from '../domain/remote-skus-refresh.ts';
@@ -281,8 +281,10 @@ export interface RemoteFilter {
 
 function pageFilter(shopId: string, { status, search, skuIds }: RemoteFilter): SQL {
   const parts: SQL[] = [sql`${remoteSkus.shopId} = ${shopId}`];
-  if (skuIds && 'in' in skuIds) parts.push(skuIds.in.length ? inArray(remoteSkus.externalSkuId, [...skuIds.in]) : sql`false`);
-  if (skuIds && 'notIn' in skuIds && skuIds.notIn.length) parts.push(notInArray(remoteSkus.externalSkuId, [...skuIds.notIn]));
+  // Cả danh sách là một tham số mảng (không một tham số mỗi id): shop lớn có hàng chục nghìn SKU trong nháp vẫn dưới giới hạn
+  // 65 535 tham số của PostgreSQL.
+  if (skuIds && 'in' in skuIds) parts.push(sql`${remoteSkus.externalSkuId} = any(${[...skuIds.in]}::text[])`);
+  if (skuIds && 'notIn' in skuIds && skuIds.notIn.length) parts.push(sql`${remoteSkus.externalSkuId} <> all(${[...skuIds.notIn]}::text[])`);
   if (status !== 'all') parts.push(sql`(${linkStatus}) = ${status}`);
   if (search?.trim()) {
     const hay = sql`concat_ws(' ', ${remoteSkus.title}, ${remoteSkus.titleEn}, ${remoteSkus.sellerSku}, ${remoteSkus.externalSkuId}, ${remoteSkus.externalProductId})`;
