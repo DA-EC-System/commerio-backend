@@ -1395,3 +1395,30 @@ export const SyncRun = z
   })
   .strict()
   .meta({ id: 'SyncRun' });
+
+// Trạng thái đồng bộ category khi nối gian hàng (#569, Documents/21 §18.5).
+export const CategorySyncView = z
+  .object({
+    tree: z
+      .object({
+        state: z.enum(['ready', 'queued', 'running', 'failed', 'unsupported']).meta({
+          description: '`ready`: đã có cây; `unsupported`: sàn chưa đọc được category từ app; `failed` kèm `error` (nút Thử lại gọi `POST /platforms/:platform/categories/sync`)',
+        }),
+        syncedAt: z.string().nullable(),
+        leafCount: z.number().int(),
+        error: z.string().nullable(),
+      })
+      .strict(),
+    permissions: z
+      .object({
+        state: z.enum(['ready', 'queued', 'running', 'failed']),
+        checkedAt: z.string().nullable(),
+        availableCount: z.number().int().meta({ description: 'Số category lá gian hàng được bán' }),
+        error: z.string().nullable(),
+      })
+      .strict()
+      .nullable()
+      .meta({ description: '`null` khi sàn không có quyền category theo gian hàng (Lazada)' }),
+  })
+  .strict()
+  .meta({ id: 'CategorySync' });

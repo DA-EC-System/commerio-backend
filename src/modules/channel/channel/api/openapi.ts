@@ -11,6 +11,7 @@ import {
   CategorySuggestionsQuery,
   CategorySuggestionsView,
   ShopWarehousesView,
+  CategorySyncView,
   CategorySyncBody,
   ApplyCategoryBody,
   AxisMappingBody,
@@ -326,6 +327,20 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
       409: problemResponse('`shop_not_connected`: không có gian hàng `active` của sàn; `marketplace_rejected`, `marketplace_unauthorized`'),
       422: problemResponse('`validation_failed` (`errors.code`: không phải attribute cascade đã lưu của leaf); `marketplace_unsupported`: sàn không có cascade'),
       503: problemResponse('`marketplace_unavailable`'),
+    },
+  });
+  registry.registerPath({
+    method: 'get',
+    path: '/shops/:id/category-sync',
+    summary: 'Trạng thái đồng bộ category khi nối gian hàng (#569)',
+    description:
+      'Cần `channel.shop.view`. Chỉ đọc DB. Nối gian hàng xong, BE tự xếp lượt đọc cây category của sàn (khi sàn chưa có cây) và, với sàn có quyền category theo gian hàng (TikTok), lượt đọc quyền bằng token của gian hàng. FE hỏi lại khi `queued`, `running`.',
+    security: bearer,
+    request: { params: ShopParams },
+    responses: {
+      200: { description: 'Trạng thái cây và quyền', ...json(CategorySyncView) },
+      ...auth,
+      404: problemResponse('`not_found`: gian hàng không có hoặc của công ty khác'),
     },
   });
   registry.registerPath({

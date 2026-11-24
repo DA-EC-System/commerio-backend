@@ -1,5 +1,6 @@
 // API công khai của module `channel`: gian hàng sàn, token, ghép SKU, dữ liệu gốc sàn. Không đổi tồn.
 // Module khác chỉ được import từ file này.
+import { onShopConnecting, permissionsSyncQueue, runPermissionsSync } from './service/category-permissions-sync.ts';
 import type { ModuleDefinition } from '../../../shared/module.ts';
 import { registerChannelOpenApi } from './api/openapi.ts';
 import { channelRouter } from './api/routes.ts';
@@ -80,7 +81,10 @@ export const channelModule: ModuleDefinition = {
     // Ghép SKU dựng spec từ category trên sàn (#400 lát 12).
     await workChannelQueue(specFromMatchQueue, (job) => runSpecFromMatch(port, job));
     // Cây category của sàn (#400): mỗi sàn một lượt đêm, lời gọi sàn chỉ tính trần chung.
-    await workChannelQueue(categorySyncQueue, (job) => runCategorySync(job));
+    await workChannelQueue(categorySyncQueue, (job, attempt) => runCategorySync(job, attempt));
+    // Nối gian hàng (#569, 21 §18.5): bảo đảm có cây category, đọc quyền category của gian hàng (sàn có quyền theo gian hàng).
+    registerChannelConsumer('channel.shop_status_changed', (e) => onShopConnecting(e.payload), { consumer: 'channel-category-on-connect' });
+    await workChannelQueue(permissionsSyncQueue, (job, attempt) => runPermissionsSync(job, attempt));
     await scheduleCategorySync();
     await reconcileShopJobs();
     // Thư báo CEO, Admin khi gian hàng sắp hết hoặc đã mất uỷ quyền (#312): xếp mốc mỗi 15 phút, consumer gửi thư.

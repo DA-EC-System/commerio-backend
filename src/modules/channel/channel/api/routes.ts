@@ -7,6 +7,7 @@ import { validate, validated } from '../../../../shared/http/validate.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
 import { suggestCategories } from '../service/category-suggestions.ts';
 import { shopWarehouses } from '../service/shop-warehouses.ts';
+import { categorySyncStatus } from '../service/category-sync-status.ts';
 import { requestCategorySync } from '../service/category-sync.ts';
 import { cascadeLevel, leafDetail, listPlatformCategories } from '../service/platform-categories.ts';
 import { applyCategory } from '../service/category-apply.ts';
@@ -348,6 +349,12 @@ export function channelRouter(ctx: ModuleContext): Router {
   );
 
   // Kho của gian hàng trên sàn (#430): gọi sàn ngoài giao dịch, service tự mở `withCompany`.
+  // Đồng bộ category khi nối gian hàng (#569, 21 §18.5): chỉ đọc DB, không gọi sàn.
+  router.get('/shops/:id/category-sync', view, validate({ params: ShopParams }), async (_req, res) => {
+    const { id } = validated<typeof ShopParams>(res, 'params');
+    res.json(await categorySyncStatus(actor(res).companyId, id));
+  });
+
   router.get('/shops/:id/warehouses', view, validate({ params: ShopParams }), async (_req, res) => {
     const { id } = validated<typeof ShopParams>(res, 'params');
     res.json(await shopWarehouses(actor(res).companyId, id));
