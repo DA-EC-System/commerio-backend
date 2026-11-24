@@ -54,7 +54,8 @@ import type { ListingVariant, ProductPort } from './product-port.ts';
 import { sendListingSync, sendOrderPull, sendStockPush } from './shop-jobs.ts';
 import { type Actor, onMarketplace, ownShop, shopSession, shopStopped } from './shops.ts';
 import { ordersStaleError, raisesStock, shopOrdersStale, untrustedVariants } from './stock-trust.ts';
-import { syncRunErrorOf } from './sync-runs.ts';
+import { staleRunCutoff, syncRunErrorOf } from './sync-runs.ts';
+import { errorOf, syncErrorOf } from './push-error.ts';
 
 /**
  * Listing đọc trạng thái từ sàn (có mã sàn): duyệt, từ chối, khoá, gỡ khoá; `rejected`, `push_failed` còn sản phẩm trên
@@ -338,7 +339,9 @@ async function moveAfterMarketplace(
 /**
  * Nút "Đồng bộ" (Documents/21 §18.5): chỉ xếp một lượt `channel.listing_sync` cho gian hàng, không gọi sàn trong request.
  * Gian hàng không `active` hoặc mất token: 409 `shop_not_connected`. `queued = false` khi đã có việc chờ (bấm hai lần).
- * `runId`: lượt người bấm (§18 "Kết quả lượt đồng bộ"), dùng lại lượt `queued` đang có; việc đồng bộ nhận lượt lúc bắt đầu.
+ * `runId`: lượt người bấm (§18 "Kết quả lượt đồng bộ"), dùng lại lượt `queued` đang có; lượt `queued` quá 30 phút thành
+ * `failed` `run_stale` và tạo lượt mới. Đua với việc đồng bộ mà chèn mãi không được: 503 `sync_run_busy`. Việc đồng bộ
+ * nhận lượt lúc bắt đầu.
  */
 export async function requestListingSync(actor: Actor, shopId: string): Promise<{ queued: boolean; runId: string }> {
   return withCompany(actor.companyId, async () => {
@@ -346,7 +349,9 @@ export async function requestListingSync(actor: Actor, shopId: string): Promise<
     if (shop.status !== 'active' || !shop.accessTokenEnc) {
       throw new AppError(409, 'shop_not_connected', 'Gian hàng chưa kết nối hoặc cần kết nối lại', { current: shop.status });
     }
-    const run = await queuedRunOrInsert(actor.companyId, shop.id, actor.accountId);
+    const run = await queuedRunOrInsert(actor.companyId, shop.id, actor.accountId, staleRunCutoff());
+    // Đua liên tục với việc đồng bộ đang nhận lượt (hiếm): báo người bấm lại, không 500.
+    if (!run) throw new AppError(503, 'sync_run_busy', 'Đang có lượt đồng bộ khác, bấm lại sau ít giây');
     return { queued: await sendListingSync(actor.companyId, shop.id), runId: run.id };
   });
 }
@@ -370,7 +375,7 @@ export async function syncListings(port: ProductPort, companyId: string, shopId:
   const staleBefore = Date.now() - STALE_PUSH_MS;
   for (const row of rows.filter((r) => r.status === 'pushing' && (r.pushStartedAt?.getTime() ?? 0) < staleBefore)) {
     const message = 'Quá 30 phút chưa có kết quả từ sàn, đồng bộ lại';
-    const pushError: SyncError = { code: 'marketplace_unavailable', message, at: new Date().toISOString() };
+    const pushError = errorOf('marketplace_unavailable', message, { variantId: row.variantId });
     // Lượt take-over xuất phát từ `live` kẹt quá 30 phút: về `live` như lỗi sàn, không `push_failed` (#399).
     await inCompany(async () => {
       const failure = await pushFailureOf(row);
@@ -688,6 +693,7 @@ async function pushDue(
     );
     await inCompany(async () => {
       let succeeded = 0;
+      let skipped = 0;
       const errors: SyncRunErrorRow[] = [];
       for (const p of batch) {
         const { row, item, locked } = p;
@@ -708,10 +714,13 @@ async function pushDue(
           const stock = item.quantity === undefined ? undefined : (result?.stock ?? whole);
           const price = item.price === undefined ? undefined : (result?.price ?? whole);
           if ((stock && !stock.ok) || (price && !price.ok)) summary.errors++;
-          if (stock && !stock.ok) runErrors.push(syncRunErrorOf(row, variant, syncError(stock, at), { what: 'tồn' }));
-          if (price && !price.ok) runErrors.push(syncRunErrorOf(row, variant, syncError(price, at), { what: 'giá' }));
-          if (stock) patch = { ...patch, ...(stock.ok ? stockSynced(row, item.quantity!) : stockFailed(row, syncError(stock, at))) };
-          if (price) patch = { ...patch, ...(price.ok ? { priceSync: 'synced', priceSyncError: null, listedPrice: item.price! } : { priceSync: 'error', priceSyncError: syncError(price, at) }) };
+          // Lỗi sàn dịch theo `errorMap` của adapter (#571): câu tiếng Việt, loại, chỗ sửa; mã gốc ở `platformCode`.
+          const stockError = stock && !stock.ok ? syncErrorOf(adapter, shop.platform, stock, 'stock', row.variantId, at) : null;
+          const priceError = price && !price.ok ? syncErrorOf(adapter, shop.platform, price, 'price', row.variantId, at) : null;
+          if (stockError) runErrors.push(syncRunErrorOf(row, variant, stockError));
+          if (priceError) runErrors.push(syncRunErrorOf(row, variant, priceError));
+          if (stock) patch = { ...patch, ...(stockError ? stockFailed(row, stockError) : stockSynced(row, item.quantity!)) };
+          if (price) patch = { ...patch, ...(priceError ? { priceSync: 'error', priceSyncError: priceError } : { priceSync: 'synced', priceSyncError: null, listedPrice: item.price! }) };
           // Giá theo gian hàng đã lên sàn: lần tính `confirmed` → `pushed` (Documents/19 `price_calculations`).
           if (price?.ok && row.priceCalcId && row.manualPrice === null) await markPushed(row.priceCalcId);
           if (stock?.ok || price?.ok) patch = { ...patch, lastPushedAt: at };
@@ -722,14 +731,18 @@ async function pushDue(
         if (locked.priceSyncError) runErrors.push(syncRunErrorOf(row, variant, locked.priceSyncError));
         patch = { ...patch, ...locked };
         // Lệch `version` (tồn vừa đổi, đánh dấu lại pending giữa lúc đọc và lúc ghi): bỏ kết quả lượt này, giữ dòng
-        // như đang có để lượt sau đẩy số mới; không tính là lỗi.
-        await updateListing(row.id, { version: row.version }, patch);
+        // như đang có để lượt sau đẩy số mới; không tính là lỗi, cũng không tính là xong (trừ khỏi `total` của lượt).
+        const written = await updateListing(row.id, { version: row.version }, patch);
         if (!counts(p)) continue;
+        if (!written) {
+          skipped++;
+          continue;
+        }
         // Một listing một dòng lỗi (lỗi đầu tiên: tồn trước giá), như cột trạng thái của dòng.
         if (runErrors.length) errors.push(runErrors[0]!);
         else succeeded++;
       }
-      await addRunBatch(runIds, { succeeded, failed: errors.length, errors });
+      await addRunBatch(runIds, { succeeded, failed: errors.length, skipped, errors });
     });
   }
 }
@@ -742,7 +755,9 @@ export function pushBatches<T extends { row: { externalProductId: string | null 
   const byProduct = new Map<string, T[]>();
   for (const p of plan) {
     const key = p.row.externalProductId ?? '';
-    byProduct.set(key, [...(byProduct.get(key) ?? []), p]);
+    const group = byProduct.get(key);
+    if (group) group.push(p);
+    else byProduct.set(key, [p]);
   }
   const batches: T[][] = [];
   let current: T[] = [];
@@ -886,20 +901,9 @@ function stockSynced(row: ListingRow, quantity: number): ListingPatch {
 
 /**
  * Tồn đẩy lỗi giữ `pending` kèm `stockSyncError` (Documents/21 mục 18.5, 18.6.6); `error` dành cho nhãn Lệch tồn (giữ
- * nguyên nếu đang Lệch tồn). Sàn từ chối giảm tồn vì khuyến mãi (`promotion_locked`): sàn đang cao hơn số có thể bán, app
- * không ép được, nên ghi câu rõ cho người dùng xử lý trên trang sàn, vẫn `pending` để lượt sau gửi lại, không bật Lệch tồn.
+ * nguyên nếu đang Lệch tồn). Sàn từ chối giảm tồn vì khuyến mãi (`promotion_locked`, câu do `errorMap` dịch): vẫn `pending`
+ * để lượt sau gửi lại, không bật Lệch tồn.
  */
 function stockFailed(row: ListingRow, error: SyncError): ListingPatch {
-  const stockError: SyncError =
-    error.code === PROMOTION_LOCKED
-      ? {
-          ...error,
-          message: `Sàn đang khoá giảm tồn do khuyến mãi; sàn đang cao hơn số có thể bán, cần xử lý trên trang sàn. Sàn báo: ${error.message}`,
-        }
-      : error;
-  return { stockSync: row.stockSync === 'error' ? 'error' : 'pending', stockSyncError: stockError };
-}
-
-function syncError(part: PartResult & { ok: false }, at: Date): SyncError {
-  return { code: part.code, message: part.message, at: at.toISOString() };
+  return { stockSync: row.stockSync === 'error' ? 'error' : 'pending', stockSyncError: error };
 }

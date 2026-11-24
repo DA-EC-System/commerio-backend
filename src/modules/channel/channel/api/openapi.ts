@@ -676,10 +676,14 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/shops/:id/listings/sync',
     summary: 'Xếp một lượt đồng bộ listing với sàn (#104, #223)',
     description:
-      'Cần `channel.shop.sync`. Không gọi sàn trong request: xếp một lượt `channel.listing_sync` (cùng việc chạy mỗi 15 phút) rồi trả 202. Lượt đó lấy đơn mới, đọc trạng thái sàn của listing mình (duyệt, từ chối, khoá, gỡ khoá, xoá), đối chiếu tồn, đẩy giá chuẩn và số có thể bán của listing `stockSync`/`priceSync` khác `synced`; kết quả xem ở danh sách listing. Đã có lượt chờ thì `queued: false`, không xếp thêm. Trả `runId` để hỏi kết quả ở `GET …/sync-runs/:runId`. Gian hàng không `active` hoặc mất token: 409 `shop_not_connected` kèm `current`.',
+      'Cần `channel.shop.sync`. Không gọi sàn trong request: xếp một lượt `channel.listing_sync` (cùng việc chạy mỗi 15 phút) rồi trả 202. Lượt đó lấy đơn mới, đọc trạng thái sàn của listing mình (duyệt, từ chối, khoá, gỡ khoá, xoá), đối chiếu tồn, đẩy giá chuẩn và số có thể bán của listing `stockSync`/`priceSync` khác `synced`; kết quả xem ở danh sách listing. Đã có lượt chờ thì `queued: false`, không xếp thêm. Trả `runId` để hỏi kết quả ở `GET …/sync-runs/:runId`. Gian hàng không `active` hoặc mất token: 409 `shop_not_connected` kèm `current`. Đua với việc đồng bộ đang nhận lượt mà không tạo được lượt mới: 503 `sync_run_busy`, bấm lại sau ít giây.',
     security: bearer,
     request: { params: ShopParams },
-    responses: { 202: { description: 'Đã xếp hoặc đã có lượt chờ', ...json(ListingSyncResult) }, ...onShop },
+    responses: {
+      202: { description: 'Đã xếp hoặc đã có lượt chờ', ...json(ListingSyncResult) },
+      ...onShop,
+      503: problemResponse('`sync_run_busy`: không tạo được lượt đồng bộ vì đua với việc đồng bộ, bấm lại sau ít giây'),
+    },
   });
   registry.registerPath({
     method: 'get',

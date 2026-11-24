@@ -50,7 +50,8 @@ const kindOf = (row: DocRow) => (row.kind === 'return_inspection' || row.sourceT
 
 /** Số trên dòng theo loại phiếu: kiểm kê là Δ = đếm − sổ, kiểm hàng về là số quét. */
 export function lineQuantity(row: DocRow, l: DocLineRow): number {
-  if (row.kind === 'stocktake') return (l.countedQty ?? 0) - (l.bookQty ?? 0);
+  // Chưa đếm (`counted` null) thì chưa có chênh lệch: 0, không phải −sổ (#569)
+  if (row.kind === 'stocktake') return l.countedQty === null ? 0 : l.countedQty - (l.bookQty ?? 0);
   if (row.kind === 'return_inspection') return l.scannedQty ?? 0;
   return l.quantity ?? 0;
 }
@@ -114,7 +115,7 @@ export async function detail(row: DocRow, viewer: Pick<Viewer, 'canCost'>) {
         productName: v?.productName ?? '',
         attributesLabel: v ? v.attributes.map((a) => a.value).join(' / ') : '',
         quantity: lineQuantity(row, l),
-        ...(row.kind === 'stocktake' && { bookQty: l.bookQty ?? 0, counted: l.countedQty ?? 0 }),
+        ...(row.kind === 'stocktake' && { bookQty: l.bookQty ?? 0, counted: l.countedQty }),
         ...(row.kind === 'return_inspection' && {
           expected: l.expectedQty ?? 0,
           resell: l.resellQty ?? 0,
