@@ -3,8 +3,10 @@
  *
  * Nguồn của `axisMap[attributeId]`, theo thứ tự: ghi đè của sản phẩm (không ở đây) → `channel.axis_mappings` của công ty →
  * mặc định theo `platform_kind` của thuộc tính → `__custom` nếu sàn nhận tên trục tự đặt, không thì bỏ trống (`missing`
- * `axis_unmapped`). `valueMap` ghép theo nhãn (bỏ dấu, chữ thường).
+ * `axis_unmapped`). `valueMap` ghép theo nhãn (bỏ dấu, chữ thường). Sản phẩm nhiều trục hơn `maxAxes` mà leaf có đích ghép thì
+ * gợi ý ghép mọi trục vào `combineTarget` (#568).
  */
+import { combineTarget } from './axis-combine.ts';
 import { CUSTOM_AXIS, normalizePath, type PlatformAttribute, type PlatformKind, type VariantCapabilities } from './product-spec.ts';
 
 export type { PlatformKind, VariantCapabilities } from './product-spec.ts';
@@ -77,6 +79,11 @@ export function suggestAxes(input: SuggestAxesInput): AxisSuggestion {
     } else if (input.caps === null || input.caps.customAxisName) {
       out.axisMap[axis.attributeId] = CUSTOM_AXIS;
     }
+  }
+  // Nhiều trục hơn category nhận mà leaf có đích ghép: gợi ý ghép mọi trục vào đó, không ánh xạ giá trị (#568, 21 §18.8.3).
+  const target = input.caps && input.axes.length > input.caps.maxAxes ? combineTarget(leaf) : null;
+  if (target !== null && input.axes.length > 1) {
+    return { axisMap: Object.fromEntries(input.axes.map((a) => [a.attributeId, target])), valueMap: {} };
   }
   return out;
 }
