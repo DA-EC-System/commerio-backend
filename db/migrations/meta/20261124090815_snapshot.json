@@ -1,6 +1,6 @@
 {
-  "id": "666897ab-1511-47e7-8677-48175ba93992",
-  "prevId": "8d025f94-101a-4155-9e6a-6ea54bab7197",
+  "id": "e7c145c7-20ef-40bd-8a1e-6714a0931c59",
+  "prevId": "1fea3506-d1f5-40c8-8cc6-1f6a1d0bf5e8",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -194,6 +194,188 @@
         "axis_mappings_priority": {
           "name": "axis_mappings_priority",
           "value": "\"channel\".\"axis_mappings\".\"priority\" >= 1"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "channel.listing_sync_runs": {
+      "name": "listing_sync_runs",
+      "schema": "channel",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "company_id": {
+          "name": "company_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "shop_id": {
+          "name": "shop_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'queued'"
+        },
+        "requested_by": {
+          "name": "requested_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "requested_at": {
+          "name": "requested_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "started_at": {
+          "name": "started_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "finished_at": {
+          "name": "finished_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "total": {
+          "name": "total",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "processed": {
+          "name": "processed",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "succeeded": {
+          "name": "succeeded",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "failed": {
+          "name": "failed",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "errors": {
+          "name": "errors",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "error": {
+          "name": "error",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "listing_sync_runs_one_queued_uq": {
+          "name": "listing_sync_runs_one_queued_uq",
+          "columns": [
+            {
+              "expression": "shop_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"channel\".\"listing_sync_runs\".\"status\" = 'queued'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "listing_sync_runs_shop_idx": {
+          "name": "listing_sync_runs_shop_idx",
+          "columns": [
+            {
+              "expression": "shop_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "requested_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "listing_sync_runs_shop_id_shops_id_fk": {
+          "name": "listing_sync_runs_shop_id_shops_id_fk",
+          "tableFrom": "listing_sync_runs",
+          "tableTo": "shops",
+          "schemaTo": "channel",
+          "columnsFrom": [
+            "shop_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "listing_sync_runs_status": {
+          "name": "listing_sync_runs_status",
+          "value": "\"channel\".\"listing_sync_runs\".\"status\" in ('queued', 'running', 'done', 'failed')"
+        },
+        "listing_sync_runs_counts": {
+          "name": "listing_sync_runs_counts",
+          "value": "\"channel\".\"listing_sync_runs\".\"processed\" >= 0 and \"channel\".\"listing_sync_runs\".\"succeeded\" >= 0 and \"channel\".\"listing_sync_runs\".\"failed\" >= 0 and \"channel\".\"listing_sync_runs\".\"succeeded\" + \"channel\".\"listing_sync_runs\".\"failed\" = \"channel\".\"listing_sync_runs\".\"processed\""
+        },
+        "listing_sync_runs_total": {
+          "name": "listing_sync_runs_total",
+          "value": "\"channel\".\"listing_sync_runs\".\"total\" is null or \"channel\".\"listing_sync_runs\".\"processed\" <= \"channel\".\"listing_sync_runs\".\"total\""
+        },
+        "listing_sync_runs_started": {
+          "name": "listing_sync_runs_started",
+          "value": "(\"channel\".\"listing_sync_runs\".\"status\" = 'queued') = (\"channel\".\"listing_sync_runs\".\"started_at\" is null)"
+        },
+        "listing_sync_runs_finished": {
+          "name": "listing_sync_runs_finished",
+          "value": "(\"channel\".\"listing_sync_runs\".\"status\" in ('done', 'failed')) = (\"channel\".\"listing_sync_runs\".\"finished_at\" is not null)"
+        },
+        "listing_sync_runs_error": {
+          "name": "listing_sync_runs_error",
+          "value": "\"channel\".\"listing_sync_runs\".\"error\" is null or \"channel\".\"listing_sync_runs\".\"status\" = 'failed'"
         }
       },
       "isRLSEnabled": false
