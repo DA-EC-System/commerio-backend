@@ -384,7 +384,37 @@ export const UpdateContentBody = z
 
 const listingStatus = z.enum(['pushing', 'push_failed', 'under_review', 'rejected', 'live', 'hidden', 'platform_hold', 'delisted']);
 const syncState = z.enum(['synced', 'pending', 'error']);
-const syncError = z.object({ code: z.string(), message: z.string(), at: iso }).strict().nullable();
+
+// BẢN TẠM (#567): chép y hệt `BlockerTarget` của #564 (feature/564-readiness); gộp #564 thì bỏ bản này, dùng bản gốc.
+/** Chỗ sửa của mục chặn (21 §18.10 `BlockerTarget`, cộng `listing` của 18.11; kiểu ở `domain/blocker.ts`). */
+export const BlockerTarget = z
+  .discriminatedUnion('kind', [
+    z.object({ kind: z.literal('category') }).strict(),
+    z.object({ kind: z.literal('spec_attribute'), attributeCode: z.string() }).strict(),
+    z.object({ kind: z.literal('axis'), attributeId: z.string().optional() }).strict(),
+    z.object({ kind: z.literal('variant_field'), field: z.enum(['price', 'weight', 'dimensions']) }).strict(),
+    z.object({ kind: z.literal('product_field'), field: z.enum(['images', 'variantImages', 'sizeChart', 'name']) }).strict(),
+    z.object({ kind: z.literal('shop'), field: z.enum(['fee_config', 'category_permission']) }).strict(),
+    z.object({ kind: z.literal('platform_product'), externalProductIds: z.array(z.string()) }).strict(),
+    z.object({ kind: z.literal('listing'), listingId: z.uuid().nullable() }).strict(),
+  ])
+  .meta({ id: 'BlockerTarget' });
+
+/** Lỗi lượt đẩy đã dịch (#567, 21 §18.6.4 "Dịch lỗi đẩy của sàn"); bản ghi trước #567 trả `null` ở các trường mới. */
+const pushError = z
+  .object({
+    code: z.string(),
+    kind: z.enum(['data', 'platform', 'connection']).nullable(),
+    message: z.string(),
+    target: BlockerTarget.nullable(),
+    variantId: z.string().nullable(),
+    platformCode: z.string().nullable(),
+    platformMessage: z.string().nullable(),
+    requestId: z.string().nullable(),
+    at: iso,
+  })
+  .strict()
+  .nullable();
 
 const pendingRevision = z
   .object({ status: z.enum(['auditing', 'failed']), rejectReason: z.string().nullable(), at: iso })
@@ -435,17 +465,22 @@ export const ChannelListing = z
     sellerSku: z.string().nullable(),
     status: listingStatus,
     rejectReason: z.string().nullable(),
-    pushError: syncError.meta({
+    pushError: pushError.meta({
       description:
-        'Lỗi của lượt đẩy (21 §18.6.4): `marketplace_rejected`, `marketplace_unavailable` (`message` là câu của sàn); `shop_not_eligible`, `listing_check_failed` (sàn kiểm trước khi tạo sản phẩm, #305); `shop_not_connected` (gian hàng ngắt khi việc chạy); `sku_exists_on_platform` (#399: SellerSku đã có trên sàn từ trước lượt đẩy, sản phẩm của người bán; dùng Ghép SKU); mã chặn theo dòng (`not_found`, `sku_not_ready`, `price_missing`…) khi dữ liệu đổi giữa lúc xếp việc và lúc chạy',
+        'Lỗi của lượt đẩy (21 §18.6.4). `code` là mã đã dịch: mã của bảng dịch sàn (`attribute_value_invalid`, `weight_out_of_range`, `attribute_required`, `axis_unmapped`, `images_missing`, `image_rejected`, `category_not_leaf`, `name_length`, `variant_images_missing`), không dịch được thì `marketplace_rejected`; lỗi tạm `marketplace_unavailable`; `shop_not_eligible`, `listing_check_failed` (#305); `shop_not_connected`; `sku_exists_on_platform` (#399); mã chặn theo dòng khi dữ liệu đổi giữa lúc xếp việc và lúc chạy. `message` là câu tiếng Việt cho người bán. `kind`: `data` (sửa được trong app), `platform` (sàn từ chối vì lý do ngoài dữ liệu), `connection` (lỗi tạm). `target` chỉ chỗ sửa (`BlockerTarget`), null khi không suy được. `platformCode`, `platformMessage` là mã và câu gốc của sàn (Lazada lấy từ `detail`), `requestId` của sàn. Lỗi ghi trước #567 có `kind`, `target`, `variantId`, `platformCode`, `platformMessage`, `requestId` là null',
     }),
     pushAttempts: z.number().int().meta({ description: 'Số lần đã gọi sàn trong lượt đẩy hiện tại (đặt về 0 khi bấm đẩy)' }),
     hiddenBy: z.enum(['platform', 'zero_stock']).nullable(),
     stockSync: syncState,
     priceSync: syncState,
     platformStock: z.number().int().nullable(),
-    stockSyncError: syncError.meta({ description: 'Lỗi lần đẩy tồn gần nhất của riêng SKU này; `message` là câu của sàn' }),
-    priceSyncError: syncError,
+    stockSyncError: pushError.meta({
+      description:
+        'Lỗi lần đẩy tồn gần nhất của riêng SKU này, cùng hình `pushError` (#571, 21 §18.6.4). Lỗi sàn: `code` đã dịch bằng bảng dịch của sàn (`promotion_locked`, `semi_hosted_product`…), không dịch được thì `marketplace_rejected`; `message` là câu tiếng Việt, mã và câu gốc ở `platformCode`, `platformMessage`. Lỗi do app giữ (`stock_not_counted`, `orders_stale`, `variant_missing`, `promotion_locked` đọc trước khi đẩy) có `kind`, `target`, `platformCode`, `platformMessage`, `requestId` null',
+    }),
+    priceSyncError: pushError.meta({
+      description: 'Lỗi lần đẩy giá gần nhất, cùng hình `stockSyncError` (`price_invalid` chỉ ô giá; `price_missing` do app giữ)',
+    }),
     qcAlert: z.null().meta({ description: 'Cảnh báo QC của sàn; chưa đọc, luôn null' }),
     lastPushedAt: iso.nullable(),
     lastPushedPrice: z.number().int().nullable(),
@@ -1329,7 +1364,10 @@ export const SyncRunError = z
     attributesLabel: z.string().nullable(),
     sku: z.string().nullable().meta({ description: 'SKU người bán của listing' }),
     code: z.string(),
-    message: z.string().meta({ description: 'Câu tiếng Việt cho người bán do app viết' }),
+    message: z.string().meta({ description: 'Câu tiếng Việt cho người bán do app viết (lỗi sàn dịch bằng bảng dịch của sàn, #571)' }),
+    kind: z.enum(['data', 'platform', 'connection']).nullable().meta({ description: 'Loại lỗi như `pushError.kind`; null khi lỗi do app giữ hoặc dòng ghi trước #571' }),
+    target: BlockerTarget.nullable().meta({ description: 'Chỗ sửa (`BlockerTarget`); null khi không suy được' }),
+    platformCode: z.string().nullable().meta({ description: 'Mã gốc của sàn; null khi lỗi do app giữ' }),
     platformMessage: z.string().nullable().meta({ description: 'Câu sàn trả, nguyên văn; null khi lỗi do app giữ' }),
     at: iso,
     fix: z

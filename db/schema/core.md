@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V150**, 17 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
+Phiên bản **V149**, 17 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
 **Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
 
@@ -110,6 +110,8 @@ Cột:
 - `status` enum `core.company_status` · not null · mặc định `'active'`: `active` | `locked`
 - `lock_reason` text · null
 - `locked_at` timestamptz · null
+- `onboarding_completed_at` timestamptz · null
+  Lần đầu mọi mục bắt buộc của onboarding cùng xong, đặt một lần qua `POST /onboarding/complete`, không xoá (#569, Documents/21 mục 23). Chỉ quyết định có ép vào wizard hay không; `done` của từng mục vẫn suy từ dữ liệu.
 - `created_at` timestamptz · not null · mặc định `now()`
 - `updated_at` timestamptz · not null · mặc định `now()`
 - `version` integer · not null · mặc định `1`

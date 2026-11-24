@@ -49,6 +49,7 @@ import { PUSH_IMAGE_MAX, sendListingPush, sendProductPush } from './shop-jobs.ts
 import { findAppShopProduct, findShopProduct, insertAppShopProduct, matchShopProductsOf, setShopProductPushStarted } from '../repository/shop-products.ts';
 import { MarketplaceError } from './marketplaces/index.ts';
 import { type Actor, onMarketplace, ownShop, platformOf, shopSession } from './shops.ts';
+import { pushErrorView, type PushErrorView } from './push-error.ts';
 
 export const ENTITY = 'listings';
 /** Mỗi lần đẩy tối đa 20 biến thể (`PushBody`). */
@@ -63,14 +64,14 @@ export interface ChannelListing {
   sellerSku: string | null;
   status: ListingStatus;
   rejectReason: string | null;
-  pushError: SyncError | null;
+  pushError: PushErrorView | null;
   pushAttempts: number;
   hiddenBy: ListingRow['hiddenBy'];
   stockSync: ListingRow['stockSync'];
   priceSync: ListingRow['priceSync'];
   platformStock: number | null;
-  stockSyncError: SyncError | null;
-  priceSyncError: SyncError | null;
+  stockSyncError: PushErrorView | null;
+  priceSyncError: PushErrorView | null;
   /** Cảnh báo QC (§18.4): chưa đọc từ sàn, luôn null. */
   qcAlert: null;
   lastPushedAt: Date | null;
@@ -161,14 +162,14 @@ export function toListing(r: ListingRow, names: ReadonlyMap<string, string> = ne
     sellerSku: r.sellerSku,
     status: r.status,
     rejectReason: r.rejectReason,
-    pushError: r.pushError,
+    pushError: pushErrorView(r.pushError),
     pushAttempts: r.pushAttempts,
     hiddenBy: r.hiddenBy,
     stockSync: r.stockSync,
     priceSync: r.priceSync,
     platformStock: r.platformStock,
-    stockSyncError: r.stockSyncError,
-    priceSyncError: r.priceSyncError,
+    stockSyncError: pushErrorView(r.stockSyncError),
+    priceSyncError: pushErrorView(r.priceSyncError),
     qcAlert: null,
     lastPushedAt: r.lastPushedAt,
     lastPushedPrice: r.listedPrice === null ? null : Number(r.listedPrice),
@@ -378,8 +379,11 @@ const inProgress = (variantId: string, existing: ListingRow | undefined) =>
 
 /**
  * Xếp việc đẩy các biến thể lên gian hàng (Documents/21 §18.6.4). Kiểm cả request trước (gian hàng gọi được sàn, không
- * chờ kiểm kê), rồi từng dòng: `not_found`, `push_in_progress`, `already_listed`, `sku_not_ready`, `price_missing`,
- * `category_unmapped`, `dimensions_missing`, `images_missing`, `size_chart_missing`. Dòng hợp lệ: mỗi dòng một giao dịch chuyển `pushing`,
+ * chờ kiểm kê), rồi từng dòng: `not_found`, `push_in_progress`, `mapping_pending` (listing chờ CEO duyệt liên kết SKU sàn),
+ * `already_listed`, `fee_not_configured` (21 §18.9 R5: lần đăng đầu, đăng lại sau gỡ hay sau `push_failed` do app soạn nội
+ * dung mà gian hàng chưa có phí đang áp dụng; `push_failed` với `content_source = platform` và `rejected` không chặn), rồi
+ * `pushBlock`: `sku_not_ready`, `price_missing`, `category_unmapped`, `dimensions_missing`, `images_missing`,
+ * `size_chart_missing`; cuối cùng `below_floor` (giá theo bộ lọc hoặc giá gõ tay có thực nhận dưới giá thấp nhất). Dòng hợp lệ: mỗi dòng một giao dịch chuyển `pushing`,
  * ghi lịch sử, xếp việc; hai request đua cùng SKU thì dòng thua ra `push_in_progress` (unique của bảng, `version`).
  * Listing đã gỡ thì tạo bản ghi mới trỏ bản cũ (`replaces_listing_id`), chép mã sàn, SellerSku, ảnh của bản cũ: gỡ chỉ
  * tắt sản phẩm trên sàn nên đẩy lại là bật lại đúng sản phẩm đó.
