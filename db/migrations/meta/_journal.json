@@ -1051,6 +1051,20 @@
       "when": 1795518376499,
       "tag": "20261124110616_lien-ket-sku-565",
       "breakpoints": true
+    },
+    {
+      "idx": 150,
+      "version": "7",
+      "when": 1795520727824,
+      "tag": "20261124114527_bieu-phi-mau",
+      "breakpoints": true
+    },
+    {
+      "idx": 151,
+      "version": "7",
+      "when": 1795520729666,
+      "tag": "20261124114529_bieu-phi-mau-quyen-du-lieu",
+      "breakpoints": true
     }
   ]
 }
