@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { priceFilter, taxPctFor } from '#src/modules/channel/channel/domain/price-filter.ts';
+import { priceFilter, roundingOf, taxPctFor } from '#src/modules/channel/channel/domain/price-filter.ts';
 
 // Bộ lọc giá theo gian hàng (#225, Documents/25 §6.2). Ví dụ A, B lấy từ 25 §6.2.
 const shopA = { feePct: 14, perItemFee: 3000, roundStep: 10000, roundEnding: 9000 };
@@ -65,5 +65,27 @@ describe('taxPctFor: phần thuế cộng vào tổng phí theo loại hình', (
   it('chưa có cấu hình thuế: 0', () => {
     expect(taxPctFor(undefined, rules).toString()).toBe('0');
     expect(taxPctFor({ regime: 'household' }, undefined).toString()).toBe('0');
+  });
+});
+
+// Quy tắc làm tròn đã áp (be#566, Documents/21 §18.11 `PriceRounding`).
+describe('roundingOf (21 §18.11)', () => {
+  it('ví dụ hợp đồng: bậc 10.000, đuôi 0 → ending null, 1.234.567 → 1.240.000', () => {
+    expect(roundingOf({ roundStep: 10000, roundEnding: 0 }, { rawPrice: '1234567', roundedPrice: '1240000' })).toEqual({
+      step: 10000,
+      ending: null,
+      before: 1234567,
+      after: 1240000,
+    });
+  });
+
+  it('đuôi 9.000 giữ số; giá trước làm tròn tới đồng (nửa lên)', () => {
+    expect(roundingOf(shopA, { rawPrice: '236046.51', roundedPrice: '239000' })).toEqual({ step: 10000, ending: 9000, before: 236047, after: 239000 });
+  });
+
+  it('khớp priceFilter: after là giá niêm yết của bộ lọc', () => {
+    const r = priceFilter({ ...base, fee: shopB });
+    if (!r.ok) throw new Error('fee');
+    expect(roundingOf(shopB, { rawPrice: r.rawPrice, roundedPrice: r.price }).after).toBe(Number(r.price));
   });
 });
