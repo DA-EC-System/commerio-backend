@@ -881,7 +881,7 @@ export const PushPreviewRow = z
     stockHeldReason: z.enum(['shop_waiting_opening', 'not_counted']).nullable(),
     netReceived: z.number().nullable(),
     feePct: z.number().nullable().meta({ description: '(listPrice − netReceived) / listPrice' }),
-    feeConfigId: z.uuid().nullable(),
+    feeConfigId: z.string().nullable(),
   })
   .strict()
   .meta({ id: 'PushPreviewRow' });

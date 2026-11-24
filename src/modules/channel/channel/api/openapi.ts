@@ -539,7 +539,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/shops/:id/listings/push-preview',
     summary: 'Kiểm trước khi đăng hàng loạt (21 §18.11)',
     description:
-      'Cần `channel.listing.manage`. Không ghi, không gọi sàn. Mỗi biến thể một dòng: `status`, `blockers` từ cùng hàm với readiness (18.10) và `push`, kể cả phần gom biến thể (`axis_shape`, `axis_unmapped`); giá lần đăng sẽ gửi, `rounding` (null khi giá gõ tay), tồn sẽ đẩy, thực nhận, `feePct`. Người gọi thiếu `inventory.cost.view` không nhận `below_floor` (R4); `push` vẫn chặn. `push` chạy lại kiểm từng dòng lúc nhận, không dùng kết quả xem trước. Lỗi cả request như `push`: 409 `shop_not_active`, `shop_awaiting_stocktake`, `shop_awaiting_allocation`, `shop_not_connected`. `variantIds` rỗng, quá 200: 422 `errors.variantIds`; biến thể không có hay của công ty khác: 422 `errors["variantIds.<i>"]`.',
+      'Cần `channel.listing.manage`. Không ghi, không gọi sàn. Mỗi biến thể một dòng: `status`, `blockers` từ cùng hàm với readiness (18.10) và `push`, kể cả phần gom biến thể (`axis_shape`, `axis_unmapped`); giá lần đăng sẽ gửi, `rounding` (null khi giá gõ tay), tồn sẽ đẩy, thực nhận, `feePct`. Người gọi thiếu `inventory.cost.view` không nhận `below_floor` (R4); `push` vẫn chặn. `push` chạy lại kiểm từng dòng lúc nhận, không dùng kết quả xem trước. Lỗi cả request như `push`: 409 `shop_not_active`, `shop_awaiting_stocktake`, `shop_awaiting_allocation`, `shop_not_connected`. `variantIds` rỗng, quá 200 (đếm cả id trùng, trước khi bỏ trùng): 422 `errors.variantIds`; biến thể không có hay của công ty khác: 422 `errors["variantIds.<i>"]`.',
     security: bearer,
     request: { params: ShopParams, body: json(PushPreviewBody) },
     responses: {
