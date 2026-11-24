@@ -270,3 +270,100 @@ describe('POST sku-links', () => {
     expect(res.body).toMatchObject({ code: 'shop_not_connected', current: 'needs_reauth' });
   });
 });
+
+describe('GET remote-products: totals, available, externalCategoryPath (§18.12)', () => {
+  const productsOf = async (shop: string, query: Record<string, string | number>, token = company.ceo.token) => {
+    const res = await as(token)(app().get(`/api/v1/channel/shops/${shop}/remote-products`)).query(query);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    return RemoteProductList.parse(res.body);
+  };
+  const setQuantity = (skuId: string, quantity: number) =>
+    db().query('update channel.remote_skus set quantity = $2 where external_sku_id = $1', [skuId, quantity]);
+
+  it('gian hàng đang bán: available của SKU đã liên kết, totals đếm lệch/khớp trên cả bộ lọc, quyết định null', async () => {
+    const t = tag();
+    const { skuIds } = await remoteProduct(`Mũ ${t}`, [{ label: 'Đen' }, { label: 'Trắng' }, { label: 'Xám' }]);
+    await setQuantity(skuIds[0]!, 0);
+    const [v0, v1] = [await createVariant(company.companyId), await createVariant(company.companyId)];
+    const res = await links({
+      items: [
+        { externalSkuId: skuIds[0], action: 'link', variantId: v0.variantId },
+        { externalSkuId: skuIds[1], action: 'link', variantId: v1.variantId },
+      ],
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+
+    const page = await productsOf(shopId, { status: 'all', search: t, pageSize: 1 });
+    const byId = new Map(page.items[0]!.skus.map((s) => [s.externalSkuId, s]));
+    expect([0, 1, 2].map((i) => byId.get(skuIds[i]!)!.available)).toEqual([0, 0, null]);
+    expect(page.totals).toEqual({ create: null, link: null, skip: null, unmanaged: null, none: null, drifted: 1, matched: 1, platformStockSum: 6, availableSum: 0 });
+
+    // Lọc chỉ SKU chưa liên kết: không SKU nào có available, hai số lệch/khớp về 0. `decision` bị bỏ qua ở gian hàng đang bán.
+    const unlinked = await productsOf(shopId, { status: 'unlinked', search: t, decision: 'create' });
+    expect(unlinked.items[0]!.skus.map((s) => s.externalSkuId)).toEqual([skuIds[2]]);
+    expect(unlinked.totals).toMatchObject({ drifted: 0, matched: 0, create: null, platformStockSum: 3, availableSum: null });
+  });
+
+  it('externalCategoryPath tra cây category đã đồng bộ; category chưa có trong cây thì null', async () => {
+    const t = tag();
+    const leaf = `lz-${randomUUID().slice(0, 8)}`;
+    await db().query(
+      `insert into channel.platform_categories (platform, external_id, name, is_leaf, path, path_search, synced_at)
+       values ('lazada', $1, 'Mũ', true, 'Thời trang > Phụ kiện > Mũ', 'thoi trang > phu kien > mu', now())`,
+      [leaf],
+    );
+    const known = await remoteProduct(`Nón ${t} A`, [{}]);
+    const unknown = await remoteProduct(`Nón ${t} B`, [{}]);
+    await db().query('update channel.remote_skus set external_category_id = $2 where external_product_id = $1', [known.productId, leaf]);
+    await db().query("update channel.remote_skus set external_category_id = 'lz-khong-co' where external_product_id = $1", [unknown.productId]);
+
+    const page = await productsOf(shopId, { status: 'all', search: t });
+    expect(page.items.map((i) => [i.externalCategoryId, i.externalCategoryPath])).toEqual([
+      [leaf, 'Thời trang > Phụ kiện > Mũ'],
+      ['lz-khong-co', null],
+    ]);
+  });
+
+  it('gian hàng connecting: decision và totals theo nháp, lọc decision; Sale (không có shop.connect) thấy null', async () => {
+    const shop = await newShop();
+    await db().query('update channel.shops set remote_skus_synced_at = now() where id = $1', [shop]);
+    const t = tag();
+    const { productId, skuIds } = await remoteProduct(`Giày ${t}`, [{ label: '38' }, { label: '39' }, { label: '40' }, { label: '41' }], shop);
+    const v = await createVariant(company.companyId);
+    const draft = {
+      decisions: [
+        { externalSkuId: skuIds[0], action: 'link', variantId: v.variantId },
+        { externalSkuId: skuIds[1], action: 'create', variantId: null },
+        { externalSkuId: skuIds[2], action: 'skip', variantId: null },
+      ],
+      createGroups: [{ externalProductId: productId, groupId }],
+      openingStock: null,
+      returnWindowDays: null,
+      baseline: null,
+      confirmed: { link_skus: null, assign_groups: null, stock_sync: null },
+    };
+    await db().query('update channel.shops set setup_draft = $2 where id = $1', [shop, JSON.stringify(draft)]);
+
+    const all = await productsOf(shop, { status: 'all', search: t });
+    const byId = new Map(all.items[0]!.skus.map((s) => [s.externalSkuId, s]));
+    expect(skuIds.map((id) => byId.get(id)!.decision)).toEqual([
+      { action: 'link', variantId: v.variantId, groupId: null },
+      { action: 'create', variantId: null, groupId },
+      { action: 'skip', variantId: null, groupId: null },
+      null,
+    ]);
+    expect(skuIds.map((id) => byId.get(id)!.available)).toEqual([0, null, null, null]);
+    // Dòng link: tồn sàn 3, có thể bán 0; dòng create tính có thể bán 0: cả hai lệch.
+    expect(all.totals).toEqual({ create: 1, link: 1, skip: 1, unmanaged: 0, none: 1, drifted: 2, matched: 0, platformStockSum: 12, availableSum: 0 });
+
+    const created = await productsOf(shop, { status: 'all', search: t, decision: 'create' });
+    expect(created.items[0]!.skus.map((s) => s.externalSkuId)).toEqual([skuIds[1]]);
+    expect(created.totals).toEqual({ create: 1, link: 0, skip: 0, unmanaged: 0, none: 0, drifted: 1, matched: 0, platformStockSum: 3, availableSum: 0 });
+    const none = await productsOf(shop, { status: 'all', search: t, decision: 'none' });
+    expect(none.items[0]!.skus.map((s) => s.externalSkuId)).toEqual([skuIds[3]]);
+
+    const sale = await productsOf(shop, { status: 'all', search: t, decision: 'create' }, saleToken);
+    expect(sale.items[0]!.skus.map((s) => [s.decision, s.available])).toEqual(skuIds.map(() => [null, null]));
+    expect(sale.totals).toEqual({ create: null, link: null, skip: null, unmanaged: null, none: null, drifted: 0, matched: 0, platformStockSum: 12, availableSum: null });
+  });
+});
