@@ -239,7 +239,7 @@ describe('cha mới', () => {
     expect(res.body.errors).toEqual({
       'lines.0.newProduct.parentName': 'Đã có sản phẩm cùng tên',
       'lines.1.newProduct.groupId': 'Chọn danh mục sản phẩm',
-      'lines.3.newProduct.groupId': 'Các dòng cùng sản phẩm cha phải cùng nhóm hàng',
+      'lines.3.newProduct.groupId': 'Các dòng cùng sản phẩm cha phải cùng danh mục sản phẩm',
     });
   });
 

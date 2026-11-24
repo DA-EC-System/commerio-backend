@@ -34,7 +34,7 @@ const SETTINGS_ENTITY = 'product.company_group_settings';
 
 async function findGroup(id: string) {
   const [group] = isUuid(id) ? await findGroups(id) : [];
-  if (!group) throw notFound('nhóm hàng');
+  if (!group) throw notFound('danh mục sản phẩm');
   return group;
 }
 

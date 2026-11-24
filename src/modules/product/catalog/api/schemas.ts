@@ -76,7 +76,7 @@ const keepSuggest = SuggestConfig.partial()
 
 export const GroupBody = z
   .object({
-    name: name('nhóm hàng', 60),
+    name: name('danh mục sản phẩm', 60),
     suggest: keepSuggest,
     copyTemplateFromGroupId: z
       .string()
@@ -85,8 +85,8 @@ export const GroupBody = z
   })
   .meta({ id: 'ProductGroupRequest' });
 export const UpdateGroupBody = GroupBody.extend({
-  name: name('nhóm hàng', 60).optional().meta({ description: 'Bắt buộc với nhóm của công ty; nhóm nền tảng gửi thì 422 `errors.name`' }),
-  version: settingsVersion.meta({ description: 'Nhóm nền tảng: `version` của cài đặt công ty (0 khi chưa đặt)' }),
+  name: name('danh mục sản phẩm', 60).optional().meta({ description: 'Bắt buộc với danh mục của công ty; danh mục mặc định gửi thì 422 `errors.name`' }),
+  version: settingsVersion.meta({ description: 'Danh mục mặc định: `version` của cài đặt công ty (0 khi chưa đặt)' }),
 }).meta({ id: 'UpdateProductGroupRequest' });
 
 export const GroupListQuery = z.object({
@@ -94,7 +94,7 @@ export const GroupListQuery = z.object({
     .enum(['true', 'false'])
     .optional()
     .transform((v) => v === 'true')
-    .meta({ description: '`true`: trả cả nhóm nền tảng công ty đã ẩn (trang Nhóm hàng)' }),
+    .meta({ description: '`true`: trả cả danh mục mặc định công ty đã ẩn (trang Danh mục sản phẩm)' }),
 });
 
 export const GroupHiddenBody = z.object({ hidden: z.boolean('Thiếu hidden') }).meta({ id: 'ProductGroupHiddenRequest' });
@@ -211,7 +211,7 @@ export const GroupTemplateBody = z
       .max(2, 'Tối đa 2 trục phân loại')
       .refine((ids) => new Set(ids).size === ids.length, 'Hai trục phải khác nhau')
       .optional()
-      .meta({ description: 'Nhóm của công ty: bỏ trống là giữ trục. Nhóm nền tảng: gửi thì 422' }),
+      .meta({ description: 'Danh mục của công ty: bỏ trống là giữ trục. Danh mục mặc định: gửi thì 422' }),
     fields: z
       .array(z.object({ fieldId: z.string(), required: z.boolean() }))
       .max(100, 'Tối đa 100 thông số')
@@ -235,9 +235,9 @@ export const GroupTemplateBody = z
       .optional()
       .meta({
         description:
-          'Thuộc tính biến thể được phép (Documents/21 mục 5.7); bỏ trường là giữ. Nhóm nền tảng: chỉ phần của công ty. Nhóm của công ty: cả danh sách, trục chưa có thì tự thêm vào đầu',
+          'Thuộc tính biến thể được phép (Documents/21 mục 5.7); bỏ trường là giữ. Danh mục mặc định: chỉ phần của công ty. Danh mục của công ty: cả danh sách, trục chưa có thì tự thêm vào đầu',
       }),
-    version: settingsVersion.meta({ description: 'Nhóm nền tảng: chỉ gửi phần của công ty; `version` của cài đặt công ty' }),
+    version: settingsVersion.meta({ description: 'Danh mục mặc định: chỉ gửi phần của công ty; `version` của cài đặt công ty' }),
   })
   .meta({ id: 'GroupTemplateRequest' });
 
@@ -273,7 +273,7 @@ export const TemplateFieldBody = z
   .object({
     field: TemplateFieldInput,
     required: z.boolean('Chọn bắt buộc hay không'),
-    version: settingsVersion.meta({ description: '`version` của mẫu (nhóm nền tảng: của cài đặt công ty), như `PUT /groups/:id/template`' }),
+    version: settingsVersion.meta({ description: '`version` của mẫu (danh mục mặc định: của cài đặt công ty), như `PUT /groups/:id/template`' }),
   })
   .meta({ id: 'TemplateFieldRequest' });
 
@@ -568,7 +568,7 @@ export const ProductGroup = z
     id: z.uuid(),
     name: z.string(),
     scope: Scope,
-    hidden: z.boolean().meta({ description: 'Công ty đã ẩn nhóm nền tảng này; nhóm của công ty luôn `false`' }),
+    hidden: z.boolean().meta({ description: 'Công ty đã ẩn danh mục mặc định này; danh mục của công ty luôn `false`' }),
     productCount: z.number().int().meta({ description: 'Số sản phẩm, kể cả đã lưu trữ' }),
     axes: z
       .array(z.object({ attributeId: z.uuid(), name: z.string(), platformKind: z.enum(PLATFORM_KINDS).nullable(), scope: Scope }))
@@ -641,7 +641,7 @@ export const GroupTemplate = z
         }),
       )
       .meta({ description: 'Thuộc tính biến thể được phép (21 mục 5.7): trục chuẩn, rồi dòng nền tảng, rồi dòng công ty' }),
-    version: z.number().int().meta({ description: '`version` của nhóm; nhóm nền tảng: của cài đặt công ty' }),
+    version: z.number().int().meta({ description: '`version` của danh mục; danh mục mặc định: của cài đặt công ty' }),
   })
   .meta({ id: 'GroupTemplate' });
 
