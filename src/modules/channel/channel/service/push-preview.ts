@@ -12,16 +12,8 @@ import type { ShopRow } from '../repository/shops.ts';
 import { assertPushable, stockToPushView } from './listings.ts';
 import { evaluatePrices, shopPriceConfig } from './price-inputs.ts';
 import type { ProductPort } from './product-port.ts';
-import { type BlockerScope, type BlockerTarget, type BlockItem, blockerScope } from './push-block.ts';
+import { type Blocker, type BlockItem, blockerScope } from './push-block.ts';
 import { type Actor, ownShop } from './shops.ts';
-
-export interface PreviewBlocker {
-  code: string;
-  label: string;
-  scope: BlockerScope;
-  target: BlockerTarget | { kind: 'listing'; listingId: string | null };
-  variantIds: string[];
-}
 
 export interface PushPreviewRow {
   variantId: string;
@@ -30,7 +22,7 @@ export interface PushPreviewRow {
   attributesLabel: string;
   sku: string;
   status: 'ready' | 'blocked';
-  blockers: PreviewBlocker[];
+  blockers: Blocker[];
   listPrice: number | null;
   rounding: PriceRounding | null;
   stockToPush: number | null;
@@ -42,7 +34,7 @@ export interface PushPreviewRow {
 
 /** Kết quả kiểm một dòng, dạng đã thống nhất với be#564 (`checkVariant`). */
 interface CheckedRow {
-  items: (Omit<BlockItem, 'code' | 'target'> & { code: string; target: PreviewBlocker['target'] })[];
+  items: BlockItem[];
   /** Giá lần đăng sẽ gửi: giá gõ tay, giá bộ lọc lần đầu (`calc`), hoặc giá đang bán; null khi chưa có. */
   price: { value: string | null; calc?: { rawPrice: string; roundedPrice: string } };
   existing: ListingRow | undefined;
@@ -100,7 +92,7 @@ export async function previewPush(
       const row = checked.get(id)!;
       // Luật R4 (21 §18.9, §18.11): người không xem được giá vốn không nhận `below_floor`; lệnh đăng vẫn chặn.
       const items = canSeeCost ? row.items : row.items.filter((b) => b.code !== 'below_floor');
-      const blockers = items.map((b) => ({ ...b, scope: blockerScope(b.code as BlockItem['code']), variantIds: [id] }));
+      const blockers = items.map((b): Blocker => ({ ...b, scope: blockerScope(b.code), variantIds: [id] }));
       const listPrice = row.price.value;
       const r = listPrice && hasFee ? results.get(id) : undefined;
       const net = r?.ok ? r.net : null;

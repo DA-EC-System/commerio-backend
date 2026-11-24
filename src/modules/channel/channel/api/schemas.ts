@@ -838,31 +838,6 @@ export const PushPreviewBody = z
   })
   .meta({ id: 'ListingPushPreviewInput' });
 
-/** Chỗ sửa của mục chặn (21 §18.10 `BlockerTarget`, cộng `listing` của 18.11). */
-export const BlockerTarget = z
-  .discriminatedUnion('kind', [
-    z.object({ kind: z.literal('category') }).strict(),
-    z.object({ kind: z.literal('spec_attribute'), attributeCode: z.string() }).strict(),
-    z.object({ kind: z.literal('axis'), attributeId: z.string().optional() }).strict(),
-    z.object({ kind: z.literal('variant_field'), field: z.enum(['price', 'weight', 'dimensions']) }).strict(),
-    z.object({ kind: z.literal('product_field'), field: z.enum(['images', 'variantImages', 'sizeChart', 'name']) }).strict(),
-    z.object({ kind: z.literal('shop'), field: z.enum(['fee_config', 'category_permission']) }).strict(),
-    z.object({ kind: z.literal('platform_product'), externalProductIds: z.array(z.string()) }).strict(),
-    z.object({ kind: z.literal('listing'), listingId: z.uuid().nullable() }).strict(),
-  ])
-  .meta({ id: 'BlockerTarget' });
-
-export const Blocker = z
-  .object({
-    code: z.string().meta({ description: 'Mã chặn (21 §18.10 `Blocker.code`, cộng mã theo listing và gom biến thể của 18.11)' }),
-    label: z.string().meta({ description: 'Câu cho người bán, BE dựng' }),
-    scope: z.enum(['shop', 'platform', 'common']),
-    target: BlockerTarget,
-    variantIds: z.array(z.uuid()).meta({ description: 'Rỗng khi mục chặn cả sản phẩm' }),
-  })
-  .strict()
-  .meta({ id: 'Blocker' });
-
 export const PushPreviewRow = z
   .object({
     variantId: z.uuid(),
