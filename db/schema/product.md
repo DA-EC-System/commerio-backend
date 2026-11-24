@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V153**, 28 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
+Phiên bản **V154**, 28 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
 **Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
 
@@ -61,7 +61,7 @@ Ràng buộc và index:
 - unique index (`company_id`, `lower("name")`) `attributes_company_lower_name_uq` where `company_id is not null`
 - unique index (`platform_kind`) `attributes_platform_kind_uq` where `company_id is null and platform_kind is not null`
 - check `attributes_platform_kind`: `platform_kind in ('color', 'size', 'shoe_size', 'bra_size', 'age', 'ring_size', 'storage', 'version', 'screen_size', 'connector', 'length', 'battery_capacity', 'voltage', 'power', 'volume', 'weight', 'flavor', 'scent', 'pack', 'diaper_size', 'bed_size', 'style', 'compatible_model')`
-- check `attributes_name_length`: `char_length(name) <= 15`
+- check `attributes_name_length`: `char_length(name) <= 20`
 
 Trỏ vào bảng này:
 
