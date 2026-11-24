@@ -909,7 +909,20 @@ export const BulkEditPage = z
 
 export const BulkSaveResult = z
   .object({
-    saved: z.array(z.object({ variantId: z.string(), version: z.number().int().meta({ description: '`version` mới của SKU' }) })),
+    saved: z.array(
+      z.object({
+        variantId: z.string(),
+        version: z.number().int().meta({ description: '`version` mới của SKU' }),
+        reorderVersion: z
+          .number()
+          .int()
+          .nullable()
+          .meta({
+            description:
+              '`version` của dòng tồn sau khi lưu (dùng cho `reorderVersion` lần lưu sau, không cần đọc lại dòng); dòng không gửi `minQty` trả version hiện tại; null khi chưa có dòng tồn',
+          }),
+      }),
+    ),
     failed: z.array(
       z.object({
         variantId: z.string(),

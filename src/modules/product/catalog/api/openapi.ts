@@ -443,7 +443,8 @@ export function registerCatalogOpenApi(registry: OpenAPIRegistry): void {
     description:
       'Tối đa 200 dòng (vượt thì 400 `too_many_rows`). Luôn 200 với `{ saved, failed }`. Mỗi dòng ghi trong giao dịch riêng: dòng lỗi không ghi gì, các dòng khác vẫn ghi. ' +
       'Chỉ gửi ô người dùng đã sửa hoặc đã nhận gợi ý; null là xoá giá trị. Đổi `targetNetPrice` phát `catalog.variant_price_changed` cho từng SKU. ' +
-      '`minQty` cần `inventory.reorder.manage` và `reorderVersion`. Dòng xoá trống giá muốn bán, cân nặng, kích thước của SKU còn ' +
+      '`minQty` cần `inventory.reorder.manage` và `reorderVersion`. Mỗi phần tử `saved` kèm `version` mới của SKU và `reorderVersion` mới của dòng tồn ' +
+      '(null khi chưa có dòng tồn) để gửi lần lưu sau mà không đọc lại. Dòng xoá trống giá muốn bán, cân nặng, kích thước của SKU còn ' +
       'listing chưa gỡ lỗi `listing_field_required` kèm `errors`.',
     request: { body: body(BulkSaveDocBody) },
     responses: { 200: json('Kết quả theo dòng', BulkSaveResult), 400: problemResponse('`too_many_rows`'), ...invalid },
