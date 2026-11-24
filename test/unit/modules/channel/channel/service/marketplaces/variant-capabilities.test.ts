@@ -52,9 +52,9 @@ describe('Lazada', () => {
 
   it('caps: maxAxes = số sale prop của leaf, không nhận tên tự đặt, salesRequired = sale prop bắt buộc; property không tính', () => {
     const leaf = [attr('color_family', { required: true }), attr('size'), attr('material', { kind: 'property', required: true })];
-    expect(lazadaVariantCapabilities(leaf)).toEqual({ maxAxes: 2, customAxisName: false, salesRequired: ['color_family'], addVariant: true });
-    expect(adapter.variantCapabilities!(leaf)).toEqual({ maxAxes: 2, customAxisName: false, salesRequired: ['color_family'], addVariant: true });
-    expect(lazadaVariantCapabilities([])).toEqual({ maxAxes: 0, customAxisName: false, salesRequired: [], addVariant: true });
+    expect(lazadaVariantCapabilities(leaf)).toEqual({ maxAxes: 2, customAxisName: false, salesRequired: ['color_family'], addVariant: true, maxValueLength: 20, maxAxisValues: 50 });
+    expect(adapter.variantCapabilities!(leaf)).toEqual({ maxAxes: 2, customAxisName: false, salesRequired: ['color_family'], addVariant: true, maxValueLength: 20, maxAxisValues: 50 });
+    expect(lazadaVariantCapabilities([])).toEqual({ maxAxes: 0, customAxisName: false, salesRequired: [], addVariant: true, maxValueLength: 20, maxAxisValues: 50 });
   });
 });
 
@@ -81,6 +81,6 @@ describe('TikTok', () => {
       diaper_size: ['100007'],
       bed_size: ['100001', '100007'],
     });
-    expect(adapter.variantCapabilities!([])).toEqual({ maxAxes: 3, customAxisName: true, salesRequired: [], addVariant: true });
+    expect(adapter.variantCapabilities!([])).toEqual({ maxAxes: 3, customAxisName: true, salesRequired: [], addVariant: true, maxValueLength: 50, maxAxisValues: null });
   });
 });

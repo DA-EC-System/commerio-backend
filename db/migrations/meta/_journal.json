@@ -1048,15 +1048,8 @@
     {
       "idx": 149,
       "version": "7",
-      "when": 1795518758023,
-      "tag": "20261124111238_dong-bo-category",
-      "breakpoints": true
-    },
-    {
-      "idx": 150,
-      "version": "7",
-      "when": 1795518762793,
-      "tag": "20261124111242_dong-bo-category-du-lieu",
+      "when": 1795518376499,
+      "tag": "20261124110616_lien-ket-sku-565",
       "breakpoints": true
     }
   ]

@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V151**, 25 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
+Phiên bản **V150**, 24 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
 **Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
 
@@ -283,17 +283,7 @@ Cột:
 - `code` text · khoá chính
 - `enabled` boolean · not null · mặc định `true`
   `false`: sàn không mở cho người dùng ở môi trường này (sàn chưa có adapter, sàn giả lập `mock`).
-- `category_sync_state` text · not null · mặc định `'idle'`
-  Trạng thái lượt đồng bộ cây category của sàn (#569, Documents/21 §18.5 "Đồng bộ category khi nối gian hàng"): việc nền `channel.category_sync` ghi, route `GET /shops/:id/category-sync` đọc (không đọc bảng của pg-boss). `unsupported`: adapter không đọc được cây. Ghi bằng role chủ bảng ngoài `withCompany` (`commerio_app` chỉ `SELECT`).
-- `category_sync_error` text · null
-  Lỗi đã chuẩn hoá của lượt hỏng (không chứa token); xoá khi lượt sau chạy xong.
-- `category_sync_at` timestamptz · null
-  Lần đổi trạng thái gần nhất.
 - `created_at` timestamptz · not null · mặc định `now()`
-
-Ràng buộc và index:
-
-- check `marketplaces_category_sync_state`: `category_sync_state in ('idle', 'queued', 'running', 'failed', 'unsupported')`
 
 Trỏ vào bảng này:
 
@@ -306,7 +296,6 @@ Trỏ vào bảng này:
 - `channel.spec_field_mappings.platform` (khoá ngoại viết tay)
 - `channel.spec_option_mappings.platform` (khoá ngoại viết tay)
 - `channel.webhook_events.platform` (khoá ngoại viết tay)
-- `channel.platform_category_group_maps.platform` (khoá ngoại viết tay)
 
 ## `channel.message_channels`
 
@@ -428,23 +417,6 @@ Ràng buộc và index:
 - khoá ngoại viết tay (`platform`) → `channel.marketplaces` (`code`), ở `db/migrations/20261121115038_bang-san-fk.sql`
 - khoá ngoại viết tay (`platform`, `external_category_id`) → `channel.platform_categories` (`platform`, `external_id`), ở `db/migrations/20261121115038_bang-san-fk.sql`
 
-## `channel.platform_category_group_maps`
-
-Ánh xạ category sàn sang danh mục chuẩn (#569, Documents/21 §18.5, Documents/19 mục 3.3): dữ liệu chuẩn dùng chung mọi công ty, chỉ migration ghi (`commerio_app` chỉ `SELECT`), không `company_id`, không RLS. `external_category_id` thường là category cấp 1, thêm cấp sâu hơn khi một nhánh phải chia sang nhiều danh mục; tra từ leaf lên gốc, lấy dòng sâu nhất. `group_id` là dòng nền tảng của `product.product_groups`, **không khoá ngoại chéo schema** (như `spec_field_mappings.field_id`): dòng không còn thì coi như không ánh xạ.
-
-Khai ở `src/modules/channel/channel/repository/schema.ts` · module con `channel`
-
-Cột:
-
-- `platform` text · khoá chính → `channel.marketplaces.code` (khoá ngoại viết tay)
-- `external_category_id` text · khoá chính: mã bên ngoài (sàn, cổng thanh toán)
-- `group_id` uuid · not null → `product.product_groups.id` (tham chiếu, không có khoá ngoại)
-
-Ràng buộc và index:
-
-- khoá chính (`platform`, `external_category_id`)
-- khoá ngoại viết tay (`platform`) → `channel.marketplaces` (`code`), ở `db/migrations/20261124111242_dong-bo-category-du-lieu.sql`
-
 ## `channel.price_calculations`
 
 Một lần chạy bộ lọc giá cho một SKU trên một gian hàng (25 §6.2): lưu đầu vào, kết quả từng bước và phiên bản cấu hình phí, thuế đã dùng, để biết giá trên sàn ra từ đâu. Đổi phí thì sinh lần mới `pending_confirm`, chờ xác nhận.
@@ -498,7 +470,7 @@ Trỏ vào bảng này:
 
 ## `channel.product_specs`
 
-Thông tin sàn của một sản phẩm cha, một bộ mỗi sàn, mọi gian hàng của sàn dùng chung (#400, Documents/19 mục 3.3). Thay bảng spec cũ của catalog và ghép danh mục Commerio (xoá ở BE3, migration `*_bo-ghep-danh-muc`). `product_id` là uuid thường (không khoá ngoại chéo schema). `attributes` chỉ giữ attribute `tier = 'category'` (xuất xứ, thương hiệu ở catalog). `axis_map`: attributeId của trục Commerio → mã sales attribute của sàn hoặc `__custom`; `value_map`: attributeValueId → mã lựa chọn của sàn. `version = 0` là bản chép từ ghép danh mục cũ chưa ai lưu lại (#400 A18, migration `*_chep-spec-lan-cuoi`); `PUT` spec luôn ra `version ≥ 1`. RLS.
+Thông tin sàn của một sản phẩm cha, một bộ mỗi sàn, mọi gian hàng của sàn dùng chung (#400, Documents/19 mục 3.3). Thay bảng spec cũ của catalog và ghép danh mục Commerio (xoá ở BE3, migration `*_bo-ghep-danh-muc`). `product_id` là uuid thường (không khoá ngoại chéo schema). `attributes` chỉ giữ attribute `tier = 'category'` (xuất xứ, thương hiệu ở catalog). `axis_map`: attributeId của trục Commerio → mã sales attribute của sàn hoặc `__custom`; nhiều trục cùng mã là thuộc tính biến thể ghép, giá trị nối " - " (#568; `__custom` không ghép); `value_map`: attributeValueId → mã lựa chọn của sàn, không có trên trục ghép. `version = 0` là bản chép từ ghép danh mục cũ chưa ai lưu lại (#400 A18, migration `*_chep-spec-lan-cuoi`); `PUT` spec luôn ra `version ≥ 1`. RLS.
 
 Khai ở `src/modules/channel/channel/repository/schema.ts` · module con `channel` · theo công ty (`company_id`)
 
@@ -579,6 +551,12 @@ Cột:
 - `title` text · not null
 - `title_en` text · null
   Tên tiếng Anh trên sàn (Lazada `name_en`, #396); null khi sàn không có.
+- `variant_label` text · null
+  Nhãn biến thể sàn trả (giá trị thuộc tính bán, vd "Đỏ, M"; TikTok `sales_attributes[].value_name`, Lazada `saleProp`), null khi sàn không có (#565, Documents/21 §18.12): lõi gợi ý ghép theo tên cần nhãn để phân biệt SKU anh em.
+- `image_url` text · null
+  Ảnh đầu tiên của sản phẩm trên sàn (#565, `RemoteProduct.imageUrl`); null khi sàn chưa trả.
+- `external_category_id` text · null: mã bên ngoài (sàn, cổng thanh toán)
+  Category lá của sản phẩm trên sàn (#565, `RemoteProduct.externalCategoryId`); null khi sàn chưa trả.
 - `state` text · not null
 - `quantity` integer · not null
 - `price` numeric(18,2) · null
@@ -698,6 +676,8 @@ Cột:
 - `platform` text · not null → `channel.marketplaces.code` (khoá ngoại viết tay)
 - `external_shop_id` text · not null: mã bên ngoài (sàn, cổng thanh toán)
 - `shop_name` text · not null
+- `display_name` text · null
+  Tên người dùng đặt ở trang Gian hàng (#565, Documents/21 §18.7.1), 1–60 ký tự; null thì hiện `shop_name` (tên sàn trả, ghi đè mỗi lần nối lại).
 - `region` text · null
 - `access_token_enc` bytea · null
 - `refresh_token_enc` bytea · null
@@ -742,12 +722,6 @@ Cột:
   Phiếu đầu kỳ đã ghi sổ, gian hàng đang chờ phân hàng: thoát chờ khi nhận `fulfillment.allocation_done` có `cause.documentId` trùng id này (Documents/21 §11.3, §18.6.11; Documents/19 `shops`). Giữ id vì `opening_stocktake_id` đã về null. Sự kiện do `settleOpeningStocktake` phát trong chính giao dịch thoát chờ kiểm kê nên không tới trước cột này; nhận trùng thì cột đã null, tự bị bỏ qua.
 - `orders_pulled_ok_at` timestamptz · null
   Giờ bắt đầu của lượt lấy đơn gần nhất chạy xong trọn (không lỗi, không còn trang), không lùi (#223). Mất uỷ quyền, chưa có mốc này hoặc mốc cũ hơn `ORDERS_STALE_MS` là "đơn chưa cập nhật": SKU có listing trên gian hàng này không được cập nhật tồn lên mọi gian hàng của công ty (`domain/shop.ts` `ordersStale`; Documents/19 `shops`, 21 §18.6.6).
-- `category_permissions_state` text · null
-  Lượt đọc quyền category của gian hàng (#569, Documents/21 §18.5; chỉ sàn có quyền theo gian hàng, TikTok): việc nền `channel.shop_category_permissions_sync` ghi. Null: chưa từng xếp (gian hàng nối trước #569, hay sàn không có quyền theo gian hàng).
-- `category_permissions_error` text · null
-  Lỗi đã chuẩn hoá của lượt hỏng (không chứa token).
-- `category_permissions_checked_at` timestamptz · null
-  Lần đọc quyền xong gần nhất.
 - `setup_draft` jsonb · null
   Bản nháp thiết lập (#569, Documents/21 §18.7.5): lựa chọn từng SKU sàn, danh mục theo sản phẩm sàn, cách đẩy tồn, mốc xác nhận từng bước. Xoá khi hoàn tất thiết lập hoặc ngắt gian hàng. `POST /setup` chỉ đọc từ đây.
 - `setup_draft_version` integer · not null · mặc định `0`
@@ -764,6 +738,7 @@ Ràng buộc và index:
 - unique index (`company_id`) `shops_one_opening_stocktake_uq` where `opening_stocktake_id is not null`
 - check `shops_active_cutoff`: `status <> 'active' or order_cutoff_at is not null`
 - check `shops_return_window_days`: `return_window_days between 1 and 60`
+- check `shops_display_name`: `char_length(display_name) between 1 and 60`
 - check `shops_opening_stocktake`: `(opening_stocktake_id is null) = (opening_stocktake_number is null) and (opening_stocktake_id is null or order_cutoff_at is not null)`
 - check `shops_setup_mode`: `opening_stock_mode is null or opening_stock_mode in ('push', 'stocktake')`
 - check `shops_open_orders_skipped`: `open_orders_skipped >= 0`
@@ -772,7 +747,6 @@ Ràng buộc và index:
 - check `shops_remote_skus_full_error`: `remote_skus_full_error is null or remote_skus_full_failed_at is not null`
 - check `shops_allocation_pending`: `allocation_stocktake_id is null or (opening_stocktake_id is null and order_cutoff_at is not null)`
 - check `shops_orders_pulled_ok_at`: `orders_pulled_ok_at is null or order_cutoff_at is not null`
-- check `shops_category_permissions_state`: `category_permissions_state in ('queued', 'running', 'ready', 'failed')`
 - check `shops_reauth_orders_pulled`: `status <> 'needs_reauth' or orders_pulled_ok_at is null`
 - khoá ngoại viết tay (`platform`) → `channel.marketplaces` (`code`), ở `db/migrations/20261121115038_bang-san-fk.sql`
 

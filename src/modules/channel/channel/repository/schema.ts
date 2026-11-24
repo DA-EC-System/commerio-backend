@@ -90,6 +90,11 @@ export const shops = channelSchema.table(
     platform: text('platform').notNull(),
     externalShopId: text('external_shop_id').notNull(),
     shopName: text('shop_name').notNull(),
+    /**
+     * Tên người dùng đặt ở trang Gian hàng (#565, Documents/21 §18.7.1), 1–60 ký tự; null thì hiện `shop_name` (tên sàn trả,
+     * ghi đè mỗi lần nối lại).
+     */
+    displayName: text('display_name'),
     region: text('region'),
     accessTokenEnc: bytea('access_token_enc'),
     refreshTokenEnc: bytea('refresh_token_enc'),
@@ -181,6 +186,7 @@ export const shops = channelSchema.table(
       .where(sql`${t.status} <> 'disconnected'`),
     check('shops_active_cutoff', sql`${t.status} <> 'active' or ${t.orderCutoffAt} is not null`),
     check('shops_return_window_days', sql`${t.returnWindowDays} between 1 and 60`),
+    check('shops_display_name', sql`char_length(${t.displayName}) between 1 and 60`),
     check(
       'shops_opening_stocktake',
       sql`(${t.openingStocktakeId} is null) = (${t.openingStocktakeNumber} is null) and (${t.openingStocktakeId} is null or ${t.orderCutoffAt} is not null)`,
@@ -616,7 +622,8 @@ export type SpecSource = 'push' | 'match';
  * bảng spec cũ của catalog và ghép danh mục Commerio (xoá ở BE3, migration `*_bo-ghep-danh-muc`). `product_id` là uuid
  * thường (không khoá ngoại chéo schema).
  * `attributes` chỉ giữ attribute `tier = 'category'` (xuất xứ, thương hiệu ở catalog). `axis_map`: attributeId của trục
- * Commerio → mã sales attribute của sàn hoặc `__custom`; `value_map`: attributeValueId → mã lựa chọn của sàn.
+ * Commerio → mã sales attribute của sàn hoặc `__custom`; nhiều trục cùng mã là thuộc tính biến thể ghép, giá trị nối " - "
+ * (#568; `__custom` không ghép); `value_map`: attributeValueId → mã lựa chọn của sàn, không có trên trục ghép.
  * `version = 0` là bản chép từ ghép danh mục cũ chưa ai lưu lại (#400 A18, migration `*_chep-spec-lan-cuoi`); `PUT` spec luôn
  * ra `version ≥ 1`. RLS.
  */
@@ -841,6 +848,15 @@ export const remoteSkus = channelSchema.table(
     title: text('title').notNull(),
     /** Tên tiếng Anh trên sàn (Lazada `name_en`, #396); null khi sàn không có. */
     titleEn: text('title_en'),
+    /**
+     * Nhãn biến thể sàn trả (giá trị thuộc tính bán, vd "Đỏ, M"; TikTok `sales_attributes[].value_name`, Lazada `saleProp`),
+     * null khi sàn không có (#565, Documents/21 §18.12): lõi gợi ý ghép theo tên cần nhãn để phân biệt SKU anh em.
+     */
+    variantLabel: text('variant_label'),
+    /** Ảnh đầu tiên của sản phẩm trên sàn (#565, `RemoteProduct.imageUrl`); null khi sàn chưa trả. */
+    imageUrl: text('image_url'),
+    /** Category lá của sản phẩm trên sàn (#565, `RemoteProduct.externalCategoryId`); null khi sàn chưa trả. */
+    externalCategoryId: text('external_category_id'),
     state: text('state').notNull().$type<'review' | 'live' | 'rejected' | 'hold' | 'inactive'>(),
     quantity: integer('quantity').notNull(),
     /**
