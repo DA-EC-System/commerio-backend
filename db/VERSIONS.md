@@ -3,7 +3,14 @@
 <!-- Sinh tự động bởi `npm run db:docs` từ db/migrations. Không sửa tay. -->
 
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
-Mới nhất: **V148**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+Mới nhất: **V149**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+
+## V149 · 24/11/2026 · lien-ket-sku-565
+
+`db/migrations/20261124102753_lien-ket-sku-565.sql` · sinh từ schema
+
+- `channel.remote_skus`: + cột `variant_label`, `image_url`, `external_category_id`
+- `channel.shops`: + cột `display_name`; + check `shops_display_name`
 
 ## V148 · 21/11/2026 · luot-dong-bo-rls
 
