@@ -12,6 +12,7 @@ import { createVariant } from '../../helpers/catalog.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
+import { createAttribute, createGroup, createProduct, uniq, valueId } from '../../product/catalog/helpers.ts';
 import { activateShop, fakeAdapter } from './helpers.ts';
 
 registerAdapter(
@@ -187,6 +188,26 @@ describe('POST sku-links', () => {
     expect(res.status).toBe(200);
     expect(res.body.results).toMatchObject([{ result: 'error', code: 'platform_product_split' }]);
     expect(await variantsOf([skuIds[2]!])).toEqual([]);
+  });
+
+  it('SKU anh em đã liên kết vào sản phẩm kho hai thuộc tính: dòng create báo platform_product_split, không tạo sản phẩm thứ hai', async () => {
+    const color = await createAttribute(company.ceo.token, uniq('Màu'), ['Đen', 'Trắng']);
+    const size = await createAttribute(company.ceo.token, uniq('Cỡ'), ['S', 'M']);
+    const group = await createGroup(company.ceo.token, uniq('Hai trục'), 'HT-{SEQ}-{VAL}');
+    const p = await createProduct(company.ceo.token, {
+      name: uniq('SP hai trục'),
+      groupId: group.id,
+      variants: [[valueId(color, 'Đen'), valueId(size, 'S')]],
+    });
+    const v = p.variants[0]!;
+    const { productId, skuIds } = await remoteProduct(`Áo khoác ${tag()}`, [{ sellerSku: v.sku }, { label: 'Trắng, M' }]);
+    const linked = await links({ items: [{ externalSkuId: skuIds[0], action: 'link', variantId: v.id }] });
+    expect(linked.body.results).toMatchObject([{ result: 'linked' }]);
+
+    const res = await links({ items: [{ externalSkuId: skuIds[1], action: 'create' }], groups: [{ externalProductId: productId, groupId }] });
+    expect(res.status).toBe(200);
+    expect(res.body.results).toMatchObject([{ result: 'error', code: 'platform_product_split' }]);
+    expect(await variantsOf([skuIds[1]!])).toEqual([]);
   });
 
   it('một dòng create lỗi (SKU đã có trong kho): cả nhóm không tạo, dòng kia báo group_failed', async () => {

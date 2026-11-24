@@ -288,8 +288,8 @@ export interface RemoteProductsPage {
 }
 
 /**
- * Một trang sản phẩm sàn của bản sao (#565): sản phẩm có ít nhất một SKU khớp `status` và `search`, xếp theo tên (bỏ dấu,
- * tên nhỏ nhất trong các SKU khớp) rồi `external_product_id`; mỗi sản phẩm kèm mọi SKU khớp.
+ * Một trang sản phẩm sàn của bản sao (#565): sản phẩm có ít nhất một SKU khớp `status` và `search`, xếp theo tên (tên đã bỏ dấu
+ * nhỏ nhất trong các SKU khớp) rồi `external_product_id`; mỗi sản phẩm kèm mọi SKU khớp.
  */
 export async function remoteProductsPage(
   shopId: string,
@@ -298,9 +298,9 @@ export async function remoteProductsPage(
   const where = pageFilter(shopId, opts.status, opts.search);
   const { rows: ids } = await getDb().execute<{ id: string; total: number }>(sql`
     select p.external_product_id as id, count(*) over ()::int as total
-      from (select ${remoteSkus.externalProductId} as external_product_id, min(${remoteSkus.title}) as t
+      from (select ${remoteSkus.externalProductId} as external_product_id, min(${foldSql(sql`${remoteSkus.title}`)}) as t
               from ${remoteSkus} where ${where} group by ${remoteSkus.externalProductId}) p
-     order by ${foldSql(sql`p.t`)}, p.external_product_id
+     order by p.t, p.external_product_id
      limit ${opts.pageSize} offset ${(opts.page - 1) * opts.pageSize}`);
   let total = ids[0]?.total ?? 0;
   if (!ids.length && opts.page > 1) {

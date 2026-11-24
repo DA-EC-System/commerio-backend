@@ -227,6 +227,19 @@ async function createGroup(
         );
       }
       const parentId = linked.length ? parentOfSiblings(variants, linked) : null;
+      // Anh em ở đúng một sản phẩm kho mà không thêm biến thể vào đó được (sản phẩm nhiều thuộc tính biến thể): tạo sản phẩm
+      // mới sẽ tách sản phẩm sàn thành hai sản phẩm kho, nên chặn ngay, cùng mã với ca anh em đã ở nhiều sản phẩm kho.
+      if (products.size === 1 && !parentId) {
+        throw new GroupFailure(
+          rows.map((r) =>
+            failed(
+              r.externalSkuId,
+              'platform_product_split',
+              'SKU cùng sản phẩm sàn đã liên kết vào sản phẩm kho có nhiều thuộc tính biến thể; thêm biến thể trong kho rồi liên kết tay',
+            ),
+          ),
+        );
+      }
       const pricesOf = await remotePrices(shop.id);
       // Nhãn là giá trị phân loại sàn trả (bản sao, #565). Thêm vào sản phẩm có sẵn mà sàn không trả nhãn thì tách từ tên
       // chung của SKU anh em (KB3), như `create-variant` cũ.
