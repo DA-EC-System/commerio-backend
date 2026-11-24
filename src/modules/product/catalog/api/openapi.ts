@@ -304,6 +304,9 @@ export function registerCatalogOpenApi(registry: OpenAPIRegistry): void {
     method: 'get',
     path: '/products',
     summary: 'Danh sách sản phẩm; `search` khớp tên hoặc SKU',
+    description:
+      '`channelCoverage` (FE#464): mỗi gian hàng chưa ngắt một phần tử, `listed` là số SKU chưa lưu trữ đã lên sàn hoặc đang đẩy ở gian hàng đó, `missing` là số còn thiếu (0 là đủ). ' +
+      'Cần thêm `channel.shop.view`; không có thì mảng rỗng. Tính bằng hai câu cho cả trang.',
     request: { query: ProductListQuery },
     responses: { 200: json('Một trang sản phẩm', ProductPage), ...invalid },
   });

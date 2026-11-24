@@ -35,6 +35,13 @@ export interface CatalogContext extends ModuleContext {
   readonly minQtyOf?: (variantIds: readonly string[]) => Promise<Map<string, number | null>>;
   /** Hiện diện trên sàn theo SKU (channel, D8); Map đủ mọi id. */
   readonly listingPresenceOf?: (variantIds: readonly string[]) => Promise<Map<string, ListingPresence>>;
+  /**
+   * Độ phủ sàn (channel, FE#464): gian hàng chưa ngắt và gian hàng mà từng SKU đã lên sàn hoặc đang đẩy. Chỉ gọi khi người
+   * xem có `channel.shop.view`.
+   */
+  readonly channelCoverageOf?: (
+    variantIds: readonly string[],
+  ) => Promise<{ shops: { shopId: string; shopName: string; platform: string }[]; listedShops: Map<string, Set<string>> }>;
   /** SKU đã dùng ở từng module (mọi trạng thái chứng từ): có thì không xoá hẳn sản phẩm (spec 204 mục 6). */
   readonly stockInUse?: InUseSource;
   readonly purchaseInUse?: InUseSource;
@@ -86,7 +93,7 @@ export async function archiveBlockersOf(
 }
 
 /** Cổng một nguồn của `ctx` (ngưỡng tồn, hiện diện, xoá dòng tồn); thiếu là lỗi lập trình, không coi là "chưa có số". */
-export function requirePort<K extends 'minQtyOf' | 'listingPresenceOf' | 'deleteStockLevels'>(
+export function requirePort<K extends 'minQtyOf' | 'listingPresenceOf' | 'channelCoverageOf' | 'deleteStockLevels'>(
   ctx: CatalogContext,
   name: K,
 ): NonNullable<CatalogContext[K]> {
