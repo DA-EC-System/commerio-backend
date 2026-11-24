@@ -94,6 +94,25 @@ const adjustments = async (companyId: string) =>
     )
   ).rows;
 
+describe('hồi tố hoa hồng theo category sàn (Documents/21 §21.4)', () => {
+  it('bản phí có categoryRates hồi tố: kiện giao trong khoảng tính lại fee_fixed theo category của từng dòng hàng', async () => {
+    const s = await setup();
+    const inRange = await s.deliver('2026-10-28');
+    // Bản mới hiệu lực 25/10 có hoa hồng 10% cho category '10'; bản cũ kết thúc 24/10 (ghi thẳng, luồng duyệt đã test).
+    await testPool().query(`update finance.config_versions set effective_to = '2026-10-24' where id = $1`, [s.oldFee]);
+    const { rows } = await testPool().query(
+      `insert into finance.config_versions (company_id, kind, shop_id, status, payload, effective_from, created_by, approved_by, approved_at)
+       values ($1, 'fee', $2, 'scheduled', $3, '2026-10-25', $4, $5, now()) returning id`,
+      [s.companyId, s.shopId, JSON.stringify({ ...fee(), categoryRates: [{ externalCategoryId: '10', path: 'Thời trang', fixedPct: 10 }] }), randomUUID(), randomUUID()],
+    );
+    const paths = async (_shopId: string, ids: readonly string[]) => new Map(ids.map((id) => [id, ['10']]));
+    expect(await activateDueConfigs(new Date(`${TODAY}T03:00:00Z`), paths)).toBeGreaterThanOrEqual(1);
+    // Đã ghi phí 7% của 258.000 đ (−18.060); theo bản mới 10% + 2% + 1% (−33.540): điều chỉnh −15.480.
+    const adj = (await adjustments(s.companyId)).filter((a) => a.config_version_id === rows[0].id);
+    expect(adj.map((a) => [a.package_id, a.source_type, a.amount])).toEqual([[inRange.packageId, 'package', '-15480.00']]);
+  });
+});
+
 describe('luật hồi tố khi phiên bản sang active (25 §10.4)', () => {
   it('US-TI-12 dòng 2, US-TI-13 dòng 4: phí sàn hồi tố từ 25/10: sang thẳng active, điều chỉnh mọi kiện từ ngày hiệu lực, có lý do; kiện trước đó và dòng cũ giữ nguyên', async () => {
     const s = await setup();

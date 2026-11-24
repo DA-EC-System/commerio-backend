@@ -6,14 +6,17 @@ import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PushResults } from '#src/modules/channel/channel/api/schemas.ts';
 import { runListingPush } from '#src/modules/channel/channel/service/listing-push.ts';
+import { variantCategoryPaths } from '#src/modules/channel/channel/service/price-inputs.ts';
 import type { NewProduct } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
 import { type ListingVariant, setProductPort } from '#src/modules/channel/channel/service/product-port.ts';
 import { stopJobs } from '#src/modules/core/platform/service/jobs/boss.ts';
+import { recordPackageDelivered } from '#src/modules/finance/finance/service/ledger.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
+import { createOrder } from '../../helpers/sales.ts';
 import { activateShop, fakeAdapter, seedSpecs } from './helpers.ts';
 
 const variants: ListingVariant[] = [];
@@ -154,5 +157,70 @@ describe('đẩy lần đầu theo giá bộ lọc', () => {
     const r = await push(variantId);
     expect(r).toMatchObject({ status: 'pushing', code: null });
     expect(await calcOf(r.listingId!)).toBeUndefined();
+  });
+});
+
+describe('hoa hồng theo category sàn (Documents/21 §21.4)', () => {
+  it('SKU có category khớp categoryRates: bộ lọc dùng hoa hồng riêng; category khác dùng hoa hồng mặc định', async () => {
+    const res = await auth(app().post('/api/v1/channel/shops/lazada/token')).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
+    const id = res.body.shop.id as string;
+    await activateShop(id);
+    // Spec của biến thể có category '1' (`variant()`); hoa hồng riêng 14% thay 4%: tổng 24% → (200.000 + 3.000) / 0,76 = 267.105 → 269.000.
+    await db().query(
+      `insert into finance.config_versions (company_id, kind, shop_id, status, payload, effective_from, created_by, approved_by, approved_at)
+       values ($1, 'fee', $2, 'active', $3, '2026-10-01', $4, $5, now())`,
+      [company.companyId, id, JSON.stringify({ ...FEE, categoryRates: [{ externalCategoryId: '1', path: 'Thời trang', fixedPct: 14 }] }), randomUUID(), randomUUID()],
+    );
+    const inCategory = await variant(200000, 150000);
+    const quote = await auth(app().post(`/api/v1/channel/products/${variants.at(-1)!.productId}/price-quote`)).send({ items: [{ shopId: id, variantId: inCategory }] });
+    expect(quote.status, JSON.stringify(quote.body)).toBe(200);
+    expect(quote.body.items[0]).toMatchObject({ listPrice: 269000, netReceived: 201440 });
+
+    // Category khác: hoa hồng mặc định 4%, như gian hàng không có categoryRates (239.000).
+    const other = await variant(200000, 150000);
+    await db().query("update channel.product_specs set external_category_id = '999' where product_id = $1 and platform = 'lazada'", [variants.at(-1)!.productId]);
+    const quote2 = await auth(app().post(`/api/v1/channel/products/${variants.at(-1)!.productId}/price-quote`)).send({ items: [{ shopId: id, variantId: other }] });
+    expect(quote2.body.items[0]).toMatchObject({ listPrice: 239000, netReceived: 202540 });
+
+    // Phí ước tính ghi sổ khi kiện giao dùng cùng hàm chọn tỷ lệ (cổng `variantCategoryPaths` như `src/wiring.ts`):
+    // dòng category '1' hoa hồng 14%, dòng category '999' hoa hồng mặc định 4% → 14.000 + 4.000.
+    const order = await createOrder(company.companyId, {
+      lines: [
+        { variantId: inCategory, quantity: 1, unitPrice: 100000 },
+        { variantId: other, quantity: 1, unitPrice: 100000 },
+      ],
+      source: 'marketplace',
+    });
+    const packageId = randomUUID();
+    await recordPackageDelivered(
+      company.companyId,
+      {
+        packageId,
+        orderId: order.orderId,
+        shopId: id,
+        deliveredAt: new Date().toISOString(),
+        lines: [
+          { variantId: inCategory, quantity: 1, unitPrice: '100000', unitCost: '50000' },
+          { variantId: other, quantity: 1, unitPrice: '100000', unitCost: '50000' },
+        ],
+        platformSubsidy: '0',
+        shippingIncome: '0',
+        shippingCost: '0',
+      },
+      variantCategoryPaths,
+    );
+    const { rows } = await db().query("select amount from finance.ledger_entries where package_id = $1 and kind = 'fee_fixed'", [packageId]);
+    expect(rows.map((r) => r.amount)).toEqual(['-18000.00']);
+  });
+
+  it('cấu hình phí với category không có trong danh mục sàn: 422 theo ô', async () => {
+    const res = await auth(app().post('/api/v1/finance/configs')).send({
+      kind: 'fee',
+      shopId,
+      payload: { ...FEE, categoryRates: [{ externalCategoryId: `khong-co-${randomUUID().slice(0, 6)}`, path: 'Không có', fixedPct: 5 }] },
+      effectiveFrom: '2026-12-01',
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(422);
+    expect(res.body.errors).toHaveProperty(['payload.categoryRates.0.externalCategoryId']);
   });
 });

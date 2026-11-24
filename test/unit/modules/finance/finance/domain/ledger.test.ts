@@ -5,6 +5,7 @@ import {
   NOT_SALES_PROFIT,
   OFF_PLATFORM,
   configDraftsOfDelivered,
+  feeFixedOf,
   outputVatOf,
   postDelivered,
   postInspected,
@@ -55,6 +56,19 @@ describe('ghi sổ khi kiện giao xong (25 §10.1)', () => {
   it('khoản theo cấu hình tính lại trên doanh thu của kiện (dùng cho điều chỉnh hồi tố): khớp các dòng của postDelivered', () => {
     const fromPkg = postDelivered(pkg, { fee, regime: household, rules }).filter((d) => d.configVersionId);
     expect(configDraftsOfDelivered('258000.00', { fee, regime: household, rules }, 2)).toEqual(fromPkg);
+  });
+
+  it('hoa hồng theo category (Documents/21 §21.4): mỗi dòng hàng theo tỷ lệ của category của SKU, dòng không khớp theo fixedPct', () => {
+    const rated = { id: 'fee-v2', payload: { ...fee.payload, categoryRates: [{ externalCategoryId: '10', path: 'Thời trang', fixedPct: 10 }] } };
+    const paths = new Map([['trang-m', ['10', '1001']]]);
+    // 129.000 × 10% + 129.000 × 4% = 18.060.
+    expect(amounts(postDelivered(pkg, { fee: rated }, paths)).fee_fixed).toBe('-18060.00');
+    // Không có chuỗi category: như cấu hình không có categoryRates.
+    expect(amounts(postDelivered(pkg, { fee: rated })).fee_fixed).toBe('-10320.00');
+    // Không có categoryRates thì bỏ qua chuỗi category.
+    expect(amounts(postDelivered(pkg, { fee }, paths)).fee_fixed).toBe('-10320.00');
+    // Phần doanh thu không thuộc dòng hàng nào (kiện giao trước #231) theo fixedPct.
+    expect(feeFixedOf('258000', rated.payload, [{ revenue: '129000', pathIds: ['10'] }]).toFixed()).toBe('18060');
   });
 
   it('khoản 0 đồng không ghi: phí tuỳ chọn 0%, không trợ giá, không ship', () => {

@@ -23,11 +23,13 @@ import {
   marketplaceSplitAttributes,
   marketplaceSplitLevel,
   marketplaceSplitOrder,
+  knownPlatformCategories,
   remoteStockByVariant,
   returnPoliciesOf,
   settlementPayouts,
   settlementTransactions,
   shopsToSettle,
+  variantCategoryPaths,
 } from './modules/channel/index.ts';
 import { type IdentityContext, loadCompanyAccess, type PlatformContext } from './modules/core/index.ts';
 import { type FinanceContext, paymentStatusesOf } from './modules/finance/index.ts';
@@ -39,7 +41,7 @@ import type { ModuleContext } from './shared/module.ts';
 
 /** Đủ mọi trường mà các module khai trong kiểu `ctx` của mình; quên tiêm một hàm là lỗi kiểu ở đây. */
 export type AppContext = ModuleContext &
-  Required<Pick<FinanceContext, 'shopsOf' | 'settlementSource'>> &
+  Required<Pick<FinanceContext, 'shopsOf' | 'settlementSource' | 'knownPlatformCategories' | 'feeCategoryPathsOf'>> &
   Required<Pick<SalesContext, 'shopsOf' | 'marketplaceOrders' | 'marketplaceReturns' | 'paymentStatusOf' | 'returnPoliciesOf'>> &
   Required<Pick<FulfillmentContext, 'shopsOf' | 'stockHoldOf' | 'marketplacePackages'>> &
   Required<Pick<PlatformContext, 'moduleData'>> &
@@ -71,6 +73,10 @@ export function createModuleContext(): AppContext {
     paymentStatusOf: paymentStatusesOf,
     // #236: sales (lớp dưới) tính hạn trả theo cấu hình gian hàng của channel.
     returnPoliciesOf,
+    // Phí sàn theo category (Documents/21 §21.4): finance kiểm category của `categoryRates` trong cây của channel.
+    knownPlatformCategories,
+    // Phí ước tính ghi sổ khi kiện giao, hồi tố chọn hoa hồng theo category của SKU như bộ lọc giá (Documents/21 §21.4).
+    feeCategoryPathsOf: variantCategoryPaths,
     // #199 phần b: fulfillment (lớp dưới) cần biết gian hàng còn chờ kiểm kê đầu kỳ để hoãn trừ, bỏ qua khi phân hàng.
     stockHoldOf: awaitingStocktakeShops,
     // #221: fulfillment tách kiện (#205), báo sẵn sàng giao (#239) trên sàn qua token gian hàng của channel.
