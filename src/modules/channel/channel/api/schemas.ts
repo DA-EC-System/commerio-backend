@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { ProblemDetailsSchema } from '../../../../shared/http/openapi.ts';
 import { StatusChangeSchema } from '../../../../shared/http/status-change.ts';
 import { MISSING_REASONS, PLATFORM_KINDS } from '../domain/product-spec.ts';
+import { DRAFT_STEPS } from '../domain/setup-draft.ts';
 
 // Sàn kiểm theo danh sách adapter đã đăng ký ở service (422 `marketplace_unsupported`, Documents/21 §18.4), không viết cứng ở đây.
 export const PlatformParams = z.object({ platform: z.string().max(40) });
@@ -716,7 +717,9 @@ export const SkuLinksBody = z
 export const SkuLinkResult = z
   .object({
     externalSkuId: z.string(),
-    result: z.enum(['linked', 'pending', 'created', 'error']).meta({ description: '`pending`: chờ CEO duyệt; `created`: tạo SKU kho rồi liên kết' }),
+    result: z.enum(['linked', 'pending', 'created', 'saved', 'error']).meta({
+      description: '`pending`: chờ CEO duyệt; `created`: tạo SKU kho rồi liên kết; `saved`: đã ghi vào nháp thiết lập (gian hàng `connecting`)',
+    }),
     variantId: z.uuid().nullable(),
     productId: z.uuid().nullable(),
     code: z.string().nullable().meta({ description: 'Mã lỗi khi `error`' }),
@@ -725,6 +728,59 @@ export const SkuLinkResult = z
   .strict()
   .meta({ id: 'SkuLinkResult' });
 export const SkuLinksResult = z.object({ results: z.array(SkuLinkResult) }).strict().meta({ id: 'SkuLinksResult' });
+
+/** Nháp thiết lập (Documents/21 §18.7.5). */
+export const SetupDraftSchema = z
+  .object({
+    decisions: z.array(
+      z.object({
+        externalSkuId: z.string(),
+        action: z.enum(['link', 'create', 'skip', 'unmanaged']),
+        variantId: z.uuid().nullable(),
+      }),
+    ),
+    createGroups: z.array(z.object({ externalProductId: z.string(), groupId: z.uuid() })),
+    openingStock: z.enum(['push', 'stocktake']).nullable(),
+    returnWindowDays: z.number().int().nullable(),
+    baseline: z.array(z.string()).nullable().meta({ description: 'Tập `externalSkuId` của bản sao SKU sàn lúc xác nhận `link_skus`; xoá cùng mốc' }),
+    confirmed: z.object({ link_skus: iso.nullable(), assign_groups: iso.nullable(), stock_sync: iso.nullable() }),
+    changed: z
+      .object({ removed: z.array(z.string()), added: z.array(z.string()) })
+      .nullable()
+      .optional()
+      .meta({ description: 'Chỉ có ở `GET /setup`: SKU sàn đã xoá, mới so với `baseline`; null khi chưa có `baseline` hoặc không khác' }),
+  })
+  .meta({ id: 'ShopSetupDraft' });
+
+export const SetupDraftState = z
+  .object({ draft: SetupDraftSchema, draftVersion: z.number().int().min(1) })
+  .strict()
+  .meta({ id: 'ShopSetupDraftState' });
+
+export const SkuLinksDraftResult = z
+  .object({
+    draft: SetupDraftSchema,
+    draftVersion: z.number().int(),
+    results: z.array(
+      z.object({
+        externalSkuId: z.string(),
+        result: z.enum(['saved', 'error']),
+        code: z.string().nullable(),
+        message: z.string().nullable(),
+      }),
+    ),
+  })
+  .strict()
+  .meta({ id: 'SkuLinksDraftResult' });
+
+export const SetupDraftBody = z
+  .object({
+    openingStock: z.enum(['push', 'stocktake'], 'Chọn cách xử lý tồn đầu kỳ').nullable().optional(),
+    returnWindowDays: z.number('Hạn trả hàng là số ngày').int('Hạn trả hàng là số ngày nguyên').nullable().optional(),
+    confirm: z.enum(DRAFT_STEPS, 'Bước xác nhận không hợp lệ').optional().meta({ description: 'FE gửi khi bấm Tiếp: kiểm phần của bước đó, đúng thì đặt mốc' }),
+    draftVersion: z.number('Thiếu draftVersion').int().min(0).meta({ description: '`setup_draft_version` đang giữ; 0 khi chưa có nháp' }),
+  })
+  .meta({ id: 'ShopSetupDraftInput' });
 
 export const MatchBody = z
   .object({
@@ -1060,12 +1116,17 @@ export const SetupBody = z
       .uuid('Chọn danh mục sản phẩm')
       .optional()
       .meta({ description: 'Danh mục sản phẩm cho sản phẩm tạo từ SKU sàn; bắt buộc khi có dòng `create` (#500, 21 §18.7.5)' }),
-    openingStock: z.enum(['push', 'stocktake'], 'Chọn cách xử lý tồn đầu kỳ'),
+    openingStock: z.enum(['push', 'stocktake'], 'Chọn cách xử lý tồn đầu kỳ').optional(),
     returnWindowDays: z.number('Hạn trả hàng là số ngày').int('Hạn trả hàng là số ngày nguyên').nullable().optional().meta({
       description:
         'Hạn trả hàng (ngày, 1–60) khi `shop.capabilities.returnWindow = days`, bắt buộc với sàn này: thiếu hoặc `null` thì 422 (#362). Sàn `platform_status` bỏ qua và lưu null (21 §18.6.2)',
     }),
+    draftVersion: z.number('draftVersion là số').int().min(0).optional().meta({
+      description:
+        'Hoàn tất từ nháp đã lưu (21 §18.7.5): chỉ cần trường này, BE đọc `decisions`, `createGroups`, `openingStock`, `returnWindowDays` của nháp. Các trường cũ ở trên (bỏ ở PR sau của #569) chỉ dùng khi không gửi `draftVersion`',
+    }),
   })
+  .refine((b) => b.draftVersion !== undefined || b.openingStock !== undefined, { path: ['openingStock'], message: 'Chọn cách xử lý tồn đầu kỳ' })
   .meta({ id: 'ShopSetupInput' });
 
 export const ShopSetupPreview = z
@@ -1105,6 +1166,8 @@ export const ShopSetupPreview = z
     firstShopOfCompany: z.boolean().meta({
       description: 'Công ty chưa có gian hàng nào xong thiết lập (có mốc, không chờ kiểm kê). `true` thì chỉ chọn được `stocktake`',
     }),
+    draft: SetupDraftSchema.nullable().meta({ description: 'Nháp thiết lập đã lưu; null khi chưa có (21 §18.7.5)' }),
+    draftVersion: z.number().int().meta({ description: '`setup_draft_version`; 0 khi chưa có nháp, FE gửi lại ở lần ghi nháp đầu' }),
   })
   .strict()
   .meta({ id: 'ShopSetupPreview' });

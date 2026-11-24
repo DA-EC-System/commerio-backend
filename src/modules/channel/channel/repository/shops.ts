@@ -1,7 +1,7 @@
 // Gian hàng (#103). Chạy trong `withCompany` của bên gọi, trừ `findLiveCompanyOf`.
 import { and, asc, count, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import { getDb, requireCompanyId } from '../../../../shared/db/client.ts';
-import { type DraftConfirmed, draftConfirmedOf } from '../domain/setup-draft.ts';
+import { type DraftConfirmed, draftConfirmedOf, draftOf, reconcileWithRemote, type SetupDraft } from '../domain/setup-draft.ts';
 import type { ShopStatus } from '../domain/shop.ts';
 import { listings, priceCalculations, rawOrders, remoteSkus, shopProducts, shops } from './schema.ts';
 
@@ -311,4 +311,51 @@ export async function purgeShopRows(shopId: string) {
 /** Xoá dòng gian hàng; thư báo uỷ quyền đi theo khoá ngoại `ON DELETE CASCADE` (#398). */
 export async function deleteShopRow(shopId: string): Promise<void> {
   await getDb().delete(shops).where(eq(shops.id, shopId));
+}
+
+// ---- Nháp thiết lập (#569, Documents/21 §18.7.5) ----
+
+/**
+ * Nháp thiết lập của gian hàng và `setup_draft_version`, kèm trạng thái và mốc kéo đơn (để biết gian hàng đang thiết lập
+ * dở). `lock` khoá dòng tới hết giao dịch: bên ghi nháp phải khoá để hai lần ghi không đè nhau.
+ */
+export async function readSetupDraft(id: string, lock = false) {
+  const q = getDb()
+    .select({ status: shops.status, orderCutoffAt: shops.orderCutoffAt, raw: shops.setupDraft, version: shops.setupDraftVersion })
+    .from(shops)
+    .where(eq(shops.id, id));
+  const [row] = lock ? await q.for('no key update') : await q;
+  return row ? { status: row.status, orderCutoffAt: row.orderCutoffAt, draft: draftOf(row.raw), version: row.version } : undefined;
+}
+
+/** Ghi nháp và tăng `setup_draft_version`; chỉ khi gian hàng còn `connecting` và còn đúng `expected`. Trả version mới. */
+export async function writeSetupDraftRow(id: string, expected: number, draft: SetupDraft): Promise<number | undefined> {
+  const [row] = await getDb()
+    .update(shops)
+    .set({ setupDraft: draft, setupDraftVersion: sql`${shops.setupDraftVersion} + 1` })
+    .where(and(eq(shops.id, id), eq(shops.status, 'connecting'), eq(shops.setupDraftVersion, expected)))
+    .returning({ version: shops.setupDraftVersion });
+  return row?.version;
+}
+
+/**
+ * Bản sao SKU sàn của gian hàng vừa đổi (gọi cuối `upsertRemoteSkus`, `dropRemoteSkusNotSeen`, cùng giao dịch): nháp của
+ * gian hàng `connecting` bỏ quyết định của SKU không còn trên sàn, và xoá mốc nếu tập SKU khác `baseline`. Gian hàng không
+ * ở `connecting` hoặc chưa có nháp thì chỉ tốn một câu đọc.
+ */
+export async function reconcileSetupDraft(shopId: string): Promise<void> {
+  const peek = await readSetupDraft(shopId);
+  if (!peek || peek.status !== 'connecting' || !peek.draft) return;
+  const cur = await readSetupDraft(shopId, true);
+  if (!cur?.draft || cur.status !== 'connecting') return;
+  const rows = await getDb()
+    .select({ sku: remoteSkus.externalSkuId, product: remoteSkus.externalProductId })
+    .from(remoteSkus)
+    .where(eq(remoteSkus.shopId, shopId));
+  const next = reconcileWithRemote(
+    cur.draft,
+    rows.map((r) => r.sku),
+    new Map(rows.map((r) => [r.sku, r.product])),
+  );
+  if (JSON.stringify(next) !== JSON.stringify(cur.draft)) await writeSetupDraftRow(shopId, cur.version, next);
 }

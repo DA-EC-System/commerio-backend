@@ -719,6 +719,9 @@ export async function disconnectShop(actor: Actor, id: string, input: { version:
       refreshExpiresAt: null,
       authExpiresAt: null,
       disconnectedAt: new Date(),
+      // Ngắt là bỏ lần thiết lập dở: nối lại cùng gian hàng thì làm lại từ đầu (Documents/21 §18.7.5 "Vòng đời nháp").
+      setupDraft: null,
+      setupDraftVersion: 0,
     },
   ))!;
   await recordShopTransition({ shopId: id, from: row.status, to, action: 'disconnect', actorId: actor.accountId });

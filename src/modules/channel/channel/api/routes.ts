@@ -24,6 +24,7 @@ import { createVariantFromRemote, matchBulk } from '../service/remote-link.ts';
 import { matchPreview } from '../service/match-preview.ts';
 import { remoteProducts } from '../service/remote-products.ts';
 import { linkSkus } from '../service/sku-links.ts';
+import { putSetupDraft } from '../service/setup-draft.ts';
 import { resolveOutsideChange } from '../service/outside-change.ts';
 import { recreateOpeningStocktake } from '../service/opening-stocktake.ts';
 import { pullShopOrders } from '../service/order-pull.ts';
@@ -69,6 +70,7 @@ import {
   PriceQuoteParams,
   RemoteSkusQuery,
   SetupBody,
+  SetupDraftBody,
   DisconnectBody,
   ShopDeleteBody,
   UpdateShopBody,
@@ -209,6 +211,12 @@ export function channelRouter(ctx: ModuleContext): Router {
   router.get('/shops/:id/setup', connect, validate({ params: ShopParams }), async (_req, res) => {
     const { id } = validated<typeof ShopParams>(res, 'params');
     res.json(await setup.setupPreview(productPort(ctx), actor(res), id));
+  });
+
+  // Bản nháp thiết lập (#569, 21 §18.7.5): ghi `openingStock`, `returnWindowDays`, xác nhận bước. `decisions`, `createGroups` ghi qua sku-links.
+  router.put('/shops/:id/setup/draft', connect, validate({ params: ShopParams, body: SetupDraftBody }), async (_req, res) => {
+    const { id } = validated<typeof ShopParams>(res, 'params');
+    res.json(await putSetupDraft(productPort(ctx), actor(res), id, validated<typeof SetupDraftBody>(res, 'body')));
   });
 
   router.post('/shops/:id/setup', connect, validate({ params: ShopParams, body: SetupBody }), async (_req, res) => {
