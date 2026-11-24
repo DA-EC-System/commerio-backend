@@ -767,6 +767,38 @@ export const Blocker = z
   .strict()
   .meta({ id: 'Blocker' });
 
+export const ReadinessQuery = z.object({ shopId: z.uuid().optional() }).strict();
+
+export const CategoryState = z
+  .object({
+    state: z.enum(['chosen', 'suggested', 'none']),
+    externalCategoryId: z.string().nullable(),
+    path: z.string().nullable(),
+    source: z.enum(['push', 'match', 'group', 'recent']).nullable(),
+    maxAxes: z.number().int().nullable().meta({ description: 'null khi attribute của leaf chưa lấy về' }),
+    combinable: z.boolean().nullable().meta({ description: 'Leaf có đích ghép thuộc tính biến thể (18.8.3); null khi chưa biết' }),
+  })
+  .strict()
+  .meta({ id: 'CategoryState' });
+
+export const ShopReadiness = z
+  .object({
+    shopId: z.uuid(),
+    shopName: z.string(),
+    platform: z.string(),
+    status: z.enum(['ready', 'blocked']),
+    counts: z.object({ ready: z.number().int(), blocked: z.number().int(), listed: z.number().int() }).strict(),
+    category: CategoryState,
+    blockers: z.array(Blocker).meta({ description: 'Mỗi mục thiếu một phần tử; thứ tự: mục theo sàn, mục của SKU, mục của gian hàng' }),
+    variants: z.array(
+      z.object({ variantId: z.uuid(), status: z.enum(['ready', 'blocked', 'listed']), blockerCodes: z.array(z.string()) }).strict(),
+    ),
+  })
+  .strict()
+  .meta({ id: 'ShopReadiness' });
+
+export const ProductReadiness = z.object({ items: z.array(ShopReadiness) }).strict().meta({ id: 'ProductReadiness' });
+
 export const PushResult = z
   .object({
     variantId: z.string(),

@@ -39,6 +39,7 @@ const ctx = (over: Partial<PushContext> = {}): PushContext => ({
   manualChecks: new Map(),
   calcs: new Map(),
   newByProduct: new Map([['p', [variant]]]),
+  ambiguous: new Map(),
   ...over,
 });
 
@@ -82,6 +83,12 @@ describe('checkVariant', () => {
 
   it('chưa có category: category_unmapped, không kiểm gom biến thể', () => {
     expect(checkVariant(ctx({ specs: new Map() }), 'v1').items.map((b) => b.code)).toEqual(['category_unmapped']);
+  });
+
+  it('biến thể anh em ở nhiều sản phẩm sàn: platform_product_ambiguous, chỗ sửa hộp chọn sản phẩm sàn', () => {
+    expect(checkVariant(ctx({ ambiguous: new Map([['p', ['P1', 'P2']]]) }), 'v1').items).toEqual([
+      expect.objectContaining({ code: 'platform_product_ambiguous', target: { kind: 'platform_product', externalProductIds: ['P1', 'P2'] } }),
+    ]);
   });
 
   it('SKU tạm ngừng: mục cụ thể trước sku_not_ready', () => {

@@ -41,6 +41,8 @@ import {
   TakeOverContentParams,
   ListingList,
   ProductListingsParams,
+  ProductReadiness,
+  ReadinessQuery,
   ProductListingListWithSeparate,
   RegroupParams,
   RegroupQueued,
@@ -476,6 +478,21 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
         '`category_unmapped` (chưa có spec); `spec_incomplete` (`categoryStatus` khác `ok` hoặc `missing` khác rỗng); `version_conflict` kèm `current`; `category_change_in_progress` (còn listing `queued`); `category_in_sync` (không listing nào lệch category); `size_chart_missing` (category mới bắt buộc bảng size mà sản phẩm chưa có)',
       ),
       422: problemResponse('`validation_failed`; `marketplace_unsupported` (adapter sàn không hỗ trợ đổi category)'),
+    },
+  });
+  registry.registerPath({
+    method: 'get',
+    path: '/products/:productId/readiness',
+    summary: 'Readiness đăng của sản phẩm theo từng gian hàng (21 §18.10, be#564)',
+    description:
+      'Cần `channel.shop.view`. Mỗi gian hàng chưa `disconnected` một phần tử (hoặc chỉ `shopId`). Mục chặn cùng hàm với `listings/push` và `push-preview`. Không ghi, không gọi sàn.',
+    security: bearer,
+    request: { params: ProductListingsParams, query: ReadinessQuery },
+    responses: {
+      200: { description: 'Readiness theo gian hàng', ...json(ProductReadiness) },
+      ...auth,
+      404: problemResponse('`not_found`: sản phẩm, hoặc `shopId`, không có, của công ty khác, hay gian hàng đã ngắt'),
+      422: problemResponse('`validation_failed`: `shopId` sai dạng'),
     },
   });
   registry.registerPath({

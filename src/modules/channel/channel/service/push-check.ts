@@ -6,6 +6,7 @@ import type { BlockItem } from '../domain/blocker.ts';
 import type { PriceFilterResult } from '../domain/price-filter.ts';
 import type { ListingStatus } from '../domain/listing.ts';
 import { currentListingRowsOf, type ListingRow } from '../repository/listings.ts';
+import { findAppShopProduct, matchShopProductsOf } from '../repository/shop-products.ts';
 import type { NewPriceCalculation } from '../repository/price-calculations.ts';
 import type { ShopRow } from '../repository/shops.ts';
 import { currentPrices } from './listing-prices.ts';
@@ -41,6 +42,8 @@ export interface PushContext {
   calcs: ReadonlyMap<string, NewPriceCalculation>;
   /** Biến thể của lô chưa có sản phẩm trên sàn, theo sản phẩm: sẽ gom thành một sản phẩm sàn (§18.8.4). */
   newByProduct: ReadonlyMap<string, readonly ListingVariant[]>;
+  /** Sản phẩm sàn người bán đã ghép, khi biến thể anh em nằm ở nhiều hơn một (`platform_product_ambiguous`). */
+  ambiguous: ReadonlyMap<string, readonly string[]>;
 }
 
 export interface VariantCheck {
@@ -65,26 +68,32 @@ export async function loadPushContext(
   const variants = new Map((await port.variants(ids)).map((v) => [v.id, v]));
   const productIds = [...new Set([...variants.values()].map((v) => v.productId))];
   const siblings = await port.variants(undefined, { productIds });
-  const [standard, specs, current, images, sizeCharts, config] = await Promise.all([
-    port.standardPrices(ids),
-    specChecks(port, shop, adapter, siblings),
-    currentListingRowsOf(shop.id, ids),
-    port.productImageUrls(productIds, PUSH_IMAGE_MAX),
-    port.productSizeChartUrls?.(productIds) ?? Promise.resolve(new Map<string, string>()),
-    shopPriceConfig(shop.id),
-  ]);
+  // Tuần tự: trong `withCompany` mọi câu đi chung một kết nối của giao dịch.
+  const standard = await port.standardPrices(ids);
+  const specs = await specChecks(port, shop, adapter, siblings);
+  const current = await currentListingRowsOf(shop.id, ids);
+  const images = await port.productImageUrls(productIds, PUSH_IMAGE_MAX);
+  const sizeCharts = (await port.productSizeChartUrls?.(productIds)) ?? new Map<string, string>();
+  const config = await shopPriceConfig(shop.id);
   const manual = new Map(ids.flatMap((id) => (listPrices?.[id] === undefined ? [] : [[id, String(listPrices[id])] as const])));
   const firstPush = ids.filter((id) => !manual.has(id) && usesFilterPrice(current.get(id)));
-  const [calcs, manualChecks, selling] = await Promise.all([
-    firstPushCalculations(shop.id, firstPush),
-    manual.size ? evaluatePrices(shop.id, manual).then((r) => r.results) : Promise.resolve(new Map<string, PriceFilterResult>()),
-    currentPrices(ids, [...current.values()], standard),
-  ]);
+  const calcs = await firstPushCalculations(shop.id, firstPush);
+  const manualChecks = manual.size ? (await evaluatePrices(shop.id, manual)).results : new Map<string, PriceFilterResult>();
+  const selling = await currentPrices(ids, [...current.values()], standard);
   const newByProduct = new Map<string, ListingVariant[]>();
   for (const id of ids) {
     const v = variants.get(id);
     if (!v || v.archived || current.get(id)?.externalProductId) continue;
     newByProduct.set(v.productId, [...(newByProduct.get(v.productId) ?? []), v]);
+  }
+  // Cha chưa có sản phẩm sàn của app mà biến thể anh em nằm ở nhiều sản phẩm người bán đã ghép (KB3, 21 §18.5): đọc không
+  // khoá; `enqueueProduct` kiểm lại dưới khoá lúc xếp việc.
+  const ambiguous = new Map<string, string[]>();
+  for (const productId of newByProduct.keys()) {
+    if (await findAppShopProduct(shop.id, productId)) continue;
+    const siblingIds = siblings.filter((s) => s.productId === productId).map((s) => s.id);
+    const matched = await matchShopProductsOf(shop.id, siblingIds);
+    if (matched.length > 1) ambiguous.set(productId, matched.map((m) => m.externalProductId!));
   }
   return {
     shop,
@@ -102,6 +111,7 @@ export async function loadPushContext(
     manualChecks,
     calcs,
     newByProduct,
+    ambiguous,
   };
 }
 
@@ -158,6 +168,14 @@ export function checkVariant(ctx: PushContext, variantId: string): VariantCheck 
       spec,
     );
     if (group) items.push(group);
+    const products = ctx.ambiguous.get(v.productId);
+    if (products) {
+      items.push({
+        code: 'platform_product_ambiguous',
+        label: `Biến thể anh em đang nằm ở ${products.length} sản phẩm trên sàn; chọn sản phẩm cần thêm vào (${products.join(', ')})`,
+        target: { kind: 'platform_product', externalProductIds: [...products] },
+      });
+    }
   }
   const manualCheck = ctx.manualChecks.get(variantId);
   if (calc?.belowFloor) {
