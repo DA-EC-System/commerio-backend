@@ -1,6 +1,8 @@
 // Gợi ý ghép trục phân loại với sales attribute của sàn (#448 L5, Documents/21 §18.8.3): `GET …/specs/:platform?categoryId`
 // trả suggestedAxisMap, suggestedValueMap, variantCapabilities; lần `PUT` đầu điền trục còn thiếu; `__custom` ở sàn không nhận
 // tên tự đặt là 422; `missing` thêm axis_limit. Cổng product thật (platformKind từ catalog).
+// Khe `lazada` dùng caps giả của một sàn KHÔNG nhận tên tự đặt và `maxAxes` theo số sale prop của leaf (nhánh chung cho sàn sau
+// này): Lazada thật nhận tên tự đặt, `maxAxes` 2 từ #572, caps thật kiểm ở unit `variant-capabilities.test.ts`.
 import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -21,7 +23,12 @@ registerAdapter(
   fakeAdapter({
     categoriesNeedToken: false,
     standardSalesAttributes: { color: ['color_family'], size: ['size'] },
-    variantCapabilities: lazadaVariantCapabilities,
+    variantCapabilities: (l) => ({
+      ...lazadaVariantCapabilities(l),
+      maxAxes: l.filter((a) => a.kind === 'sales').length,
+      customAxisName: false,
+      maxAxisNameLength: null,
+    }),
     leafAttributes: async () => [],
   }),
 );
@@ -30,7 +37,8 @@ registerAdapter(
   fakeAdapter({
     categoriesNeedToken: false,
     standardSalesAttributes: { color: ['100000'], size: ['100007'] },
-    variantCapabilities: () => ({ maxAxes: 3, customAxisName: true, salesRequired: [], addVariant: true, maxValueLength: null, maxAxisValues: null }),
+    // Tên tự đặt tối đa 5 ký tự để "Kích cỡ" (7) vượt: kiểm `axis_name_too_long` (#572).
+    variantCapabilities: () => ({ maxAxes: 3, customAxisName: true, salesRequired: [], addVariant: true, maxValueLength: null, maxAxisValues: null, maxAxisNameLength: 5 }),
     leafAttributes: async () => [],
   }),
 );
@@ -144,6 +152,7 @@ describe('gợi ý ghép trục', () => {
       addVariant: true,
       maxValueLength: 20,
       maxAxisValues: 50,
+      maxAxisNameLength: null,
       combineTarget: null,
     });
   });
@@ -158,6 +167,7 @@ describe('gợi ý ghép trục', () => {
       addVariant: true,
       maxValueLength: null,
       maxAxisValues: null,
+      maxAxisNameLength: 5,
       combineTarget: null,
     });
   });
@@ -202,10 +212,13 @@ describe('gợi ý ghép trục', () => {
     expect(noSize.body.errors[`axisMap.${sizeAttr}`]).toBeDefined();
   });
 
-  it('TikTok PUT lần đầu: size ra __custom, lưu được', async () => {
+  it('TikTok PUT lần đầu: size ra __custom, lưu được; tên tự đặt dài hơn maxAxisNameLength báo axis_name_too_long', async () => {
     const res = await put('tiktok', { externalCategoryId: leafs.ttColor, attributes: {}, version: null });
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(res.body.spec.axisMap).toEqual({ [colorAttr]: '100000', [sizeAttr]: '__custom' });
+    expect(res.body.missing).toEqual([
+      { code: sizeAttr, label: 'Tên thuộc tính biến thể “Kích cỡ” dài 7 ký tự, Sàn giả nhận tối đa 5', reason: 'axis_name_too_long' },
+    ]);
   });
 
   it('missing: spec Lazada có __custom (dữ liệu cũ) báo axis_unmapped; nhiều trục hơn leaf nhận báo axis_limit', async () => {
@@ -241,7 +254,7 @@ describe('gợi ý ghép trục', () => {
         .get(`/api/v1/channel/products/${other}/specs/lazada?categoryId=${leafs.lzFree}`)
         .set('Authorization', `Bearer ${ceo.token}`);
       expect(view.status, JSON.stringify(view.body)).toBe(200);
-      expect(view.body.variantCapabilities).toMatchObject({ maxAxes: 1, combineTarget: 'color_family', maxValueLength: 20, maxAxisValues: 50 });
+      expect(view.body.variantCapabilities).toMatchObject({ maxAxes: 1, combineTarget: 'color_family', maxValueLength: 20, maxAxisValues: 50, maxAxisNameLength: null });
       expect(view.body.suggestedAxisMap).toEqual({ [colorAttr]: 'color_family', [sizeAttr]: 'color_family' });
       const res = await putOther({ externalCategoryId: leafs.lzFree, attributes: {}, version: null });
       expect(res.status, JSON.stringify(res.body)).toBe(200);

@@ -95,17 +95,24 @@ export function lazadaLeafAttributes(data: unknown): PlatformAttribute[] {
   return out;
 }
 
+/** Số thuộc tính biến thể tối đa Lazada nhận (đo 24/11/2026, #572). */
+const LAZADA_MAX_AXES = 2;
+
 /**
- * Khả năng khai biến thể của một leaf Lazada (#448, Documents#214 mục 3): sàn chỉ nhận trục là sale prop của category
- * (`BIZ_CHECK_SALEPROP_ATTRIBUTE_INVALID` với tên ngoài), nên số trục tối đa là số sale prop của leaf, không nhận tên tự đặt,
+ * Khả năng khai biến thể của một leaf Lazada (#448, #572, Documents/21 §18.8.3): tối đa 2 thuộc tính biến thể, nhận tên tự đặt
+ * (khai báo khoá chữ thường, `lazada-variants.ts`) tối đa 50 ký tự (đo 24/11/2026; tài liệu docId 120259 ghi 15 là cũ),
  * và sale prop bắt buộc (`is_mandatory`) phải có trong `axisMap`. Giá trị phân loại tối đa 20 ký tự, mỗi trục tối đa 50 giá trị
  * (open.lazada.com, CreateProduct "Variation", đọc 24/11/2026; #568).
  */
 export function lazadaVariantCapabilities(leaf: readonly PlatformAttribute[]): VariantCapabilities {
   const sales = leaf.filter((a) => a.kind === 'sales');
   return {
-    maxAxes: sales.length,
-    customAxisName: false,
+    // 2 cố định kể cả leaf có 3 sale prop (`VARIATION_SIZE_LIMIT`, request_id 0babf4c817955174720854441); Variation3/4 chỉ ở
+    // "rất ít" category, không API nào cho biết: không hỗ trợ (#572, Documents/21 §18.8.3).
+    maxAxes: LAZADA_MAX_AXES,
+    // Nhận tên tự đặt khi khai báo khoá chữ thường `variation` (#572, `lazada-variants.ts`).
+    customAxisName: true,
+    maxAxisNameLength: 50,
     salesRequired: sales.filter((a) => a.required).map((a) => a.code),
     addVariant: true,
     maxValueLength: 20,
