@@ -3,6 +3,7 @@
 // con cùng module lớn đặt trong index.ts của module lớn đó (vd `paymentContext` của finance).
 import {
   awaitingStocktakeShops,
+  channelCoverageOf,
   getShops,
   hasInboxData,
   listingArchiveBlockers,
@@ -43,7 +44,7 @@ export type AppContext = ModuleContext &
   Required<Pick<FulfillmentContext, 'shopsOf' | 'stockHoldOf' | 'marketplacePackages'>> &
   Required<Pick<PlatformContext, 'moduleData'>> &
   Required<Pick<IdentityContext, 'seedCompanyDefaults'>> & { soldQtyOf: typeof soldQtyOf } &
-  Required<Pick<CatalogContext, 'orderArchiveBlockers' | 'listingArchiveBlockers' | 'listingPresenceOf' | 'orderInUse' | 'listingInUse'>> &
+  Required<Pick<CatalogContext, 'orderArchiveBlockers' | 'listingArchiveBlockers' | 'listingPresenceOf' | 'channelCoverageOf' | 'orderInUse' | 'listingInUse'>> &
   Required<Pick<InventoryContext, 'platformStockOf'>>;
 
 /** Dữ liệu có sẵn của công ty mới. Ánh xạ sang sàn của dữ liệu chuẩn là dòng nền tảng dùng chung, không chép. Dùng cả ở seed demo. */
@@ -87,6 +88,8 @@ export function createModuleContext(): AppContext {
     listingPresenceOf,
     // #569: inventory (lớp dưới) hiện tồn trên sàn cạnh số đếm của phiếu kiểm kê đầu kỳ, đọc bản sao SKU sàn của channel.
     platformStockOf: remoteStockByVariant,
+    // FE#464: độ phủ sàn theo gian hàng ở danh sách sản phẩm.
+    channelCoverageOf,
     // #204: SKU đã dùng ở đơn, sàn thì không xoá hẳn sản phẩm.
     orderInUse,
     listingInUse,
