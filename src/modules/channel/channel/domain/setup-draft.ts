@@ -176,7 +176,7 @@ export function reconcileWithRemote(draft: SetupDraft, remoteSkuIds: readonly st
   let next = pruneCreateGroups({ ...draft, decisions: draft.decisions.filter((d) => present.has(d.externalSkuId)) }, productOf);
   if (changedOf(draft.baseline, remoteSkuIds)) next = { ...clearFrom(next, 'link_skus'), baseline: draft.baseline };
   return next;
-||||||| 3324eddb
+}
 
 export type DraftDecisionAction = SetupDecision['action'];
 const DECISION_ACTIONS: readonly string[] = ['link', 'create', 'skip', 'unmanaged'];
