@@ -384,7 +384,6 @@ export const UpdateContentBody = z
 
 const listingStatus = z.enum(['pushing', 'push_failed', 'under_review', 'rejected', 'live', 'hidden', 'platform_hold', 'delisted']);
 const syncState = z.enum(['synced', 'pending', 'error']);
-const syncError = z.object({ code: z.string(), message: z.string(), at: iso }).strict().nullable();
 
 // BẢN TẠM (#567): chép y hệt `BlockerTarget` của #564 (feature/564-readiness); gộp #564 thì bỏ bản này, dùng bản gốc.
 /** Chỗ sửa của mục chặn (21 §18.10 `BlockerTarget`, cộng `listing` của 18.11; kiểu ở `domain/blocker.ts`). */
@@ -475,8 +474,13 @@ export const ChannelListing = z
     stockSync: syncState,
     priceSync: syncState,
     platformStock: z.number().int().nullable(),
-    stockSyncError: syncError.meta({ description: 'Lỗi lần đẩy tồn gần nhất của riêng SKU này; `message` là câu của sàn' }),
-    priceSyncError: syncError,
+    stockSyncError: pushError.meta({
+      description:
+        'Lỗi lần đẩy tồn gần nhất của riêng SKU này, cùng hình `pushError` (#571, 21 §18.6.4). Lỗi sàn: `code` đã dịch bằng bảng dịch của sàn (`promotion_locked`, `semi_hosted_product`…), không dịch được thì `marketplace_rejected`; `message` là câu tiếng Việt, mã và câu gốc ở `platformCode`, `platformMessage`. Lỗi do app giữ (`stock_not_counted`, `orders_stale`, `variant_missing`, `promotion_locked` đọc trước khi đẩy) có `kind`, `target`, `platformCode`, `platformMessage`, `requestId` null',
+    }),
+    priceSyncError: pushError.meta({
+      description: 'Lỗi lần đẩy giá gần nhất, cùng hình `stockSyncError` (`price_invalid` chỉ ô giá; `price_missing` do app giữ)',
+    }),
     qcAlert: z.null().meta({ description: 'Cảnh báo QC của sàn; chưa đọc, luôn null' }),
     lastPushedAt: iso.nullable(),
     lastPushedPrice: z.number().int().nullable(),
@@ -1360,7 +1364,10 @@ export const SyncRunError = z
     attributesLabel: z.string().nullable(),
     sku: z.string().nullable().meta({ description: 'SKU người bán của listing' }),
     code: z.string(),
-    message: z.string().meta({ description: 'Câu tiếng Việt cho người bán do app viết' }),
+    message: z.string().meta({ description: 'Câu tiếng Việt cho người bán do app viết (lỗi sàn dịch bằng bảng dịch của sàn, #571)' }),
+    kind: z.enum(['data', 'platform', 'connection']).nullable().meta({ description: 'Loại lỗi như `pushError.kind`; null khi lỗi do app giữ hoặc dòng ghi trước #571' }),
+    target: BlockerTarget.nullable().meta({ description: 'Chỗ sửa (`BlockerTarget`); null khi không suy được' }),
+    platformCode: z.string().nullable().meta({ description: 'Mã gốc của sàn; null khi lỗi do app giữ' }),
     platformMessage: z.string().nullable().meta({ description: 'Câu sàn trả, nguyên văn; null khi lỗi do app giữ' }),
     at: iso,
     fix: z

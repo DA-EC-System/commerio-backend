@@ -462,7 +462,7 @@ export interface RemoteSku {
    * Sàn đang khoá tồn, giá của SKU do khuyến mãi (25 §6.5 bước 3, E32, #223): đồng bộ không ghi đè phần bị khoá, chỉ báo
    * (`promotion_locked`). Thiếu là không khoá. Lazada, TikTok không điền: không có API đọc trước được SKU nào đang bị khoá
    * (TikTok Promotion API `activities/search` không lọc theo sản phẩm, không gồm chiến dịch của sàn; chốt 12/11/2026 không
-   * đọc trước). Khoá do khuyến mãi về qua mã lỗi khi đẩy, adapter đổi thành `PROMOTION_LOCKED`.
+   * đọc trước). Khoá do khuyến mãi về qua mã lỗi khi đẩy, `errorMap` của adapter dịch thành `PROMOTION_LOCKED` (#571).
    */
   stockLocked?: boolean;
   priceLocked?: boolean;
