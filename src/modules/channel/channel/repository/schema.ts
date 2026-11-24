@@ -33,6 +33,8 @@ import type {
   SpecCategoryStatus,
 } from '../domain/product-spec.ts';
 import type { RemoteSkusFullError } from '../domain/remote-skus-refresh.ts';
+import type { BlockerTarget } from '../domain/blocker.ts';
+import type { PushErrorKind } from '../domain/platform-error.ts';
 
 // Mọi bảng của module con `channel` khai báo trong schema của module lớn `channel` (Documents/19 D1).
 export const channelSchema = pgSchema('channel');
@@ -190,10 +192,20 @@ export const listingStatus = channelSchema.enum('listing_status', [
 ]);
 /** `unmanaged`: SKU sàn ghép vào "không quản tồn" (combo), CEO duyệt; không trừ tồn, không đẩy tồn. */
 export const listingMode = channelSchema.enum('listing_mode', ['mapped', 'unmanaged']);
+/**
+ * Lỗi lần đẩy, đồng bộ gần nhất (jsonb). Trường sau `at` có từ #567 (Documents/21 §18.6.4): lỗi đẩy listing (#567) và lỗi sàn
+ * của đồng bộ tồn, giá (#571) ghi; bản cũ và lỗi do app giữ (`price_missing`, `stock_not_counted`…) không có (API trả `null`).
+ */
 export interface SyncError {
   code: string;
   message: string;
   at: string;
+  kind?: PushErrorKind;
+  target?: BlockerTarget | null;
+  variantId?: string | null;
+  platformCode?: string | null;
+  platformMessage?: string | null;
+  requestId?: string | null;
 }
 export const syncState = channelSchema.enum('sync_state', ['synced', 'pending', 'error']);
 export const hiddenBy = channelSchema.enum('hidden_by', ['platform', 'zero_stock']);
@@ -891,6 +903,10 @@ export interface SyncRunErrorRow {
   sku: string | null;
   code: string;
   message: string;
+  /** Có từ #571; dòng ghi trước không có (đọc ra `null`). */
+  kind?: PushErrorKind | null;
+  target?: BlockerTarget | null;
+  platformCode?: string | null;
   platformMessage: string | null;
   at: string;
   fix: 'variant_price' | 'stocktake' | 'platform' | 'shop_reconnect' | null;

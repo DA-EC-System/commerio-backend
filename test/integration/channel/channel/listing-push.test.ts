@@ -9,6 +9,8 @@ import { replaceLeaf } from '#src/modules/channel/channel/repository/platform-ca
 import { PUSH_ATTEMPTS, runListingPush } from '#src/modules/channel/channel/service/listing-push.ts';
 import { type CreatedProduct, MarketplaceError, type NewProduct, type RemoteSku } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
+import { LAZADA_PUSH_ERRORS } from '#src/modules/channel/channel/service/marketplaces/lazada-push-errors.ts';
+import { lazadaError } from '#src/modules/channel/channel/service/marketplaces/lazada.ts';
 import { type ListingVariant, setProductPort } from '#src/modules/channel/channel/service/product-port.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
@@ -73,6 +75,8 @@ registerAdapter(
     },
     // Như Lazada thật (review BE2 P1-2): xuất xứ, thương hiệu lấy ở catalog.
     productFields: { brand: 'brand', country_origin_hb: 'originCountry' },
+    // #567: bảng dịch lỗi của Lazada thật.
+    errorMap: LAZADA_PUSH_ERRORS,
     uploadImage,
     createProduct,
     updateProduct,
@@ -424,7 +428,7 @@ describe('việc nền channel.listing_push', () => {
     expect(await listing(id)).toMatchObject({
       status: 'pushing',
       push_attempts: 1,
-      push_error: { code: 'marketplace_unavailable', message: 'Hệ thống bận', at: expect.any(String) },
+      push_error: { code: 'marketplace_unavailable', kind: 'connection', platformCode: '901', platformMessage: 'Hệ thống bận', at: expect.any(String) },
     });
     await testPool().query('update channel.listings set push_attempts = $2 where id = $1', [id, PUSH_ATTEMPTS - 1]);
     await expect(runListingPush(port, job(id))).resolves.toBeUndefined();
@@ -440,9 +444,39 @@ describe('việc nền channel.listing_push', () => {
     expect(await listing(id)).toMatchObject({
       status: 'push_failed',
       push_attempts: 1,
-      push_error: { code: 'marketplace_rejected', message: 'Category attribute is mandatory' },
+      // #567: mã chưa có trong bảng dịch → câu chung kèm tên sàn, câu gốc giữ ở `platformMessage`.
+      push_error: { code: 'marketplace_rejected', platformCode: '4110', platformMessage: 'Category attribute is mandatory', variantId: expect.any(String) },
     });
+    expect((await listing(id)).push_error.message).toMatch(/không nhận sản phẩm: Category attribute is mandatory$/);
     expect((await history(id)).at(-1)).toMatchObject({ to: 'push_failed', action: 'fail', actor_id: null });
+  });
+
+  it('#567: lỗi Lazada có mã trong detail → mã, câu tiếng Việt, chỗ sửa, không còn E500', async () => {
+    onCreate = async () => {
+      throw lazadaError({
+        code: '4110',
+        type: 'ISP',
+        message: 'E500: Create product failed',
+        request_id: 'req-567',
+        detail: [{ field: 'Product', message: 'BIZ_CHECK_PACKAGE_WEIGHT_BY_KG_INVALID:Khối lượng kiện hàng nên nằm trong khoảng 0.001 và 300.0' }],
+      });
+    };
+    const { id } = await pushing();
+    await expect(runListingPush(port, job(id))).resolves.toBeUndefined();
+    const row = await listing(id);
+    expect(row).toMatchObject({
+      status: 'push_failed',
+      push_error: {
+        code: 'weight_out_of_range',
+        kind: 'data',
+        message: 'Cân nặng kiện hàng phải từ 0,001 đến 300 kg theo sàn',
+        target: { kind: 'variant_field', field: 'weight' },
+        platformCode: 'BIZ_CHECK_PACKAGE_WEIGHT_BY_KG_INVALID',
+        platformMessage: 'Khối lượng kiện hàng nên nằm trong khoảng 0.001 và 300.0',
+        requestId: 'req-567',
+        variantId: expect.any(String),
+      },
+    });
   });
 
   it('#305 AC-6: bước kiểm trước khi tạo chặn thì push_failed giữ mã kiểm (shop_not_eligible, listing_check_failed), câu của sàn', async () => {
@@ -455,7 +489,7 @@ describe('việc nền channel.listing_push', () => {
       expect(await listing(id)).toMatchObject({
         status: 'push_failed',
         push_attempts: 1,
-        push_error: { code, message: '12052051: The product name must be between 25 and 255 characters, inclusive.' },
+        push_error: { code, platformMessage: '12052051: The product name must be between 25 and 255 characters, inclusive.' },
       });
     }
   });

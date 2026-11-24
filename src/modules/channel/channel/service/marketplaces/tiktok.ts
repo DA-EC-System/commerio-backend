@@ -25,6 +25,7 @@ import { TIKTOK_ATTRIBUTE_LABELS, TIKTOK_SPEC_MAPPINGS } from './tiktok-spec-map
 import { logger } from '../../../../../shared/logger.ts';
 import { RESPONSIBLE_ATTRS } from './tiktok-categories.ts';
 import { tiktokListingMethods } from './tiktok-listing.ts';
+import { TIKTOK_PUSH_ERRORS } from './tiktok-push-errors.ts';
 import {
   createTiktokClient,
   packTiktokToken,
@@ -551,6 +552,7 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
   return {
     name: 'TikTok Shop',
     capabilities: TIKTOK_CAPABILITIES,
+    errorMap: TIKTOK_PUSH_ERRORS,
     // Cây, attribute của category theo gian hàng (`shop_cipher` bắt buộc, G2.6; #400 A4).
     categoriesNeedToken: true,
     // Recommend Category: tiêu đề VN 25–255 ký tự, ngắn hơn sàn từ chối (12052051), app kiểm trước khi gọi (#400 lát 9).
