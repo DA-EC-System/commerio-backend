@@ -5,19 +5,18 @@
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
 Mới nhất: **V148**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
 
-## V148 · 21/11/2026 · bieu-phi-mau-quyen-du-lieu
+## V148 · 21/11/2026 · luot-dong-bo-rls
 
-`db/migrations/20261121132606_bieu-phi-mau-quyen-du-lieu.sql` · viết tay
+`db/migrations/20261121132759_luot-dong-bo-rls.sql` · viết tay
 
-- viết tay: quyền, dữ liệu
-- Biểu phí mẫu của nền tảng (Documents/21 §21.6): commerio_app chỉ đọc (ghi bằng role chủ bảng ở route quản trị nền tảng), dữ liệu TikTok ban đầu.
+- viết tay: RLS
+- RLS cho bảng mới `channel.listing_sync_runs` (kết quả lượt đồng bộ do người bấm, Documents/21 §18; vòng lặp của 0002 chỉ chạy một lần).
 
-## V147 · 21/11/2026 · bieu-phi-mau
+## V147 · 21/11/2026 · luot-dong-bo
 
-`db/migrations/20261121132601_bieu-phi-mau.sql` · sinh từ schema
+`db/migrations/20261121132737_luot-dong-bo.sql` · sinh từ schema
 
-- + bảng `finance.fee_templates`
-- `finance.config_versions`: + cột `source_template_id`, `source_template_version`; + khoá ngoại `config_versions_source_template_id_fee_templates_id_fk`; + check `config_versions_source_template`
+- + bảng `channel.listing_sync_runs`
 
 ## V146 · 21/11/2026 · bang-san-fk
 

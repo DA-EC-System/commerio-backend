@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V148**, 23 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
+Phiên bản **V148**, 24 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
 **Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
 
@@ -121,6 +121,41 @@ Trỏ vào bảng này:
 - `channel.conversation_tags.conversation_id` (khoá ngoại)
 - `channel.messages.conversation_id` (khoá ngoại)
 - `order.orders.conversation_id` (tham chiếu, không có khoá ngoại)
+
+## `channel.listing_sync_runs`
+
+Lượt đồng bộ do người bấm (Documents/21 §18 "Kết quả lượt đồng bộ", thiết kế `trang-san-pham-tab/design/v2.html` Màn 2). Lượt định kỳ 15 phút không ghi. `queued` lúc bấm; việc `channel.listing_sync` bắt đầu thì nhận mọi lượt `queued` của gian hàng (`running`, `started_at`), mỗi lô đẩy xong tăng `processed`, `succeeded`, `failed` và nối `errors` (tối đa 200 dòng), xong thì `done` hoặc `failed` kèm `error`. `total` null khi chưa biết (đang đọc sàn). Một lượt `queued` mỗi gian hàng (`listing_sync_runs_one_queued_uq`): bấm khi đang có lượt chờ thì dùng lại lượt đó.
+
+Khai ở `src/modules/channel/channel/repository/schema.ts` · module con `channel` · theo công ty (`company_id`)
+
+Cột:
+
+- `id` uuid · khoá chính · mặc định `gen_random_uuid()`
+- `company_id` uuid · not null → `core.companies` (theo công ty)
+- `shop_id` uuid · not null → `channel.shops.id` (khoá ngoại, ON DELETE cascade)
+- `status` text · not null · mặc định `'queued'`
+- `requested_by` uuid · null → `core.accounts` (người thao tác)
+- `requested_at` timestamptz · not null · mặc định `now()`
+- `started_at` timestamptz · null
+- `finished_at` timestamptz · null
+- `total` integer · null
+- `processed` integer · not null · mặc định `0`
+- `succeeded` integer · not null · mặc định `0`
+- `failed` integer · not null · mặc định `0`
+- `errors` jsonb · not null · mặc định `'[]'::jsonb`
+- `error` jsonb · null
+  Lỗi cả lượt `{ code, message }` (sàn lỗi cả lô, mất uỷ quyền, gian hàng ngắt).
+
+Ràng buộc và index:
+
+- unique index (`shop_id`) `listing_sync_runs_one_queued_uq` where `status = 'queued'`
+- index (`shop_id`, `requested_at`) `listing_sync_runs_shop_idx`
+- check `listing_sync_runs_status`: `status in ('queued', 'running', 'done', 'failed')`
+- check `listing_sync_runs_counts`: `processed >= 0 and succeeded >= 0 and failed >= 0 and succeeded + failed = processed`
+- check `listing_sync_runs_total`: `total is null or processed <= total`
+- check `listing_sync_runs_started`: `(status = 'queued') = (started_at is null)`
+- check `listing_sync_runs_finished`: `(status in ('done', 'failed')) = (finished_at is not null)`
+- check `listing_sync_runs_error`: `error is null or status = 'failed'`
 
 ## `channel.listings`
 
@@ -704,6 +739,7 @@ Ràng buộc và index:
 
 Trỏ vào bảng này:
 
+- `channel.listing_sync_runs.shop_id` (khoá ngoại)
 - `channel.listings.shop_id` (khoá ngoại)
 - `channel.price_calculations.shop_id` (khoá ngoại)
 - `channel.product_specs.remote_shop_id` (khoá ngoại)
