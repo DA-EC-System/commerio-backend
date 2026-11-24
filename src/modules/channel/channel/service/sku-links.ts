@@ -10,7 +10,7 @@ import { matchListing } from './mapping.ts';
 import type { ListingVariant, ProductPort } from './product-port.ts';
 import { labelFromTitle, parentOfSiblings } from './remote-link.ts';
 import { CANNOT_CREATE, canManageProducts, createBlocker, productNameOf, remotePrices } from './setup.ts';
-import { type SkuLinksInput, writeSetupDraft } from './setup-draft.ts';
+import { type DraftWrite, groupValid, type SkuLinksInput, writeSetupDraft } from './setup-draft.ts';
 import { type Actor, ownShop } from './shops.ts';
 
 export interface SkuLinkResult {
@@ -69,20 +69,9 @@ function checkShape(input: SkuLinksInput): void {
 }
 
 /**
- * Nhóm hàng hợp lệ (danh mục chuẩn hoặc của công ty, đọc qua RLS): hỏi catalog bằng `createFromPlatform` không sản phẩm
- * nào, catalog kiểm nhóm trước và không ghi gì khi danh sách rỗng. Gọi trong `withCompany`.
- */
-async function groupValid(port: ProductPort, actor: Actor, groupId: string, shop: { id: string; shopName: string }): Promise<boolean> {
-  const r = await port.createFromPlatform!({ companyId: actor.companyId, accountId: actor.accountId }, groupId, [], {
-    shopId: shop.id,
-    shopName: shop.shopName,
-  });
-  return r.ok || r.groupError === null;
-}
-
-/**
  * `POST /channel/shops/:id/sku-links`. Thứ tự lỗi: 422 hình dạng (trùng dòng, `link` thiếu biến thể) → 404 gian hàng →
- * 409 `shop_not_connected` (`needs_reauth`, `disconnected`) → `connecting` ghi nháp (#569) → 403 thiếu quyền tạo sản phẩm
+ * 409 `shop_not_connected` (`needs_reauth` đã hoạt động, `disconnected`; `needs_reauth` chưa thiết lập xong đi nhánh nháp và
+ * nhận 409 `invalid_transition`, #569) → `connecting` ghi nháp (#569) → 403 thiếu quyền tạo sản phẩm
  * khi có dòng `create` → 422 `skip` ở gian hàng `active`, thiếu `groups` cho sản phẩm sàn có dòng `create`, nhóm sai. Qua
  * hết thì áp từng dòng, HTTP 200 kể cả khi có dòng lỗi.
  */
@@ -91,15 +80,18 @@ export async function linkSkus(
   actor: Actor,
   shopId: string,
   input: SkuLinksInput,
-): Promise<{ results: SkuLinkResult[] }> {
+): Promise<{ results: SkuLinkResult[] } | DraftWrite> {
   checkShape(input);
   const items = input.items ?? [];
   const groups = input.groups ?? [];
   const shop = await withCompany(actor.companyId, () => ownShop(shopId));
+  // `needs_reauth` khi chưa từng thiết lập xong (chưa có mốc kéo đơn) là gian hàng đang thiết lập dở: nháp không sửa được, phải
+  // kết nối lại trước (§18.12 "Lỗi chung"). Đã hoạt động rồi mới mất uỷ quyền thì vẫn là `shop_not_connected`.
+  const settingUp = shop.status === 'connecting' || (shop.status === 'needs_reauth' && shop.orderCutoffAt === null);
+  if (settingUp) return writeSetupDraft(port, actor, shopId, input);
   if (shop.status === 'needs_reauth' || shop.status === 'disconnected') {
     throw new AppError(409, 'shop_not_connected', 'Gian hàng chưa kết nối, kết nối lại rồi liên kết SKU', { current: shop.status });
   }
-  if (shop.status === 'connecting') return writeSetupDraft(actor, shopId, input);
 
   const creates = items.filter((it) => it.action === 'create');
   if (creates.length && !canManageProducts(actor)) throw new AppError(403, 'forbidden', CANNOT_CREATE.no_permission);

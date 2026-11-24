@@ -99,6 +99,8 @@ describe('thiết lập lần đầu', () => {
       nameMatchSkipped: false,
       proposedCutoffAt: expect.any(String),
       firstShopOfCompany: true,
+      draft: null,
+      draftVersion: 0,
     });
     expect(getSkus).toHaveBeenCalledWith(expect.any(String), ['CMR-SAN-1', 'CMR-CHUA-LEN']);
   });

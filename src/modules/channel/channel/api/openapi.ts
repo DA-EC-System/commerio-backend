@@ -1,4 +1,5 @@
 import type { OpenAPIRegistry } from '@asteasolutions/zod-to-openapi';
+import { z } from 'zod';
 import { problemResponse } from '../../../../shared/http/openapi.ts';
 import {
   RemoteProductList,
@@ -78,7 +79,10 @@ import {
   PriceQuoteParams,
   PushResults,
   SetupBody,
+  SetupDraftBody,
+  SetupDraftState,
   ShopSetupPreview,
+  SkuLinksDraftResult,
   ShopSetupResult,
   OpeningStocktakeResult,
   DisconnectBody,
@@ -671,14 +675,16 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/shops/:id/sku-links',
     summary: 'Liên kết SKU sàn hàng loạt (21 §18.12)',
     description:
-      'Cần `channel.listing.match`; có dòng `create` thì thêm `catalog.product.manage` (thiếu: 403). Gian hàng `active` áp ngay: `link`, `unmanaged` mỗi dòng một giao dịch theo luật `listings/match`; các dòng `create` cùng sản phẩm sàn chung một giao dịch (một dòng lỗi thì cả nhóm không tạo), thêm biến thể vào sản phẩm kho có sẵn khi SKU anh em đã liên kết vào một sản phẩm một trục, ở nhiều sản phẩm kho thì `platform_product_split`. HTTP 200 kể cả khi có dòng lỗi. Lỗi cả request: 422 trùng `externalSkuId` / `externalProductId`, `link` thiếu `variantId` → 404 → 409 `shop_not_connected` (`needs_reauth`, `disconnected`) → 501 `not_implemented` cho gian hàng `connecting` (ghi nháp, be#569) → 403 → 422 `skip` ở gian hàng `active`, `errors.groups` kèm `externalProductIds` (sản phẩm sàn có dòng `create` mà thiếu danh mục), `errors["groups.N.groupId"]`.',
+      'Cần `channel.listing.match`; có dòng `create` thì thêm `catalog.product.manage` (thiếu: 403). Gian hàng `active` áp ngay: `link`, `unmanaged` mỗi dòng một giao dịch theo luật `listings/match`; các dòng `create` cùng sản phẩm sàn chung một giao dịch (một dòng lỗi thì cả nhóm không tạo), thêm biến thể vào sản phẩm kho có sẵn khi SKU anh em đã liên kết vào một sản phẩm một trục, ở nhiều sản phẩm kho thì `platform_product_split`. HTTP 200 kể cả khi có dòng lỗi. Lỗi cả request: 422 trùng `externalSkuId` / `externalProductId`, `link` thiếu `variantId` → 404 → 409 `shop_not_connected` (`needs_reauth` đã hoạt động, `disconnected`) → gian hàng `connecting` ghi nháp thiết lập (200 `{ draft, draftVersion, results }`, `results[].result` là `saved` hoặc `error`, cần thêm `channel.shop.connect`, `draftVersion` bắt buộc; `needs_reauth` chưa thiết lập xong: 409 `invalid_transition`; sai `draftVersion`: 409 `version_conflict` kèm `current: { draft, draftVersion }`) → 403 → 422 `skip` ở gian hàng `active`, `errors.groups` kèm `externalProductIds` (sản phẩm sàn có dòng `create` mà thiếu danh mục), `errors["groups.N.groupId"]`.',
     security: bearer,
     request: { params: ShopParams, body: json(SkuLinksBody) },
     responses: {
-      200: { description: 'Kết quả theo dòng, theo thứ tự `items`', ...json(SkuLinksResult) },
+      200: {
+        description: 'Gian hàng `active`: `{ results }` theo thứ tự `items`. Gian hàng `connecting`: `{ draft, draftVersion, results }`',
+        ...json(z.union([SkuLinksResult, SkuLinksDraftResult])),
+      },
       ...onShop,
-      409: problemResponse('`shop_not_connected`'),
-      501: problemResponse('`not_implemented`: gian hàng đang thiết lập, chờ commerio-backend#569'),
+      409: problemResponse('`shop_not_connected`; gian hàng đang thiết lập: `invalid_transition` (kèm `current`: không ở `connecting`, kể cả `needs_reauth` chưa thiết lập xong), `version_conflict` (kèm `current: { draft, draftVersion }`)'),
     },
   });
   registry.registerPath({
@@ -737,11 +743,25 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     responses: { 200: { description: 'Gợi ý', ...json(ShopSetupPreview) }, ...onShop },
   });
   registry.registerPath({
+    method: 'put',
+    path: '/shops/:id/setup/draft',
+    summary: 'Ghi bản nháp thiết lập, xác nhận một bước (21 §18.7.5)',
+    description:
+      'Cần `channel.shop.connect`. Ghi `openingStock`, `returnWindowDays` và/hoặc `confirm` (bước FE vừa bấm Tiếp: `link_skus`, `assign_groups`, `stock_sync`); `decisions`, `createGroups` ghi qua `POST /shops/:id/sku-links`. Đổi dữ liệu của một bước thì xoá mốc xác nhận của bước đó và các bước sau; ghi lại đúng giá trị cũ thì không xoá. `confirm` sai: 422 như `POST /setup` (`errors.decisions` kèm `externalSkuIds` khi còn SKU sàn chưa quyết định, `errors["decisions.<i>"]`, `errors.createGroups`, `errors.openingStock`, `errors.returnWindowDays`), không đặt mốc và không ghi gì. Thứ tự lỗi: 404 → 403 → 409 `invalid_transition` kèm `current` (gian hàng không ở `connecting`, kể cả `needs_reauth`) → 409 `version_conflict` kèm `current: { draft, draftVersion }` → 422.',
+    security: bearer,
+    request: { params: ShopParams, body: json(SetupDraftBody) },
+    responses: {
+      200: { description: 'Nháp và `draftVersion` mới', ...json(SetupDraftState) },
+      ...onShop,
+      409: problemResponse('`invalid_transition`, `version_conflict`'),
+    },
+  });
+  registry.registerPath({
     method: 'post',
     path: '/shops/:id/setup',
     summary: 'Hoàn tất thiết lập lần đầu (§18.2)',
     description:
-      'Cần `channel.shop.connect`. Tạo listing `live` theo `decisions` (hoặc `externalSkuIds` cũ), mốc kéo đơn = lúc gọi (`orderCutoffAt` trong body bị bỏ qua, §18.7.6), gian hàng `connecting → active`, xếp lượt kéo đơn còn mở; lúc này chỉ đẩy giá, tồn đẩy sau lượt đó (`Shop.setup`). `stocktake`: lập phiếu kiểm kê đầu kỳ, gian hàng ở chế độ chờ kiểm kê (`openingStocktake`). Sai: 422 `errors.openingStock` (gian hàng đầu tiên của công ty gửi `push`; công ty đang chờ phiếu đầu kỳ khác), `errors.decisions` (gửi cả `externalSkuIds`), `errors["decisions.<i>"]` (SKU không có trong gợi ý, SKU sàn chưa có SKU người bán, lặp, biến thể không thuộc công ty, lưu trữ, đã ghép ở gian hàng; tối đa 10000 dòng). Kiểm lại dưới khoá của công ty nên hai lần thiết lập cùng công ty chạy lần lượt, `errors.externalSkuIds`, `errors.returnWindowDays` (sàn `capabilities.returnWindow = days`: số nguyên 1–60, bắt buộc, thiếu hoặc `null` cũng lỗi; sàn `platform_status` bỏ qua, lưu null).',
+      'Cần `channel.shop.connect`. **Body `{ draftVersion }`** (21 §18.7.5): BE đọc nháp đã lưu (`PUT /setup/draft`, `POST sku-links`), cần đủ ba mốc xác nhận (thiếu: 409 `setup_draft_incomplete` kèm `missing`; `draftVersion` khác: 409 `version_conflict` kèm `current: { draft, draftVersion }`), rồi chạy mọi luật dưới đây trên nội dung nháp (`decisions` kể cả `unmanaged`, `createGroups` theo từng sản phẩm sàn, `openingStock`, `returnWindowDays`; lỗi 422 mang khoá `decisions.<i>` theo thứ tự trong nháp) và xoá nháp khi xong. Body cũ (không có `draftVersion`, bỏ ở PR sau của #569): tạo listing `live` theo `decisions` (hoặc `externalSkuIds` cũ), mốc kéo đơn = lúc gọi (`orderCutoffAt` trong body bị bỏ qua, §18.7.6), gian hàng `connecting → active`, xếp lượt kéo đơn còn mở; lúc này chỉ đẩy giá, tồn đẩy sau lượt đó (`Shop.setup`). `stocktake`: lập phiếu kiểm kê đầu kỳ, gian hàng ở chế độ chờ kiểm kê (`openingStocktake`). Sai: 422 `errors.openingStock` (gian hàng đầu tiên của công ty gửi `push`; công ty đang chờ phiếu đầu kỳ khác), `errors.decisions` (gửi cả `externalSkuIds`), `errors["decisions.<i>"]` (SKU không có trong gợi ý, SKU sàn chưa có SKU người bán, lặp, biến thể không thuộc công ty, lưu trữ, đã ghép ở gian hàng; tối đa 10000 dòng). Kiểm lại dưới khoá của công ty nên hai lần thiết lập cùng công ty chạy lần lượt, `errors.externalSkuIds`, `errors.returnWindowDays` (sàn `capabilities.returnWindow = days`: số nguyên 1–60, bắt buộc, thiếu hoặc `null` cũng lỗi; sàn `platform_status` bỏ qua, lưu null).',
     security: bearer,
     request: { params: ShopParams, body: json(SetupBody) },
     responses: {

@@ -254,11 +254,11 @@ describe('POST sku-links', () => {
     expect(Object.keys(bad.body.errors).sort()).toEqual(['items.0.variantId', 'items.1.externalSkuId']);
   });
 
-  it('gian hàng connecting: 501 not_implemented (nháp thiết lập là be#569)', async () => {
+  it('gian hàng connecting: ghi vào nháp thiết lập (trả results rỗng, không còn 501)', async () => {
     const connecting = await newShop();
     const res = await links({ items: [], draftVersion: 0 }, company.ceo.token, connecting);
-    expect(res.status).toBe(501);
-    expect(res.body.code).toBe('not_implemented');
+    expect(res.status).toBe(200);
+    expect(res.body.results).toEqual([]);
   });
 
   it('gian hàng needs_reauth: 409 shop_not_connected kèm current', async () => {

@@ -4,6 +4,7 @@ import { getDb, requireCompanyId } from '../../../../shared/db/client.ts';
 import { FOLD_FROM, FOLD_TO, foldVi } from '../domain/fold-vi.ts';
 import type { RemoteSkusFullError } from '../domain/remote-skus-refresh.ts';
 import { listings, remoteSkus, shops } from './schema.ts';
+import { reconcileSetupDraft } from './shops.ts';
 
 export type RemoteSkuRow = typeof remoteSkus.$inferSelect;
 /** SKU sàn adapter trả (cùng trường với `RemoteSku` của `marketplaces/common.ts`; repository không import lớp service). */
@@ -86,6 +87,7 @@ export async function upsertRemoteSkus(shopId: string, skus: readonly RemoteSkuI
     }
   }
   await refreshRemoteTitleFlags(shopId, seenAt);
+  await reconcileSetupDraft(shopId);
 }
 
 /**
@@ -132,6 +134,7 @@ export async function countRemoteSkusSeenSince(shopId: string, since: Date): Pro
 /** Đọc trọn: SKU không còn thấy ở lần đọc bắt đầu lúc `seenAt` thì xoá. Gọi sau `upsertRemoteSkus` cùng `seenAt`. */
 export async function dropRemoteSkusNotSeen(shopId: string, seenAt: Date): Promise<void> {
   await getDb().delete(remoteSkus).where(and(eq(remoteSkus.shopId, shopId), lt(remoteSkus.seenAt, seenAt)));
+  await reconcileSetupDraft(shopId);
 }
 
 /** Đặt mốc của bản sao: `syncedAt` khi vừa đọc trọn, `changedSince` cho lần đọc theo giờ sửa sau. */
@@ -401,4 +404,10 @@ export async function remoteProductSkuTotals(shopId: string, externalProductIds:
     .where(and(eq(remoteSkus.shopId, shopId), inArray(remoteSkus.externalProductId, [...externalProductIds])))
     .groupBy(remoteSkus.externalProductId);
   return new Map(rows.map((r) => [r.id, r.n]));
+}
+
+/** Mọi `external_sku_id` trong bản sao của gian hàng (không lọc theo gợi ý), để so với `baseline` của nháp. */
+export async function remoteSkuIdsOf(shopId: string): Promise<string[]> {
+  const rows = await getDb().select({ id: remoteSkus.externalSkuId }).from(remoteSkus).where(eq(remoteSkus.shopId, shopId));
+  return rows.map((r) => r.id);
 }
