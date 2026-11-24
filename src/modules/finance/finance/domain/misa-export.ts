@@ -153,8 +153,10 @@ export function voucherRows(
     creditObject: objectOf(credit),
   });
   const rows = [row(debitRole, creditRole, amount.abs().minus(vat), LEDGER_KIND_TEXT[line.kind])];
-  if (vat.isZero()) return rows;
-  const [vatDebit, vatCredit]: [AccountRole, AccountRole] = amount.isNegative() ? ['outputVat', inRole] : [inRole, 'outputVat'];
-  rows.push(row(vatDebit, vatCredit, vat, 'Thuế GTGT đầu ra'));
-  return rows;
+  if (!vat.isZero()) {
+    const [vatDebit, vatCredit]: [AccountRole, AccountRole] = amount.isNegative() ? ['outputVat', inRole] : [inRole, 'outputVat'];
+    rows.push(row(vatDebit, vatCredit, vat, 'Thuế GTGT đầu ra'));
+  }
+  // MISA không nhận chứng từ 0 đồng: bỏ dòng 0 (sổ không ghi dòng 0, nhưng phần trước thuế có thể về 0 khi làm tròn).
+  return rows.filter((r) => r.amount !== 0);
 }

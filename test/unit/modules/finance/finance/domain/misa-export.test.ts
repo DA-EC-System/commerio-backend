@@ -121,4 +121,8 @@ describe('voucherRows', () => {
   it('thuế suất 0 thì một dòng', () => {
     expect(voucherRows(line({}), map, shop, 0)).toHaveLength(1);
   });
+
+  it('số tiền 0 thì không có dòng nào (MISA không nhận chứng từ 0 đồng)', () => {
+    expect(voucherRows(line({ kind: 'fee_fixed', amount: '0' }), map, shop, 0)).toEqual([]);
+  });
 });
