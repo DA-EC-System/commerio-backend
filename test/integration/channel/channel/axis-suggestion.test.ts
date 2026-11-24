@@ -202,7 +202,7 @@ describe('gợi ý ghép trục', () => {
     expect(res.body.missing).toEqual(
       expect.arrayContaining([
         { code: sizeAttr, label: 'Kích cỡ', reason: 'axis_unmapped' },
-        { code: 'axes', label: 'Sản phẩm có 2 trục, category này nhận tối đa 1', reason: 'axis_shape' },
+        { code: 'axes', label: 'Sản phẩm có 2 thuộc tính biến thể, category này nhận tối đa 1', reason: 'axis_limit' },
       ]),
     );
   });

@@ -198,6 +198,8 @@ export const MISSING_REASONS = [
   'category_removed',
   'sales_required',
   'axis_shape',
+  // Số thuộc tính biến thể vượt `maxAxes` của leaf (be#564, Documents/21 §18.8.6, §18.10); `axis_shape` còn lại cho SKU khác bộ trục.
+  'axis_limit',
 ] as const;
 export type MissingReason = (typeof MISSING_REASONS)[number];
 export interface MissingItem {
@@ -269,7 +271,7 @@ export function specMissing(input: SpecMissingInput): MissingItem[] {
       out.push({ code, label, reason: 'sales_required' });
     }
     if (axes.length > caps.maxAxes) {
-      out.push({ code: 'axes', label: `Sản phẩm có ${axes.length} trục, category này nhận tối đa ${caps.maxAxes}`, reason: 'axis_shape' });
+      out.push({ code: 'axes', label: `Sản phẩm có ${axes.length} thuộc tính biến thể, category này nhận tối đa ${caps.maxAxes}`, reason: 'axis_limit' });
     }
   }
   return out;

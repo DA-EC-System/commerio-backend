@@ -113,7 +113,7 @@ describe('specMissing với caps', () => {
     const two = [...axes, { attributeId: 'a2', name: 'Cỡ' }];
     const spec = { ...base, axisMap: { a1: CUSTOM_AXIS, a2: CUSTOM_AXIS } };
     expect(specMissing({ spec, attributes: [], axes: two, caps: { ...tiktokCaps, maxAxes: 1 } })).toEqual([
-      { code: 'axes', label: 'Sản phẩm có 2 trục, category này nhận tối đa 1', reason: 'axis_shape' },
+      { code: 'axes', label: 'Sản phẩm có 2 thuộc tính biến thể, category này nhận tối đa 1', reason: 'axis_limit' },
     ]);
   });
 });

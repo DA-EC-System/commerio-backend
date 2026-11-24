@@ -63,12 +63,6 @@ export function pushSpec(keepContent: boolean, spec: SpecCheck | undefined): Spe
   return { externalCategoryId: spec?.externalCategoryId ?? '', missing: [], permission: null, sizeChartRule: null };
 }
 
-/**
- * Dữ liệu đủ để đẩy chưa; dùng chung cho request (`listings.ts`) và việc nền (dữ liệu có thể đổi giữa hai lúc). Thứ tự giữ như
- * trước #400, chèn `spec_incomplete`, `category_not_permitted` ngay sau `category_unmapped` (A14).
- * `hasImages`: listing đã có ảnh trên sàn, hoặc sản phẩm có ảnh trong catalog (#303). `hasSizeChart`: sản phẩm có ảnh bảng
- * kích cỡ trong catalog (#347); category sàn `required` mà chưa có thì chặn `size_chart_missing`.
- */
 /** Thuộc tính gắn ảnh còn giá trị chưa có ảnh (#295). */
 export interface VariantImageGap {
   attributeName: string;
@@ -112,7 +106,68 @@ export const variantImagesMissing = (gap: VariantImageGap): PushBlock => ({
   message: `Sàn bắt buộc ảnh cho mọi giá trị của ${gap.attributeName}: thêm ảnh cho ${gap.values.join(', ')} rồi đăng lại`,
 });
 
-export function pushBlock(
+/** Mã chặn của readiness (Documents/21 §18.10): mã của `pushBlock` cộng mã kiểm ngoài hàm này. */
+export type BlockerCode =
+  | PushBlock['code']
+  | 'axis_limit'
+  | 'axis_unmapped_required'
+  | 'fee_not_configured'
+  | 'below_floor'
+  | 'platform_product_ambiguous';
+
+/** Chỗ sửa của một mục chặn (21 §18.10 `BlockerTarget`). */
+export type BlockerTarget =
+  | { kind: 'category' }
+  | { kind: 'spec_attribute'; attributeCode: string }
+  | { kind: 'axis'; attributeId?: string }
+  | { kind: 'variant_field'; field: 'price' | 'weight' | 'dimensions' }
+  | { kind: 'product_field'; field: 'images' | 'variantImages' | 'sizeChart' | 'name' }
+  | { kind: 'shop'; field: 'fee_config' | 'category_permission' }
+  | { kind: 'platform_product'; externalProductIds: string[] };
+
+export type BlockerScope = 'common' | 'platform' | 'shop';
+
+/** Một mục chặn của một biến thể ở một gian hàng; `label` là câu cho người bán. */
+export interface BlockItem {
+  code: BlockerCode;
+  label: string;
+  target: BlockerTarget;
+}
+
+const COMMON_CODES: ReadonlySet<BlockerCode> = new Set(['sku_not_ready', 'price_missing', 'dimensions_missing', 'images_missing']);
+const SHOP_CODES: ReadonlySet<BlockerCode> = new Set(['fee_not_configured', 'below_floor', 'category_not_permitted']);
+
+/**
+ * `common`: không theo sàn, lặp ở mọi gian hàng; `shop`: riêng gian hàng; còn lại là thông tin sàn, chung mọi gian hàng cùng sàn
+ * (21 §18.10).
+ */
+export const blockerScope = (code: BlockerCode): BlockerScope => (COMMON_CODES.has(code) ? 'common' : SHOP_CODES.has(code) ? 'shop' : 'platform');
+
+/** Mục chặn từ một dòng `missing` của spec: mỗi attribute, trục một mục (21 §18.10). */
+function specItem(m: MissingItem): BlockItem {
+  switch (m.reason) {
+    case 'category_changed':
+    case 'category_removed':
+      return { code: 'spec_incomplete', label: m.label, target: { kind: 'category' } };
+    case 'axis_limit':
+      return { code: 'axis_limit', label: m.label, target: { kind: 'category' } };
+    case 'sales_required':
+      return { code: 'axis_unmapped_required', label: `Chưa có thuộc tính biến thể nào ánh xạ tới ${m.label} (bắt buộc)`, target: { kind: 'axis' } };
+    case 'axis_unmapped':
+    case 'axis_shape':
+      return { code: 'spec_incomplete', label: m.label, target: { kind: 'axis', attributeId: m.code } };
+    default:
+      return { code: 'spec_incomplete', label: m.label, target: { kind: 'spec_attribute', attributeCode: m.code } };
+  }
+}
+
+/**
+ * Mọi mục chặn đẩy của một biến thể, theo thứ tự cố định (thứ tự trước #400, chèn spec ngay sau `category_unmapped`, A14).
+ * Dùng chung cho request, việc nền và readiness (be#564): `pushBlock` là mục đầu.
+ * `hasImages`: listing đã có ảnh trên sàn, hoặc sản phẩm có ảnh trong catalog (#303). `hasSizeChart`: sản phẩm có ảnh bảng
+ * kích cỡ trong catalog (#347); category sàn `required` mà chưa có thì chặn `size_chart_missing`.
+ */
+export function pushBlocks(
   v: ListingVariant,
   price: Decimal | null,
   spec: SpecCheck | undefined,
@@ -120,21 +175,79 @@ export function pushBlock(
   hasSizeChart = false,
   /** Sàn đòi đủ ảnh theo giá trị mà sản phẩm còn thiếu (`variantImageGaps`); bỏ trống khi không gửi nội dung (bật lại SKU). */
   imageGap: VariantImageGap | null = null,
-): PushBlock | null {
+): BlockItem[] {
+  const out: BlockItem[] = [];
   // Tạm dùng trạng thái kinh doanh tới khi #204 trả `readiness` của SKU (#219 A2, Documents/25 §6.3).
-  if (v.businessStatus === 'paused') return { code: 'sku_not_ready', message: 'SKU đang tạm ngừng kinh doanh, chưa đẩy được' };
-  if (price === null) return { code: 'price_missing', message: 'Chưa có giá chuẩn' };
-  const bySpec = specBlock(spec);
-  if (bySpec) return bySpec;
+  if (v.businessStatus === 'paused') {
+    out.push({ code: 'sku_not_ready', label: 'SKU đang tạm ngừng kinh doanh, chưa đẩy được', target: { kind: 'variant_field', field: 'price' } });
+  }
+  if (price === null) out.push({ code: 'price_missing', label: 'Chưa có giá chuẩn', target: { kind: 'variant_field', field: 'price' } });
+  if (!spec) {
+    out.push({ code: 'category_unmapped', label: 'Chưa chọn category của sàn cho sản phẩm', target: { kind: 'category' } });
+  } else {
+    out.push(...spec.missing.map(specItem));
+    if (spec.permission && spec.permission !== 'available') {
+      out.push({
+        code: 'category_not_permitted',
+        label: 'Gian hàng chưa được bán category này. Xin quyền trên Seller Center hoặc đổi category',
+        target: { kind: 'shop', field: 'category_permission' },
+      });
+    }
+  }
   if (!v.weightG || !v.lengthMm || !v.widthMm || !v.heightMm) {
-    return { code: 'dimensions_missing', message: 'Thiếu cân nặng hoặc kích thước gói của SKU' };
+    out.push({
+      code: 'dimensions_missing',
+      label: 'Thiếu cân nặng hoặc kích thước gói của SKU',
+      target: { kind: 'variant_field', field: v.weightG ? 'dimensions' : 'weight' },
+    });
   }
-  if (!hasImages) return { code: 'images_missing', message: 'Sàn bắt buộc ảnh: thêm ảnh cho sản phẩm' };
-  if (imageGap) return variantImagesMissing(imageGap);
-  if (spec!.sizeChartRule === 'required' && !hasSizeChart) {
-    return { code: 'size_chart_missing', message: 'Danh mục này bắt buộc ảnh bảng kích cỡ: thêm ảnh bảng kích cỡ cho sản phẩm' };
+  if (!hasImages) out.push({ code: 'images_missing', label: 'Sàn bắt buộc ảnh: thêm ảnh cho sản phẩm', target: { kind: 'product_field', field: 'images' } });
+  if (imageGap) {
+    out.push({ code: 'variant_images_missing', label: variantImagesMissing(imageGap).message, target: { kind: 'product_field', field: 'variantImages' } });
   }
-  return null;
+  if (spec?.sizeChartRule === 'required' && !hasSizeChart) {
+    out.push({
+      code: 'size_chart_missing',
+      label: 'Danh mục này bắt buộc ảnh bảng kích cỡ: thêm ảnh bảng kích cỡ cho sản phẩm',
+      target: { kind: 'product_field', field: 'sizeChart' },
+    });
+  }
+  return out;
+}
+
+const SPEC_CODES: ReadonlySet<BlockerCode> = new Set(['spec_incomplete', 'axis_limit', 'axis_unmapped_required']);
+
+/** Mục chặn đầu của `pushBlocks`, dạng mã + câu như trước #564; mục spec gộp nhãn mọi mục spec thành một câu. */
+export function pushBlock(...args: Parameters<typeof pushBlocks>): (Omit<PushBlock, 'code'> & { code: BlockerCode }) | null {
+  const items = pushBlocks(...args);
+  const first = items[0];
+  if (!first) return null;
+  if (!SPEC_CODES.has(first.code)) return { code: first.code, message: first.label };
+  return { code: first.code, message: items.filter((b) => SPEC_CODES.has(b.code)).map((b) => b.label).join(', ') };
+}
+
+/**
+ * Chặn đăng khi gian hàng chưa có cấu hình phí đang áp dụng (21 §18.9 R5, be#559): lần đăng đầu, đăng lại sau gỡ hay sau lỗi
+ * (không tính được giá thấp nhất), kể cả giá gõ tay. Bật lại SKU người bán (`content_source = platform`) là liên kết sẵn có,
+ * không chặn.
+ */
+export function feeBlock(
+  shop: { shopName: string },
+  existing: ({ status: string } & Partial<Parameters<typeof keepsPlatformContent>[0] & object>) | undefined,
+  feeConfigured: boolean,
+): BlockItem | null {
+  if (feeConfigured) return null;
+  const firstListing =
+    !existing ||
+    existing.status === 'delisted' ||
+    (existing.status === 'push_failed' &&
+      !keepsPlatformContent({ contentSource: existing.contentSource ?? 'app', externalProductId: existing.externalProductId ?? null, externalSkuId: existing.externalSkuId ?? null }));
+  if (!firstListing) return null;
+  return {
+    code: 'fee_not_configured',
+    label: `Gian hàng ${shop.shopName} chưa có cấu hình phí. Soạn cấu hình phí và chờ CEO duyệt rồi đăng`,
+    target: { kind: 'shop', field: 'fee_config' },
+  };
 }
 
 /** Tên, mô tả đưa lên sàn của một biến thể, chung cho đẩy mới và sửa nội dung (#219, #293). */
