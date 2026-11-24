@@ -18,12 +18,19 @@ export interface RemoteSkuInput {
   price?: string | null;
   /** Tiêu đề thiếu nhãn biến thể: dòng đã có thì giữ tiêu đề cũ (review #309 vòng 2 N3). */
   labelMissing?: boolean;
+  /** Nhãn biến thể sàn trả (#565). */
+  variantLabel?: string | null;
+  /** Ảnh đầu tiên của sản phẩm trên sàn (#565). */
+  imageUrl?: string | null;
+  /** Category lá của sản phẩm trên sàn (#565). */
+  externalCategoryId?: string | null;
 }
 
 /**
  * Ghi các SKU vừa đọc từ sàn: SKU `deleted` thì xoá dòng, còn lại thêm hoặc sửa, `seen_at` = `seenAt`. Không đụng SKU
  * không có trong danh sách (đọc theo giờ sửa chỉ trả phần đã sửa). SKU `labelMissing` sửa mọi cột trừ `title` (dòng mới
- * thì lấy tiêu đề dự phòng): sàn không đọc được nhãn lần này không làm mất nhãn đã lưu.
+ * thì lấy tiêu đề dự phòng), kể cả `variant_label`: sàn không đọc được nhãn lần này không làm mất nhãn đã lưu. Ảnh,
+ * category sàn không trả lần này thì giữ giá trị cũ.
  */
 export async function upsertRemoteSkus(shopId: string, skus: readonly RemoteSkuInput[], seenAt: Date): Promise<void> {
   const companyId = requireCompanyId('upsertRemoteSkus');
@@ -42,6 +49,9 @@ export async function upsertRemoteSkus(shopId: string, skus: readonly RemoteSkuI
       sellerSku: s.sellerSku,
       title: s.title,
       titleEn: s.titleEn ?? null,
+      variantLabel: s.variantLabel?.trim() || null,
+      imageUrl: s.imageUrl?.trim() || null,
+      externalCategoryId: s.externalCategoryId?.trim() || null,
       state: s.state as RemoteSkuRow['state'],
       // Sàn không có tồn âm; số lạ không làm hỏng cả bản sao.
       quantity: Math.max(0, Math.trunc(s.quantity)),
@@ -61,8 +71,11 @@ export async function upsertRemoteSkus(shopId: string, skus: readonly RemoteSkuI
           set: {
             externalProductId: sql`excluded.external_product_id`,
             sellerSku: sql`excluded.seller_sku`,
-            ...(!keepTitle && { title: sql`excluded.title` }),
+            ...(!keepTitle && { title: sql`excluded.title`, variantLabel: sql`excluded.variant_label` }),
             titleEn: sql`excluded.title_en`,
+            // Lần đọc không lấy được ảnh, category (TikTok quá trần đọc chi tiết, sàn lỗi) không xoá giá trị đã lưu.
+            imageUrl: sql`coalesce(excluded.image_url, ${remoteSkus.imageUrl})`,
+            externalCategoryId: sql`coalesce(excluded.external_category_id, ${remoteSkus.externalCategoryId})`,
             state: sql`excluded.state`,
             quantity: sql`excluded.quantity`,
             price: sql`excluded.price`,
