@@ -191,11 +191,11 @@ export async function remoteProducts(
     const variants = await port.variants();
     const taken = new Set(rows.flatMap((r) => (r.variantId && (r.externalSkuId || r.pendingExternalSkuId) ? [r.variantId] : [])));
     const free = page.rows.filter((r) => r.linkStatus === 'unlinked');
-    const totals = await remoteProductSkuTotals(shop.id, [...new Set(free.map((r) => r.externalProductId))]);
+    const skuCounts = await remoteProductSkuTotals(shop.id, [...new Set(free.map((r) => r.externalProductId))]);
     const { chosen, nameMatchSkipped } = await suggestMatches(
       free,
       variants.filter((v) => !v.archived && !taken.has(v.id)),
-      totals,
+      skuCounts,
     );
     const suggested = new Map([...chosen].map(([i, c]) => [free[i]!.externalSkuId, c] as const));
     const cannotCreate = createBlocker(variants, actor);
