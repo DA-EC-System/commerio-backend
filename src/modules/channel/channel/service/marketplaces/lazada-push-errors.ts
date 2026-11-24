@@ -7,6 +7,7 @@ import {
   attributeTarget,
   kgText,
   type PlatformErrorRule,
+  promotionLockedRule,
   type RuleMatch,
 } from '../../domain/platform-error.ts';
 
@@ -89,5 +90,24 @@ export const LAZADA_PUSH_ERRORS: readonly PlatformErrorRule[] = [
     kind: 'data',
     message: 'Category đã chọn không phải category cuối của sàn; chọn lại category',
     target: { kind: 'category' },
+  },
+  // Đẩy tồn, giá theo SKU (#571). Nguồn: bảng mã lỗi của UpdatePriceQuantity, UpdateSellableQuantity trên open.lazada.com
+  // (đọc 24/11/2026). 501 "Update product failed" chỉ là mã tổng, lý do thật ở `detail[]` theo SKU nên luật khớp mã trong đó.
+  promotionLockedRule('4170', 'stock'),
+  {
+    platformCode: '4225',
+    ops: ['stock', 'price'],
+    code: 'semi_hosted_product',
+    kind: 'platform',
+    target: null,
+    message: 'Sản phẩm thuộc chương trình bán hộ (GSP) của Lazada: sửa giá, tồn của sản phẩm này trên GSP',
+  },
+  {
+    platformCode: /^(4104|4118|BIZ_CHECK_PRICE_PRECISION_INVALID|BIZ_CHECK_PRICE_IS_ZERO)$/,
+    ops: ['price'],
+    code: 'price_invalid',
+    kind: 'data',
+    target: { kind: 'variant_field', field: 'price' },
+    message: (m) => `Lazada không nhận giá này${m.platformMessage ? `: ${m.platformMessage}` : ''}. Sửa giá muốn thực nhận hoặc giá ghi đè rồi đồng bộ lại`,
   },
 ];

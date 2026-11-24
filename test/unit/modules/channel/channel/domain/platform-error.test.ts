@@ -195,3 +195,79 @@ describe('appPushError: mã của app có kind và chỗ sửa', () => {
     expect(appPushError(code)).toEqual({ kind, target });
   });
 });
+
+// #571: lỗi đẩy tồn, giá theo SKU đi cùng bảng `errorMap`, luật chỉ áp cho thao tác khai ở `ops` (mặc định `push`).
+describe('translatePlatformError: thao tác tồn, giá (#571)', () => {
+  const lz = ctx();
+  const tt = ctx({ platformName: 'TikTok Shop' });
+  const sku = (platformCode: string, platformMessage: string | null = 'm') => failure({ platformCode, platformMessage });
+
+  it('luật mặc định chỉ cho đăng: luật đăng không khớp lỗi đồng bộ', () => {
+    const rules: PlatformErrorRule[] = [{ platformCode: 'X1', code: 'only_push', kind: 'data', message: 'm' }];
+    expect(translatePlatformError(rules, sku('X1'), lz, 'stock').mapped).toBe(false);
+    expect(translatePlatformError(rules, sku('X1'), lz, 'push').mapped).toBe(true);
+  });
+
+  it('luật khai ops tồn không khớp khi đăng', () => {
+    const rules: PlatformErrorRule[] = [{ platformCode: 'X2', ops: ['stock'], code: 'only_stock', kind: 'data', message: 'm' }];
+    expect(translatePlatformError(rules, sku('X2'), lz).mapped).toBe(false);
+    expect(translatePlatformError(rules, sku('X2'), lz, 'stock').code).toBe('only_stock');
+  });
+
+  it('mã chưa có trong bảng: câu theo thao tác, kèm câu sàn', () => {
+    expect(translatePlatformError([], sku('999', 'Boom'), lz, 'stock')).toMatchObject({
+      code: 'marketplace_rejected',
+      kind: 'platform',
+      message: 'Lazada không nhận cập nhật tồn: Boom',
+      platformCode: '999',
+      platformMessage: 'Boom',
+      mapped: false,
+    });
+    expect(translatePlatformError([], sku('999', null), lz, 'price').message).toBe('Lazada không nhận cập nhật giá (mã 999)');
+  });
+
+  it('Lazada 4170 khi đẩy tồn là khoá do khuyến mãi, giữ mã gốc', () => {
+    const msg = 'During the Bday Mega campaign, … Sellers can increase stocks, but may not decrease stocks.';
+    expect(translatePlatformError(LAZADA_PUSH_ERRORS, sku('4170', msg), lz, 'stock')).toMatchObject({
+      code: 'promotion_locked',
+      kind: 'platform',
+      target: null,
+      platformCode: '4170',
+      platformMessage: msg,
+      mapped: true,
+    });
+    expect(translatePlatformError(LAZADA_PUSH_ERRORS, sku('4170'), lz, 'stock').message).toMatch(/khoá giảm tồn do khuyến mãi/);
+  });
+
+  it('Lazada 4225 (bán hộ GSP) khớp cả tồn lẫn giá, là lỗi sàn', () => {
+    for (const op of ['stock', 'price'] as const) {
+      expect(translatePlatformError(LAZADA_PUSH_ERRORS, sku('4225'), lz, op)).toMatchObject({ code: 'semi_hosted_product', kind: 'platform', target: null });
+    }
+  });
+
+  it.each(['4104', '4118', 'BIZ_CHECK_PRICE_PRECISION_INVALID', 'BIZ_CHECK_PRICE_IS_ZERO'])('Lazada %s khi đẩy giá: giá sai, mở ô giá', (code) => {
+    expect(translatePlatformError(LAZADA_PUSH_ERRORS, sku(code), lz, 'price')).toMatchObject({
+      code: 'price_invalid',
+      kind: 'data',
+      target: { kind: 'variant_field', field: 'price' },
+      platformCode: code,
+    });
+  });
+
+  it.each([
+    ['12052393', 'stock'],
+    ['12052165', 'stock'],
+    ['12052038', 'price'],
+    ['12019045', 'price'],
+  ] as const)('TikTok %s khi đẩy %s là khoá do khuyến mãi', (code, op) => {
+    expect(translatePlatformError(TIKTOK_PUSH_ERRORS, sku(code), tt, op)).toMatchObject({ code: 'promotion_locked', kind: 'platform', platformCode: code, mapped: true });
+  });
+
+  it('TikTok 12052038 (khoá giá) không dịch nhầm lỗi đăng sản phẩm', () => {
+    expect(translatePlatformError(TIKTOK_PUSH_ERRORS, sku('12052038'), tt, 'push').code).not.toBe('promotion_locked');
+  });
+
+  it('khoá tồn không khớp khi đẩy giá', () => {
+    expect(translatePlatformError(TIKTOK_PUSH_ERRORS, sku('12052393'), tt, 'price').mapped).toBe(false);
+  });
+});
