@@ -357,6 +357,8 @@ type LazadaProduct = {
     multiWarehouseInventories?: unknown;
     price?: unknown;
     Images?: unknown;
+    /** Giá trị phân loại `{ <trục>: <giá trị> }` (#565). */
+    saleProp?: unknown;
   }[];
 };
 
@@ -458,6 +460,10 @@ function skusOf(p: LazadaProduct, warehouse: string | null): RemoteSku[] {
       sellerSku: String(s.SellerSku ?? ''),
       title: String(p.attributes?.name ?? ''),
       titleEn: typeof p.attributes?.name_en === 'string' && p.attributes.name_en.trim() !== '' ? p.attributes.name_en : null,
+      // Nhãn biến thể (#565, Documents/21 §18.12): GetProducts trả `skus[].saleProp { <trục>: <giá trị> }` (gọi thật
+      // 24/11/2026 trên shop thử, request_id 2101420d17955141664017514: 11/11 SKU có, vd `{ color_family: "Đen" }`).
+      // `products[]` không có `variation` nên ghép theo thứ tự khoá sàn trả. Không có thì null (không gợi ý theo tên).
+      variantLabel: saleValuesOf(s.saleProp).saleValues?.join(', ') ?? null,
       imageUrl: productImage ?? firstImage(s.Images),
       state: skuState(state, s.Status),
       rejectReason,

@@ -131,3 +131,41 @@ describe('PATCH /channel/shops/:id — returnWindowDays (#362)', () => {
     expect(rows[0]).toEqual({ status: 'needs_reauth', return_window_days: 9 });
   });
 });
+
+describe('PATCH /channel/shops/:id — displayName (#565, Documents/21 §18.12)', () => {
+  it('đặt tên hiển thị: 200, Shop trả displayName, nhật ký chỉ ghi trường đổi; null xoá tên', async () => {
+    const { id, version } = await activeShop();
+
+    const res = await patch(id, { version, displayName: '  Shop chính  ' });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(Shop.parse(res.body)).toMatchObject({ id, displayName: 'Shop chính', returnWindowDays: null, version: version + 1 });
+    const { rows } = await testPool().query(
+      "select before, after from core.audit_logs where entity_type = 'channel.shops' and entity_id = $1",
+      [id],
+    );
+    expect(rows).toEqual([{ before: { displayName: null }, after: { displayName: 'Shop chính' } }]);
+
+    const cleared = await patch(id, { version: version + 1, displayName: null });
+    expect(cleared.status).toBe(200);
+    expect(cleared.body).toMatchObject({ displayName: null, version: version + 2 });
+  });
+
+  it('tên 61 ký tự hay rỗng sau khi bỏ khoảng trắng: 422 errors.displayName, không đổi', async () => {
+    const { id, version } = await activeShop();
+    for (const displayName of ['x'.repeat(61), '   ']) {
+      const res = await patch(id, { version, displayName });
+      expect(res.status).toBe(422);
+      expect(res.body.errors).toHaveProperty('displayName');
+    }
+    const reread = await app().get(`/api/v1/channel/shops/${id}`).set('Authorization', `Bearer ${co.ceo.token}`);
+    expect(reread.body).toMatchObject({ displayName: null, version });
+  });
+
+  it('sàn tính hạn trả theo trạng thái vẫn đặt được tên hiển thị', async () => {
+    const { id, version } = await activeShop('tiktok');
+    const res = await patch(id, { version, displayName: 'TikTok chính' });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body).toMatchObject({ displayName: 'TikTok chính' });
+  });
+});
