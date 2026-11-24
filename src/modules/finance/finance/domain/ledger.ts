@@ -2,7 +2,7 @@
 // và phiên bản cấu hình đang áp, trả các dòng cần ghi. Ghi gộp (T2): doanh thu theo giá bán, mỗi loại phí một dòng;
 // số có dấu, vào dương, ra âm; làm tròn tới đồng. Dòng 0 đồng không ghi (CHECK `ledger_entries_amount`).
 import { Decimal } from 'decimal.js';
-import type { ConfigPayload } from './config-version.ts';
+import { type ConfigPayload, fixedPctFor } from './config-version.ts';
 
 /** Khớp enum `finance.ledger_kind` (Documents/19 §3.5). */
 export const LEDGER_KINDS = [
@@ -140,11 +140,53 @@ function push(out: Draft[], kind: LedgerKind, amount: Decimal, configVersionId: 
   if (!r.isZero()) out.push({ kind, amount: r.toFixed(2), configVersionId });
 }
 
+/** Chuỗi `externalId` category sàn từ gốc tới category của SKU ở gian hàng, theo `variantId` (channel, Documents/21 §21.4). */
+export type CategoryPaths = ReadonlyMap<string, readonly string[]>;
+/**
+ * Cổng channel → finance (tiêm qua `ctx.feeCategoryPathsOf`, `src/wiring.ts`): chuỗi category của từng SKU ở gian hàng
+ * (listing chưa gỡ, không thì `product_specs` cùng sàn). SKU không có category thì vắng. Gọi trong `withCompany`.
+ */
+export type FeeCategoryPathsOf = (shopId: string, variantIds: readonly string[]) => Promise<CategoryPaths>;
+
+/** Doanh thu một dòng hàng của kiện kèm chuỗi category của SKU, để chọn hoa hồng theo category (`fixedPctFor`). */
+export interface FeeLine {
+  revenue: Decimal.Value;
+  pathIds?: readonly string[] | null;
+}
+
+/** Dòng hàng của kiện thành `FeeLine`; dòng chưa ghép SKU không có category (dùng `fixedPct`). */
+export const feeLinesOf = (
+  lines: readonly { variantId: string | null; quantity: number; unitPrice: string }[],
+  categoryPaths?: CategoryPaths,
+): FeeLine[] =>
+  lines.map((l) => ({
+    revenue: new Decimal(l.unitPrice).times(l.quantity),
+    pathIds: l.variantId ? categoryPaths?.get(l.variantId) : undefined,
+  }));
+
+/**
+ * Hoa hồng (`fee_fixed`, số dương) trên doanh thu `base` (Documents/21 §21.4): mỗi dòng hàng theo tỷ lệ của category của
+ * SKU (`fixedPctFor`, cùng hàm với bộ lọc giá, `price-quote`); phần doanh thu không thuộc dòng nào (kiện giao trước khi có
+ * dòng hàng, #231) theo `fixedPct`. Không có `categoryRates` thì `base × fixedPct`.
+ */
+export function feeFixedOf(base: Decimal.Value, fee: ConfigPayload<'fee'>, lines: readonly FeeLine[] = []): Decimal {
+  const total = new Decimal(base);
+  if (!fee.categoryRates?.length || !lines.length) return total.times(fee.fixedPct).div(100);
+  let rest = total;
+  let sum = new Decimal(0);
+  for (const l of lines) {
+    const revenue = new Decimal(l.revenue);
+    sum = sum.plus(revenue.times(fixedPctFor(fee, l.pathIds)));
+    rest = rest.minus(revenue);
+  }
+  return sum.plus(rest.times(fee.fixedPct)).div(100);
+}
+
 /**
  * Kiện giao xong (25 §10.1): doanh thu, trợ giá sàn, ship, bốn loại phí theo cấu hình phí của gian hàng, thuế sàn khấu
  * trừ (chỉ hộ kinh doanh, cá nhân: GTGT + TNCN theo quy tắc thuế), giá vốn. Chưa có cấu hình thì không ước tính khoản đó.
  */
-export function postDelivered(pkg: DeliveredPackage, configs: DeliveredConfigs): Draft[] {
+export function postDelivered(pkg: DeliveredPackage, configs: DeliveredConfigs, categoryPaths?: CategoryPaths): Draft[] {
   const revenue = pkg.lines.reduce((s, l) => s.plus(new Decimal(l.unitPrice).times(l.quantity)), new Decimal(0));
   const cost = costOf(pkg.lines, (l) => l.quantity);
   const out: Draft[] = [];
@@ -153,25 +195,26 @@ export function postDelivered(pkg: DeliveredPackage, configs: DeliveredConfigs):
   push(out, 'shipping_income', new Decimal(pkg.shippingIncome));
   push(out, 'shipping_cost', new Decimal(pkg.shippingCost).negated());
   const units = pkg.lines.reduce((s, l) => s + l.quantity, 0);
-  out.push(...configDraftsOfDelivered(revenue, configs, units));
+  out.push(...configDraftsOfDelivered(revenue, configs, units, feeLinesOf(pkg.lines, categoryPaths)));
   push(out, 'cogs', cost.negated());
   return out;
 }
 
 /**
  * Khoản theo cấu hình của kiện giao xong, tính trên doanh thu và số món (`quantity`) của kiện: bốn loại phí phần trăm
+ * (hoa hồng theo category của từng dòng hàng `feeLines` khi cấu hình có `categoryRates`, `feeFixedOf`)
  * và phí cố định mỗi món (`perItemFee` × số món, 25 §6.2, #381) theo cấu hình phí của gian hàng,
  * thuế sàn khấu trừ (chỉ hộ kinh doanh, cá nhân: GTGT + TNCN của quy tắc thuế). Doanh nghiệp không bị sàn khấu trừ;
  * GTGT đầu ra chỉ bỏ khỏi doanh thu khi tính lãi (`profitOf`), không ghi dòng: sàn trả đủ giá bán, dòng doanh thu là
  * tiền sàn sẽ trả để so với quyết toán. Dùng cả khi ghi điều chỉnh hồi tố (25 §10.4).
  */
-export function configDraftsOfDelivered(revenue: Decimal.Value, configs: DeliveredConfigs, quantity: number): Draft[] {
+export function configDraftsOfDelivered(revenue: Decimal.Value, configs: DeliveredConfigs, quantity: number, feeLines?: readonly FeeLine[]): Draft[] {
   const base = new Decimal(revenue);
   const out: Draft[] = [];
   const fee = configs.fee;
   if (fee) {
     const pct = (p: number) => base.times(p).div(100).negated();
-    push(out, 'fee_fixed', pct(fee.payload.fixedPct), fee.id);
+    push(out, 'fee_fixed', feeFixedOf(base, fee.payload, feeLines).negated(), fee.id);
     push(out, 'fee_transaction', pct(fee.payload.transactionPct), fee.id);
     push(out, 'fee_service', pct(fee.payload.servicePct), fee.id);
     push(out, 'fee_optional', pct(fee.payload.optionalPct), fee.id);

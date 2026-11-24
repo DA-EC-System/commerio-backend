@@ -6,14 +6,17 @@ import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PushResults } from '#src/modules/channel/channel/api/schemas.ts';
 import { runListingPush } from '#src/modules/channel/channel/service/listing-push.ts';
+import { variantCategoryPaths } from '#src/modules/channel/channel/service/price-inputs.ts';
 import type { NewProduct } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
 import { type ListingVariant, setProductPort } from '#src/modules/channel/channel/service/product-port.ts';
 import { stopJobs } from '#src/modules/core/platform/service/jobs/boss.ts';
+import { recordPackageDelivered } from '#src/modules/finance/finance/service/ledger.ts';
 import { createVariant } from '../../helpers/catalog.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
+import { createOrder } from '../../helpers/sales.ts';
 import { activateShop, fakeAdapter, seedSpecs } from './helpers.ts';
 
 const variants: ListingVariant[] = [];
@@ -178,6 +181,36 @@ describe('hoa hồng theo category sàn (Documents/21 §21.4)', () => {
     await db().query("update channel.product_specs set external_category_id = '999' where product_id = $1 and platform = 'lazada'", [variants.at(-1)!.productId]);
     const quote2 = await auth(app().post(`/api/v1/channel/products/${variants.at(-1)!.productId}/price-quote`)).send({ items: [{ shopId: id, variantId: other }] });
     expect(quote2.body.items[0]).toMatchObject({ listPrice: 239000, netReceived: 202540 });
+
+    // Phí ước tính ghi sổ khi kiện giao dùng cùng hàm chọn tỷ lệ (cổng `variantCategoryPaths` như `src/wiring.ts`):
+    // dòng category '1' hoa hồng 14%, dòng category '999' hoa hồng mặc định 4% → 14.000 + 4.000.
+    const order = await createOrder(company.companyId, {
+      lines: [
+        { variantId: inCategory, quantity: 1, unitPrice: 100000 },
+        { variantId: other, quantity: 1, unitPrice: 100000 },
+      ],
+      source: 'marketplace',
+    });
+    const packageId = randomUUID();
+    await recordPackageDelivered(
+      company.companyId,
+      {
+        packageId,
+        orderId: order.orderId,
+        shopId: id,
+        deliveredAt: new Date().toISOString(),
+        lines: [
+          { variantId: inCategory, quantity: 1, unitPrice: '100000', unitCost: '50000' },
+          { variantId: other, quantity: 1, unitPrice: '100000', unitCost: '50000' },
+        ],
+        platformSubsidy: '0',
+        shippingIncome: '0',
+        shippingCost: '0',
+      },
+      variantCategoryPaths,
+    );
+    const { rows } = await db().query("select amount from finance.ledger_entries where package_id = $1 and kind = 'fee_fixed'", [packageId]);
+    expect(rows.map((r) => r.amount)).toEqual(['-18000.00']);
   });
 
   it('cấu hình phí với category không có trong danh mục sàn: 422 theo ô', async () => {

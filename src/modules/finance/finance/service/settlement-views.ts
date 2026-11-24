@@ -3,6 +3,7 @@ import { Decimal } from 'decimal.js';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
+import type { FeeCategoryPathsOf } from '../domain/ledger.ts';
 import type { PlatformPayout, PlatformTxn } from '../domain/settlement.ts';
 import { feeTotal, needsReceipt } from '../domain/settlement-match.ts';
 import {
@@ -38,6 +39,12 @@ export interface FinanceContext extends ModuleContext {
    * (Documents/21 §21.4). `src/wiring.ts` tiêm; thiếu thì không kiểm.
    */
   readonly knownPlatformCategories?: (platform: string, externalIds: readonly string[]) => Promise<Set<string>>;
+  /**
+   * Chuỗi category sàn của SKU ở gian hàng, để phí ước tính ghi sổ khi kiện giao và hồi tố chọn hoa hồng theo
+   * `categoryRates` như bộ lọc giá (Documents/21 §21.4). `src/wiring.ts` tiêm `channel.variantCategoryPaths`; thiếu thì
+   * dùng hoa hồng mặc định.
+   */
+  readonly feeCategoryPathsOf?: FeeCategoryPathsOf;
 }
 
 /** Cổng quyết toán của channel (#117). Hai hàm đầu gọi sàn: gọi ngoài giao dịch; `shops` đọc mọi công ty. */

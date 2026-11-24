@@ -90,6 +90,42 @@ describe('ghi sổ theo sự kiện (§11.2)', () => {
   });
 });
 
+describe('hoa hồng theo category sàn khi kiện giao (Documents/21 §21.4)', () => {
+  const RATES = { categoryRates: [{ externalCategoryId: '10', path: 'Thời trang', fixedPct: 10 }] };
+  const feeFixed = async (packageId: string) =>
+    (await testPool().query("select amount from finance.ledger_entries where package_id = $1 and kind = 'fee_fixed'", [packageId])).rows.map((r) => r.amount);
+  async function withRates() {
+    const s = await setup();
+    // Bản phí của `setup` cộng `categoryRates`: thay bằng bản có category (cùng ngày hiệu lực, ghi thẳng).
+    await testPool().query(`update finance.config_versions set payload = payload || $2::jsonb where company_id = $1 and kind = 'fee'`, [s.companyId, JSON.stringify(RATES)]);
+    return s;
+  }
+
+  it('SKU thuộc category con của dòng categoryRates: fee_fixed theo tỷ lệ của dòng (10% thay 4%)', async () => {
+    const s = await withRates();
+    const paths = async (shopId: string, ids: readonly string[]) => {
+      expect(shopId).toBe(s.shopId);
+      return new Map(ids.map((id) => [id, ['10', '1001']]));
+    };
+    await recordPackageDelivered(s.companyId, s.delivered, paths);
+    expect(await feeFixed(s.delivered.packageId)).toEqual(['-25800.00']);
+  });
+
+  it('SKU không có category, hoặc category không khớp dòng nào, hoặc thiếu cổng channel: fee_fixed theo fixedPct', async () => {
+    const s = await withRates();
+    await recordPackageDelivered(s.companyId, s.delivered, async () => new Map());
+    expect(await feeFixed(s.delivered.packageId)).toEqual(['-10320.00']);
+
+    const other = { ...s.delivered, packageId: randomUUID() };
+    await recordPackageDelivered(s.companyId, other, async (_shop, ids) => new Map(ids.map((id) => [id, ['20']])));
+    expect(await feeFixed(other.packageId)).toEqual(['-10320.00']);
+
+    const noPort = { ...s.delivered, packageId: randomUUID() };
+    await recordPackageDelivered(s.companyId, noPort);
+    expect(await feeFixed(noPort.packageId)).toEqual(['-10320.00']);
+  });
+});
+
 describe('GET /finance/ledger, /orders/:orderId/profit (§21.1)', () => {
   it('CEO thấy cả dòng giá vốn, Admin không; tổng ước tính đang ở sàn chỉ tính tiền mặt', async () => {
     const s = await setup();

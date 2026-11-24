@@ -26,6 +26,9 @@ import {
 import {
   configDraftsOfDelivered,
   type Draft,
+  type FeeCategoryPathsOf,
+  type FeeLine,
+  feeLinesOf,
   type LedgerKind,
   netRevenuePortions,
   outputVatOf,
@@ -49,7 +52,7 @@ import {
   sumLedgerSince,
   updateConfig,
 } from '../repository/config-versions.ts';
-import { insertEntries } from '../repository/ledger.ts';
+import { insertEntries, packageLinesOf } from '../repository/ledger.ts';
 import type { FinanceContext } from './settlement-views.ts';
 import { isUuid, notFound, type Page, paginate, userRef } from './views.ts';
 
@@ -432,7 +435,7 @@ function actOnConfigTx(ctx: FinanceContext, caller: Caller, id: string, action: 
     // Sau khi bản này rời `scheduled`: nới bản trước khi bản này còn trong ràng buộc `config_versions_no_overlap` là chồng ngày.
     if (action === 'cancel' && locked.status === 'scheduled') await reopenPredecessor(locked);
 
-    const result = activateNow ? await activate(updated, today, superseded) : updated;
+    const result = activateNow ? await activate(updated, today, superseded, ctx.feeCategoryPathsOf) : updated;
     return detail(result);
   });
 }
@@ -449,13 +452,13 @@ async function reopenPredecessor(cancelled: ConfigRow): Promise<void> {
  * này, và bản bị sửa lỗi, sang `superseded`. Ngày hiệu lực đã qua thì ghi điều chỉnh hồi tố (`postRetroactive`). Phát
  * `finance.fee_config_activated`.
  */
-async function activate(row: ConfigRow, today: string, retired: string | null = null): Promise<ConfigRow> {
+async function activate(row: ConfigRow, today: string, retired: string | null = null, categoryPathsOf?: FeeCategoryPathsOf): Promise<ConfigRow> {
   const superseded = (await supersedeOld(row)) ?? retired;
   const active = await updateConfig(row.id, row, { status: 'active' });
   if (!active) throw conflict(row);
   await recordTransition({ entityType: ENTITY, entityId: row.id, from: 'scheduled', to: 'active', action: 'activate', actorId: null });
   await supersedeEnded(row, today);
-  await postRetroactive(active, today);
+  await postRetroactive(active, today, categoryPathsOf);
   await publishEvent({
     type: 'finance.fee_config_activated',
     aggregateId: row.id,
@@ -523,7 +526,7 @@ const vnd = (d: Decimal.Value) => new Decimal(d).toFixed(0);
  * tố trước đó cùng nhóm). Lệch thì thêm một dòng `adjustment` ước tính, ghi lý do; không sửa dòng cũ. Ngày của dòng
  * là ngày ghi. GTGT đầu ra không có dòng sổ: lãi đọc theo phiên bản của ngày nên tự đổi theo bản mới.
  */
-async function postRetroactive(row: ConfigRow, today: string): Promise<number> {
+async function postRetroactive(row: ConfigRow, today: string, categoryPathsOf?: FeeCategoryPathsOf): Promise<number> {
   const scope = RETRO_GROUP[row.kind];
   if (!scope || row.effectiveFrom! > today) return 0;
   const range = { from: row.effectiveFrom!, to: row.effectiveTo !== null && row.effectiveTo < today ? row.effectiveTo : today };
@@ -533,8 +536,10 @@ async function postRetroactive(row: ConfigRow, today: string): Promise<number> {
   for (const type of ['package', 'package_return'] as const) {
     const kinds = RETRO_KINDS[scope.group][type];
     if (!kinds.length) continue;
-    for (const src of await retroSources(type, range, kinds, scope.configKinds, shopId)) {
-      const expected = sumDrafts(await expectedCharges(configAt, scope.group, type, src));
+    const sources = await retroSources(type, range, kinds, scope.configKinds, shopId);
+    const feeLinesAt = memoFeeLines(categoryPathsOf, type === 'package' ? sources : []);
+    for (const src of sources) {
+      const expected = sumDrafts(await expectedCharges(configAt, scope.group, type, src, feeLinesAt));
       const delta = expected.minus(src.charged);
       if (delta.isZero()) continue;
       entries.push({
@@ -581,16 +586,52 @@ function memoConfig(): ConfigAt {
   }) as ConfigAt;
 }
 
+type FeeLinesAt = (src: RetroSource) => Promise<FeeLine[] | undefined>;
+
+/**
+ * Dòng hàng kèm chuỗi category của kiện giao trong lượt hồi tố (hoa hồng theo category, Documents/21 §21.4, cùng
+ * `feeLinesOf` với lúc ghi sổ kiện giao). Đọc một lần cho mọi kiện của lượt, chỉ khi có bản phí cần (`categoryRates`).
+ * Thiếu cổng channel thì không có dòng (hoa hồng mặc định).
+ */
+function memoFeeLines(categoryPathsOf: FeeCategoryPathsOf | undefined, sources: readonly RetroSource[]): FeeLinesAt {
+  let loaded: Promise<Map<string, FeeLine[]>> | undefined;
+  const load = async () => {
+    const lines = await packageLinesOf(sources.map((s) => s.packageId).filter((id): id is string => !!id));
+    const byShop = new Map<string, Set<string>>();
+    for (const s of sources) {
+      if (!s.packageId || !s.shopId) continue;
+      const ids = byShop.get(s.shopId) ?? new Set<string>();
+      for (const l of lines.get(s.packageId) ?? []) if (l.variantId) ids.add(l.variantId);
+      byShop.set(s.shopId, ids);
+    }
+    const paths = new Map<string, Awaited<ReturnType<FeeCategoryPathsOf>>>();
+    for (const [shopId, ids] of byShop) if (ids.size) paths.set(shopId, await categoryPathsOf!(shopId, [...ids]));
+    return new Map(
+      sources
+        .filter((s) => s.packageId && lines.has(s.packageId))
+        .map((s) => [s.sourceId, feeLinesOf(lines.get(s.packageId!)!, s.shopId ? paths.get(s.shopId) : undefined)]),
+    );
+  };
+  return async (src) => {
+    if (!categoryPathsOf || !src.packageId) return undefined;
+    loaded ??= load();
+    return (await loaded).get(src.sourceId);
+  };
+}
+
 /** Khoản theo cấu hình của một nguồn, tính bằng phiên bản đang áp ở ngày phát sinh của nguồn đó. */
 async function expectedCharges(
   configAt: ConfigAt,
   group: keyof typeof RETRO_KINDS,
   type: 'package' | 'package_return',
   src: RetroSource,
+  feeLinesAt: FeeLinesAt,
 ): Promise<Draft[]> {
   if (group === 'fee') {
     const fee = await configAt('fee', src.shopId, src.day);
-    return type === 'package' ? configDraftsOfDelivered(src.revenue, { fee }, src.quantity) : postReturned(fee);
+    if (type !== 'package') return postReturned(fee);
+    const lines = fee?.payload.categoryRates?.length ? await feeLinesAt(src) : undefined;
+    return configDraftsOfDelivered(src.revenue, { fee }, src.quantity, lines);
   }
   const regime = await configAt('tax_regime', null, src.day);
   const rules = await configAt('tax_rules', null, src.day);
@@ -598,7 +639,7 @@ async function expectedCharges(
 }
 
 /** Áp dụng các bản đã tới ngày của mọi công ty; mỗi bản một giao dịch, lỗi của một bản không chặn bản khác. */
-export async function activateDueConfigs(now = new Date()): Promise<number> {
+export async function activateDueConfigs(now = new Date(), categoryPathsOf?: FeeCategoryPathsOf): Promise<number> {
   let done = 0;
   for (const due of await findDueScheduledAnyCompany(vnDate(now), 50)) {
     try {
@@ -608,7 +649,7 @@ export async function activateDueConfigs(now = new Date()): Promise<number> {
         await lockCells(cellsOf(row));
         const locked = await findConfig(due.id, 'update');
         if (locked?.status !== 'scheduled' || locked.effectiveFrom! > vnDate(now)) return;
-        await activate(locked, vnDate(now));
+        await activate(locked, vnDate(now), null, categoryPathsOf);
         done++;
       });
     } catch (err) {
@@ -621,6 +662,6 @@ export async function activateDueConfigs(now = new Date()): Promise<number> {
 const ACTIVATION_LOCK = 'finance.config_activation';
 
 /** Một lượt áp dụng trên mọi bản sao worker (việc nền ở `background.ts`): lượt khác đang chạy thì `busy`. */
-export function activateDueConfigsOnce() {
-  return withSessionLock(ACTIVATION_LOCK, () => activateDueConfigs());
+export function activateDueConfigsOnce(categoryPathsOf?: FeeCategoryPathsOf) {
+  return withSessionLock(ACTIVATION_LOCK, () => activateDueConfigs(new Date(), categoryPathsOf));
 }

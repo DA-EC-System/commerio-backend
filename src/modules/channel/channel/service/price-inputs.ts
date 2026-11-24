@@ -66,6 +66,21 @@ export async function costsOf(variantIds: readonly string[]): Promise<Map<string
 const NO_FEE: FeeInput = { feePct: 0, perItemFee: 0, roundStep: 1, roundEnding: 0 };
 
 /**
+ * Chuỗi `externalId` category sàn từ gốc tới category của từng SKU ở gian hàng (Documents/21 §21.4): category của listing
+ * chưa gỡ, không thì của thông tin sàn của sản phẩm; category chưa có trong cây đã đồng bộ thì chuỗi chỉ có chính nó. SKU
+ * không có category thì vắng. Một chỗ cho bộ lọc giá (`variantFees`) và sổ tiền của finance (`ctx.feeCategoryPathsOf`,
+ * phí ước tính khi kiện giao, hồi tố), để cả hai cùng chọn tỷ lệ bằng `fixedPctFor`. Gọi trong `withCompany`.
+ */
+export async function variantCategoryPaths(shopId: string, variantIds: readonly string[]): Promise<Map<string, string[]>> {
+  const ids = [...new Set(variantIds)];
+  if (!ids.length) return new Map();
+  const productOf = new Map((await getVariants(ids)).map((v) => [v.id, v.productId]));
+  const { platform, categories } = await variantCategoryIds(shopId, productOf);
+  const paths = platform ? await pathIdsOf(platform, [...categories.values()]) : new Map<string, string[]>();
+  return new Map([...categories].map(([id, category]) => [id, paths.get(category) ?? [category]]));
+}
+
+/**
  * Phí của từng SKU ở gian hàng (Documents/21 §21.4): hoa hồng theo category sàn của SKU (listing, không thì thông tin sàn
  * của sản phẩm), dòng `categoryRates` gần nhất thắng, không khớp thì hoa hồng mặc định. Cấu hình không có `categoryRates`
  * thì mọi SKU dùng `config.fee`, không truy vấn thêm. Chưa có phí thì Map rỗng. Gọi trong `withCompany`.
@@ -75,17 +90,8 @@ export async function variantFees(shopId: string, config: ShopPriceConfig, varia
   if (!fee || !feePayload) return new Map();
   const ids = [...new Set(variantIds)];
   if (!feePayload.categoryRates?.length) return new Map(ids.map((id) => [id, fee]));
-  const productOf = new Map((await getVariants(ids)).map((v) => [v.id, v.productId]));
-  const { platform, categories } = await variantCategoryIds(shopId, productOf);
-  const paths = platform ? await pathIdsOf(platform, [...categories.values()]) : new Map<string, string[]>();
-  return new Map(
-    ids.map((id) => {
-      const category = categories.get(id);
-      // Category chưa có trong cây đã đồng bộ: vẫn xét chính nó (cây thiếu gốc thì chuỗi chỉ có id đó).
-      const chain = category ? (paths.get(category) ?? [category]) : undefined;
-      return [id, { ...fee, feePct: feeSum(feePayload, chain) }];
-    }),
-  );
+  const paths = await variantCategoryPaths(shopId, ids);
+  return new Map(ids.map((id) => [id, { ...fee, feePct: feeSum(feePayload, paths.get(id)) }]));
 }
 
 /**

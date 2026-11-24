@@ -98,6 +98,8 @@ export const channelModule: ModuleDefinition = {
 export { getShops, type ShopRef } from './service/shops-lookup.ts';
 // Finance kiểm `categoryRates` của cấu hình phí (Documents/21 §21.4) qua `ctx.knownPlatformCategories` (src/wiring.ts).
 export { knownPlatformCategories } from './repository/platform-categories.ts';
+// Sổ tiền của finance chọn hoa hồng theo category khi kiện giao, hồi tố (Documents/21 §21.4) qua `ctx.feeCategoryPathsOf`.
+export { variantCategoryPaths } from './service/price-inputs.ts';
 // #509: ánh xạ thông số mặc định cho công ty mới; core gọi qua `src/wiring.ts` sau seed của catalog (Documents/21 §11.3).
 // Hạn trả của gian hàng cho sales tính hạn trả, tự hoàn tất (#236), tiêm qua `ctx.returnPoliciesOf` ở `src/wiring.ts`.
 export { returnPoliciesOf, type ShopReturnPolicy } from './service/shops-lookup.ts';

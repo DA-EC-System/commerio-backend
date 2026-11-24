@@ -72,6 +72,22 @@ export async function insertPackageLines(rows: (typeof ledgerPackageLines.$infer
   if (rows.length) await getDb().insert(ledgerPackageLines).values(rows).onConflictDoNothing();
 }
 
+/** Dòng hàng đã lưu của các kiện (hồi tố hoa hồng theo category, Documents/21 §21.4), theo kiện, thứ tự dòng. */
+export async function packageLinesOf(
+  packageIds: readonly string[],
+): Promise<Map<string, { variantId: string | null; quantity: number; unitPrice: string }[]>> {
+  const out = new Map<string, { variantId: string | null; quantity: number; unitPrice: string }[]>();
+  if (!packageIds.length) return out;
+  const L = ledgerPackageLines;
+  const rows = await getDb()
+    .select({ packageId: L.packageId, variantId: L.variantId, quantity: L.quantity, unitPrice: L.unitPrice })
+    .from(L)
+    .where(inArray(L.packageId, [...new Set(packageIds)]))
+    .orderBy(L.packageId, L.lineNo);
+  for (const { packageId, ...line } of rows) out.set(packageId, [...(out.get(packageId) ?? []), line]);
+  return out;
+}
+
 /** Cặp thay của dòng đang đọc theo phía ước tính (`replacedBy`) và phía thực tế (`replacesId`), nối trái. */
 const asEstimate = alias(ledgerReplacements, 'as_estimate');
 const asActual = alias(ledgerReplacements, 'as_actual');

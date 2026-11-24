@@ -11,6 +11,7 @@ import {
   isEstimateLine,
   NON_CASH,
   type Draft,
+  type FeeCategoryPathsOf,
   type LedgerKind,
   type NetLine,
   postDelivered,
@@ -126,8 +127,26 @@ async function pairWithSettled(companyId: string, t: Target, orderId: string, in
 
 const dayOf = (iso: string) => vnDate(new Date(iso));
 
-/** `fulfillment.package_delivered`: doanh thu, trợ giá, ship, phí, thuế khấu trừ, giá vốn theo phiên bản tại ngày giao. */
-export function recordPackageDelivered(companyId: string, e: PackageDelivered): Promise<number> {
+/**
+ * Chuỗi category của các SKU trong kiện, chỉ khi cấu hình phí có `categoryRates` và có cổng channel (Documents/21 §21.4);
+ * không thì `undefined` (hoa hồng mặc định).
+ */
+export async function categoryPathsFor(
+  categoryPathsOf: FeeCategoryPathsOf | undefined,
+  fee: { payload: { categoryRates?: readonly unknown[] } } | undefined,
+  shopId: string,
+  variantIds: readonly (string | null)[],
+) {
+  if (!categoryPathsOf || !fee?.payload.categoryRates?.length) return undefined;
+  const ids = [...new Set(variantIds.filter((id): id is string => !!id))];
+  return ids.length ? categoryPathsOf(shopId, ids) : undefined;
+}
+
+/**
+ * `fulfillment.package_delivered`: doanh thu, trợ giá, ship, phí, thuế khấu trừ, giá vốn theo phiên bản tại ngày giao.
+ * Hoa hồng theo category của SKU (`categoryPathsOf`, cổng channel); thiếu cổng thì theo hoa hồng mặc định.
+ */
+export function recordPackageDelivered(companyId: string, e: PackageDelivered, categoryPathsOf?: FeeCategoryPathsOf): Promise<number> {
   return withCompany(companyId, async () => {
     const day = dayOf(e.deliveredAt);
     // Khoá chia sẻ các ô cấu hình đọc dưới đây: phiên bản đang sang `active` (khoá riêng) chờ kiện này ghi xong rồi mới
@@ -139,7 +158,8 @@ export function recordPackageDelivered(companyId: string, e: PackageDelivered): 
       rules: await getEffectiveConfig('tax_rules', null, day),
     };
     const target = { source: { type: 'package' as const, id: e.packageId }, orderId: e.orderId, shopId: e.shopId, packageId: e.packageId };
-    const written = await post(companyId, { ...target, occurredOn: day }, postDelivered(e, configs));
+    const paths = await categoryPathsFor(categoryPathsOf, configs.fee, e.shopId, e.lines.map((l) => l.variantId));
+    const written = await post(companyId, { ...target, occurredOn: day }, postDelivered(e, configs, paths));
     // Dòng hàng của kiện cho lãi theo SKU (#231); phát lại không ghi trùng.
     await insertPackageLines(
       e.lines.map((l, i) => ({
@@ -254,25 +274,29 @@ const on =
  * Handler của consumer `finance-ledger` theo loại sự kiện (21 §11.2). Khung chạy handler trong `withCompany` của sự
  * kiện và ghi `processed_events` (consumer, eventId) cùng giao dịch; khoá nguồn chặn thêm trường hợp cùng nguồn khác
  * `eventId`. `sales.order_cancelled` không nghe: đơn huỷ không phát sinh khoản nào (25 §10.1), phạt chỉ có từ quyết toán.
+ * `categoryPathsOf`: cổng category của channel cho hoa hồng theo category (Documents/21 §21.4).
  */
-export const ledgerHandlers = {
-  'fulfillment.package_delivered': on<'fulfillment.package_delivered'>(recordPackageDelivered),
+export const ledgerHandlersOf = (categoryPathsOf?: FeeCategoryPathsOf) => ({
+  'fulfillment.package_delivered': on<'fulfillment.package_delivered'>((companyId, e) => recordPackageDelivered(companyId, e, categoryPathsOf)),
   'fulfillment.package_returned': on<'fulfillment.package_returned'>(recordPackageReturned),
   'sales.return_refunded': on<'sales.return_refunded'>(recordReturnRefunded),
   'inventory.return_inspected': on<'inventory.return_inspected'>(recordReturnInspected),
   'purchasing.supplier_return_refunded': on<'purchasing.supplier_return_refunded'>(recordSupplierReturnRefunded),
   'purchasing.goods_receipt_posted': on<'purchasing.goods_receipt_posted'>(recordGoodsReceiptPosted),
-};
+});
+/** Handler không có cổng category (hoa hồng mặc định), cho test và nơi không có `ctx`. */
+export const ledgerHandlers = ledgerHandlersOf();
 
 /** Đăng ký mọi loại của consumer `finance-ledger` trong một khối đồng bộ (worker, `startFinanceBackground`). */
-export function registerLedgerConsumers(): void {
+export function registerLedgerConsumers(categoryPathsOf?: FeeCategoryPathsOf): void {
   const options = { consumer: LEDGER_CONSUMER };
-  registerConsumer('fulfillment.package_delivered', ledgerHandlers['fulfillment.package_delivered'], options);
-  registerConsumer('fulfillment.package_returned', ledgerHandlers['fulfillment.package_returned'], options);
-  registerConsumer('sales.return_refunded', ledgerHandlers['sales.return_refunded'], options);
-  registerConsumer('inventory.return_inspected', ledgerHandlers['inventory.return_inspected'], options);
-  registerConsumer('purchasing.supplier_return_refunded', ledgerHandlers['purchasing.supplier_return_refunded'], options);
-  registerConsumer('purchasing.goods_receipt_posted', ledgerHandlers['purchasing.goods_receipt_posted'], options);
+  const handlers = ledgerHandlersOf(categoryPathsOf);
+  registerConsumer('fulfillment.package_delivered', handlers['fulfillment.package_delivered'], options);
+  registerConsumer('fulfillment.package_returned', handlers['fulfillment.package_returned'], options);
+  registerConsumer('sales.return_refunded', handlers['sales.return_refunded'], options);
+  registerConsumer('inventory.return_inspected', handlers['inventory.return_inspected'], options);
+  registerConsumer('purchasing.supplier_return_refunded', handlers['purchasing.supplier_return_refunded'], options);
+  registerConsumer('purchasing.goods_receipt_posted', handlers['purchasing.goods_receipt_posted'], options);
 }
 
 type Names = Map<string, Promise<{ id: string; name: string } | null>>;
