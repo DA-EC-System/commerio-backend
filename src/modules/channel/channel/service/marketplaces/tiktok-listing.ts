@@ -23,7 +23,6 @@ import {
   plainDescription,
   type ProductSku,
   productSkus,
-  PROMOTION_LOCKED,
   type RemoteProductCategory,
   type RemoteProductFacts,
   type RemoteSku,
@@ -136,15 +135,6 @@ export function tiktokSuggestions(data: { categories?: Row[]; leaf_category_id?:
 }
 
 /** Lỗi theo từng mục của API lô (`data.errors[]`): mã, câu của lỗi phụ đầu tiên nếu có (cụ thể hơn 12052990 "check failed"). */
-/**
- * Mã TikTok khi SKU đang trong khuyến mãi (#223, 25 §6.5 bước 3), đổi thành `PROMOTION_LOCKED` (docv2 tra 12/11/2026):
- * - update-price-202309 ("Update the price of multiple SKUs belonging to a product in the ACTIVATE status and not included
- *   in any ongoing promotions."): 12052038 "Product price locked due to ongoing promotion.", 12019045 "price is locked";
- * - update-inventory-202309: 12052393 "Product locked for Promotion and stock can't be updated below current stock",
- *   12052165 "The requested update would leave insufficient inventory to cover campaign reservations or would violate the
- *   permitted available-stock limit.Adjust the inventory quantities or reduce the warehouses being unlinked."
- */
-const TIKTOK_PROMOTION_CODES = new Set(['12052038', '12019045', '12052393', '12052165']);
 
 function itemError(e: Row): { code: string; message: string } {
   const detail = (e.detail ?? {}) as Row;
@@ -710,7 +700,7 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
       const stockFailed = new Map<string, SkuError>();
       const priceFailed = new Map<string, SkuError>();
       const keepFirst = (failed: Map<string, SkuError>, m: Map<string, SkuError>) => {
-        for (const [k, v] of m) if (!failed.has(k)) failed.set(k, TIKTOK_PROMOTION_CODES.has(v.code) ? { ...v, code: PROMOTION_LOCKED } : v);
+        for (const [k, v] of m) if (!failed.has(k)) failed.set(k, v);
       };
       for (const [productId, group] of groups) {
         const path = `/product/202309/products/${encodeURIComponent(productId)}`;

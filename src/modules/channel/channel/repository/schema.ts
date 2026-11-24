@@ -201,8 +201,8 @@ export const listingStatus = channelSchema.enum('listing_status', [
 /** `unmanaged`: SKU sàn ghép vào "không quản tồn" (combo), CEO duyệt; không trừ tồn, không đẩy tồn. */
 export const listingMode = channelSchema.enum('listing_mode', ['mapped', 'unmanaged']);
 /**
- * Lỗi lần đẩy, đồng bộ gần nhất (jsonb). Trường sau `at` có từ #567 (Documents/21 §18.6.4), chỉ lỗi đẩy listing ghi; bản cũ và
- * lỗi đồng bộ tồn, giá không có (API trả `null`).
+ * Lỗi lần đẩy, đồng bộ gần nhất (jsonb). Trường sau `at` có từ #567 (Documents/21 §18.6.4): lỗi đẩy listing (#567) và lỗi sàn
+ * của đồng bộ tồn, giá (#571) ghi; bản cũ và lỗi do app giữ (`price_missing`, `stock_not_counted`…) không có (API trả `null`).
  */
 export interface SyncError {
   code: string;
@@ -910,6 +910,10 @@ export interface SyncRunErrorRow {
   sku: string | null;
   code: string;
   message: string;
+  /** Có từ #571; dòng ghi trước không có (đọc ra `null`). */
+  kind?: PushErrorKind | null;
+  target?: BlockerTarget | null;
+  platformCode?: string | null;
   platformMessage: string | null;
   at: string;
   fix: 'variant_price' | 'stocktake' | 'platform' | 'shop_reconnect' | null;
