@@ -18,7 +18,7 @@ import {
 } from '#src/modules/channel/channel/repository/platform-categories.ts';
 import { MarketplaceError } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
-import { leafDetail, listPlatformCategories } from '#src/modules/channel/channel/service/platform-categories.ts';
+import { leafDetail, listPlatformCategories, maxAxesOf } from '#src/modules/channel/channel/service/platform-categories.ts';
 import { currentCompanyId, withCompany } from '#src/shared/db/client.ts';
 import { createModuleContext } from '#src/wiring.ts';
 import { createVariant } from '../../helpers/catalog.ts';
@@ -118,10 +118,27 @@ describe('syncTree', () => {
   it('listPlatformCategories: cấp gốc, con trực tiếp, syncedAt là lần đồng bộ gần nhất', async () => {
     registerAdapter('shopee', fakeAdapter({}));
     const roots = await listPlatformCategories('shopee', {});
-    expect(roots.items).toEqual([{ externalId: 'S1', parentExternalId: null, name: 'Đồng hồ', path: 'Đồng hồ', isLeaf: false, status: 'active', pathIds: ['S1'] }]);
+    expect(roots.items).toEqual([{ externalId: 'S1', parentExternalId: null, name: 'Đồng hồ', path: 'Đồng hồ', isLeaf: false, status: 'active', pathIds: ['S1'], maxAxes: null, combinable: null }]);
     expect(roots.syncedAt).toEqual(new Date('2026-11-20T19:00:00Z'));
     const kids = await listPlatformCategories('shopee', { parentId: 'S1' });
     expect(kids.items.map((c) => c.externalId)).toEqual(['S2', 'S3']);
+  });
+
+  it('maxAxesOf theo variantCapabilities, chỉ leaf đã lấy attribute (be#564 A2); sàn không khai hook: rỗng', async () => {
+    const leaf = `MX-${randomUUID().slice(0, 8)}`;
+    const empty = `MX-${randomUUID().slice(0, 8)}`;
+    const unfetched = `MX-${randomUUID().slice(0, 8)}`;
+    await replaceLeaf('shopee', leaf, { attributes: [attr('size', { kind: 'sales' }), attr('color', { kind: 'sales' })], fetchedAt: new Date() });
+    await replaceLeaf('shopee', empty, { attributes: [], fetchedAt: new Date() });
+    registerAdapter('shopee', fakeAdapter({}));
+    expect(await maxAxesOf('shopee', [leaf])).toEqual(new Map());
+    registerAdapter(
+      'shopee',
+      fakeAdapter({
+        variantCapabilities: (attrs) => ({ maxAxes: attrs.filter((a) => a.kind === 'sales').length, customAxisName: false, salesRequired: [], addVariant: true }),
+      }),
+    );
+    expect(await maxAxesOf('shopee', [leaf, empty, unfetched])).toEqual(new Map([[leaf, 2], [empty, 0]]));
   });
 
   it('cây thiếu bất thường (bỏ hơn 5% node active, cây từ 100 node) thì không ghi gì; allowShrink thì ghi (review BE1 P2-3)', async () => {

@@ -8,6 +8,7 @@ import { categoryInfoOf } from '../repository/platform-categories.ts';
 import { specUsesOf } from '../repository/product-specs.ts';
 import { listShopRows } from '../repository/shops.ts';
 import type { ProductPort } from './product-port.ts';
+import { maxAxesOf } from './platform-categories.ts';
 import { checkVariant, LISTED, loadPushContext } from './push-check.ts';
 import { platformOf } from './shops.ts';
 
@@ -126,7 +127,7 @@ async function categoryState(
     externalCategoryId: pick.use.externalId,
     path: infos.get(pick.use.externalId)?.path ?? null,
     source: pick.source,
-    maxAxes: null,
+    maxAxes: (await maxAxesOf(platform, [pick.use.externalId])).get(pick.use.externalId) ?? null,
     combinable: null,
   };
 }

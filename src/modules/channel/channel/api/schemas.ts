@@ -1008,6 +1008,11 @@ export const LeafDetailQuery = z
   })
   .meta({ id: 'PlatformLeafQuery' });
 
+const MAX_AXES = z.number().int().min(0).nullable().meta({
+  description: 'Số thuộc tính biến thể tối đa của leaf (21 §18.10, be#564); null khi không phải leaf, leaf chưa lấy attribute, hoặc sàn không khai',
+});
+const COMBINABLE = z.boolean().nullable().meta({ description: 'Leaf có đích ghép thuộc tính biến thể (21 §18.8.3, be#568); null khi chưa biết' });
+
 const platformCategoryShape = {
   externalId: z.string(),
   parentExternalId: z.string().nullable(),
@@ -1019,6 +1024,8 @@ const platformCategoryShape = {
     description:
       '`externalId` từ gốc tới chính category, cùng thứ tự với `path` (commerio-backend#467); đọc từ cây đã đồng bộ, cha chưa có trong cây thì thiếu phần gốc',
   }),
+  maxAxes: MAX_AXES,
+  combinable: COMBINABLE,
 };
 export const PlatformCategory = z.object(platformCategoryShape).strict().meta({ id: 'PlatformCategory' });
 export const PlatformCategoryPage = z
@@ -1244,7 +1251,7 @@ export const CategorySuggestionsQuery = z.object({
 });
 const CATEGORY_PERMISSION = z.enum(['available', 'invite_only', 'non_main_category', 'prohibited']).nullable();
 const UsedCategory = z
-  .object({ externalId: z.string(), path: z.string(), productCount: z.number().int().min(1), permission: CATEGORY_PERMISSION })
+  .object({ externalId: z.string(), path: z.string(), productCount: z.number().int().min(1), permission: CATEGORY_PERMISSION, maxAxes: MAX_AXES, combinable: COMBINABLE })
   .strict();
 export const CategorySuggestionsView = z
   .object({
@@ -1255,6 +1262,8 @@ export const CategorySuggestionsView = z
           path: z.string(),
           permission: CATEGORY_PERMISSION,
           usedByCompany: z.boolean().meta({ description: 'Công ty đã dùng category này trong spec của sản phẩm nào đó trên sàn' }),
+          maxAxes: MAX_AXES,
+          combinable: COMBINABLE,
         })
         .strict(),
     ),
