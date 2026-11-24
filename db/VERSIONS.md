@@ -5,12 +5,11 @@
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
 Mới nhất: **V155**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
 
-## V155 · 24/11/2026 · doi-ghep-da-dung
+## V155 · 24/11/2026 · nguon-so-dem
 
-`db/migrations/20261124155423_doi-ghep-da-dung.sql` · sinh từ schema
+`db/migrations/20261124155428_nguon-so-dem.sql` · sinh từ schema
 
-- `order.package_lines`: + cột `remap_pending`; + check `package_lines_remap_pending`
-- enum `order.open_purpose`: + `remap`
+- `product.stock_document_lines`: + cột `count_source`; + check `stock_document_lines_count_source`
 
 ## V154 · 24/11/2026 · ten-thuoc-tinh-20
 

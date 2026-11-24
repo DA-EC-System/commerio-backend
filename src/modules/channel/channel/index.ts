@@ -107,6 +107,8 @@ export type { Payout, SettlementTxn } from './service/marketplaces/index.ts';
 
 // Gian hàng của công ty cho checklist onboarding (#461).
 export { shopSetupState } from './repository/shops.ts';
+// Tồn trên sàn theo biến thể của phiếu kiểm kê đầu kỳ cho inventory (#569), tiêm qua `ctx.platformStockOf` ở `src/wiring.ts`.
+export { remoteStockByVariant } from './repository/remote-skus.ts';
 // Trạng thái chờ kiểm kê đầu kỳ của gian hàng cho fulfillment (#199 phần b), tiêm qua `ctx.stockHoldOf` ở `src/wiring.ts`.
 export { awaitingStocktakeShops } from './repository/shops.ts';
 // Ghép SKU hiện hành cho fulfillment mở kiện áp lại ghép (#237 PR 2), tiêm qua `ctx.skuMappingOf` ở `src/wiring.ts`.
