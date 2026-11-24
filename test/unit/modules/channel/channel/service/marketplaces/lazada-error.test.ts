@@ -123,6 +123,16 @@ describe('lazadaError: details (#567)', () => {
     expect(lazadaError({ code: '4110', detail: [{ message: 'C006:abc' }] }).details).toEqual([{ field: null, code: null, message: 'C006:abc' }]);
   });
 
+  it('có code và mã đầu câu trùng (gọi thật 24/11/2026): bỏ mã khỏi câu', () => {
+    const err = lazadaError({
+      code: '4139',
+      message: 'E500: Create product failed',
+      request_id: '0baf8cf917955163221227541',
+      detail: [{ field: 'Product', code: 'BIZ_CHECK_MAIN_IMAGE_REQUIRE', message: 'BIZ_CHECK_MAIN_IMAGE_REQUIRE:Main image is require' }],
+    });
+    expect(err.details).toEqual([{ field: 'Product', code: 'BIZ_CHECK_MAIN_IMAGE_REQUIRE', message: 'Main image is require' }]);
+  });
+
   it.each([undefined, null, 'chuỗi', [], [null, 5, {}]])('detail %j: details rỗng, không ném', (detail) => {
     expect(lazadaError({ code: '4110', message: 'x', detail } as never).details).toEqual([]);
   });
