@@ -1,6 +1,6 @@
 {
-  "id": "e7c145c7-20ef-40bd-8a1e-6714a0931c59",
-  "prevId": "1fea3506-d1f5-40c8-8cc6-1f6a1d0bf5e8",
+  "id": "663f59e4-a2eb-440d-9e10-ea51c0ff084a",
+  "prevId": "baf85ba9-4ebf-4883-bb4a-a426938d9cbd",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -2578,6 +2578,19 @@
           "primaryKey": false,
           "notNull": false
         },
+        "setup_draft": {
+          "name": "setup_draft",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "setup_draft_version": {
+          "name": "setup_draft_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -4552,6 +4565,12 @@
         },
         "locked_at": {
           "name": "locked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "onboarding_completed_at": {
+          "name": "onboarding_completed_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
