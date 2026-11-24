@@ -4,7 +4,9 @@ import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { logger } from '../../../../shared/logger.ts';
 import { findShopRow, recordOpenOrderPullError, recordOrderPullError } from '../repository/shops.ts';
+import { claimQueuedRuns, failQueuedRuns, finishRuns } from '../repository/sync-runs.ts';
 import { pushPending, syncListings } from './listing-sync.ts';
+import { syncRunFailureOf } from './sync-runs.ts';
 import { pullOpenOrders, pullShopOrders } from './order-pull.ts';
 import { pullShopReturns } from './return-pull.ts';
 import type { ProductPort } from './product-port.ts';
@@ -17,9 +19,12 @@ import { loseShopAuth, refreshShopToken, shopStopped } from './shops.ts';
  * Việc gọi sàn của một gian hàng. Gian hàng không còn `active` (lịch sót sau khi ngắt) thì bỏ lịch, không gọi sàn.
  * Sàn từ chối token thì gian hàng mất uỷ quyền và việc được giữ tới khi nối lại.
  */
-async function onActiveShop(job: ShopJob, what: string, fn: () => Promise<unknown>): Promise<void> {
+async function onActiveShop(job: ShopJob, what: string, fn: () => Promise<unknown>, onStopped?: () => Promise<void>): Promise<void> {
   const shop = await withCompany(job.companyId, () => findShopRow(job.shopId));
-  if (shop?.status !== 'active') return stopShopJobs(job.shopId);
+  if (shop?.status !== 'active') {
+    await onStopped?.();
+    return stopShopJobs(job.shopId);
+  }
   try {
     await fn();
   } catch (err) {
@@ -41,10 +46,24 @@ async function onActiveShop(job: ShopJob, what: string, fn: () => Promise<unknow
  * đọc sàn và ghi `remote_skus`, không đẩy tồn; lỗi của nó chỉ ghi log, không làm hỏng lượt đồng bộ.
  */
 export function runListingSync(port: ProductPort, job: ShopJob): Promise<void> {
-  return onActiveShop(job, 'đồng bộ listing', async () => {
-    await syncListings(port, job.companyId, job.shopId);
-    await refreshRemoteSkusQuietly(job.companyId, job.shopId, port);
-  });
+  const inCompany = <T>(fn: () => Promise<T>) => withCompany(job.companyId, fn);
+  return onActiveShop(
+    job,
+    'đồng bộ listing',
+    async () => {
+      // Lượt người bấm (21 §18 "Kết quả lượt đồng bộ"): nhận mọi lượt chờ, xong ghi kết quả; lỗi cả lượt thì `failed`.
+      const runIds = await inCompany(() => claimQueuedRuns(job.shopId, new Date()));
+      try {
+        await syncListings(port, job.companyId, job.shopId, runIds);
+      } catch (err) {
+        await inCompany(() => finishRuns(runIds, new Date(), syncRunFailureOf(err)));
+        throw err;
+      }
+      await inCompany(() => finishRuns(runIds, new Date()));
+      await refreshRemoteSkusQuietly(job.companyId, job.shopId, port);
+    },
+    () => inCompany(() => failQueuedRuns(job.shopId, new Date(), { code: 'shop_not_connected', message: 'Gian hàng chưa kết nối hoặc cần kết nối lại' })),
+  );
 }
 
 /**

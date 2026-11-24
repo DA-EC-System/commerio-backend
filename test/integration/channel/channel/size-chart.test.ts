@@ -13,7 +13,7 @@ import { stopJobs } from '#src/modules/core/platform/service/jobs/boss.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
-import { activateShop, fakeAdapter, seedSpecs } from './helpers.ts';
+import { activateShop, fakeAdapter, seedFeeConfig, seedSpecs } from './helpers.ts';
 
 const IMAGES = ['https://files.commerio.test/a.jpg'];
 const CHART_URL = 'https://files.commerio.test/size-chart.png';
@@ -154,6 +154,7 @@ beforeAll(async () => {
   expect(res.status, JSON.stringify(res.body)).toBe(201);
   shopId = res.body.shop.id;
   await activateShop(shopId);
+  await seedFeeConfig(company.companyId, shopId);
 });
 
 beforeEach(() => {

@@ -15,7 +15,7 @@ import type { ListingPushJob } from '#src/modules/channel/channel/service/shop-j
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
-import { activateShop, fakeAdapter } from './helpers.ts';
+import { activateShop, fakeAdapter, seedFeeConfig } from './helpers.ts';
 
 const variants: ListingVariant[] = [];
 const variant = (): ListingVariant => {
@@ -93,6 +93,7 @@ beforeAll(async () => {
   const res = await auth(app().post('/api/v1/channel/shops/lazada/token')).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
   shopId = res.body.shop.id;
   await activateShop(shopId);
+  await seedFeeConfig(company.companyId, shopId);
   await replaceLeaf('lazada', leaf, {
     attributes: [
       {
