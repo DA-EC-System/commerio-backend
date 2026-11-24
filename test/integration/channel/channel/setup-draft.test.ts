@@ -377,8 +377,10 @@ describe('POST /setup { draftVersion }: hoàn tất từ nháp', () => {
     const one = await s.put({ confirm: 'link_skus', draftVersion: decided.body.draftVersion });
     const three = await s.put({ openingStock: 'push', returnWindowDays: 7, confirm: 'stock_sync', draftVersion: one.body.draftVersion });
     expect(three.status).toBe(200);
-    // Sàn có SKU mới sau khi đã xác nhận; không gọi GET /setup, lần đọc sàn của chính POST /setup thấy nó.
+    // Sàn có SKU mới sau khi đã xác nhận; một lần đọc sàn khác (GET /setup của tab khác, việc nền) làm mới bản sao trước khi
+    // POST /setup đến: nháp mất mốc link_skus và tăng phiên bản. (POST /setup tự không đọc lại sàn khi đã có bản sao.)
     remote = [...remote, sku('sku-9', 'item-D', 'LZ-9', 'Ví da')];
+    expect((await s.preview()).status).toBe(200);
     const res = await s.finish({ draftVersion: three.body.draftVersion });
     expect(res.status).toBe(409);
     expect(['setup_draft_incomplete', 'version_conflict']).toContain(res.body.code);
