@@ -110,6 +110,8 @@ Cột:
 - `status` enum `core.company_status` · not null · mặc định `'active'`: `active` | `locked`
 - `lock_reason` text · null
 - `locked_at` timestamptz · null
+- `onboarding_completed_at` timestamptz · null
+  Lần đầu mọi mục bắt buộc của onboarding cùng xong, đặt một lần qua `POST /onboarding/complete`, không xoá (#569, Documents/21 mục 23). Chỉ quyết định có ép vào wizard hay không; `done` của từng mục vẫn suy từ dữ liệu.
 - `created_at` timestamptz · not null · mặc định `now()`
 - `updated_at` timestamptz · not null · mặc định `now()`
 - `version` integer · not null · mặc định `1`

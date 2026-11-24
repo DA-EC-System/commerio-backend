@@ -29,7 +29,8 @@ import { currentPrices } from './listing-prices.ts';
 import { insertListing } from './listing-writes.ts';
 import { errorOf } from './listing-push.ts';
 import { ENTITY, moveListing, requesterNames, toListing } from './listings.ts';
-import { MarketplaceError, PRECHECK_CODES, type MarketplaceAdapter } from './marketplaces/index.ts';
+import { MarketplaceError, type MarketplaceAdapter } from './marketplaces/index.ts';
+import { marketplacePushError } from './push-error.ts';
 import { prepareNewProduct } from './new-product.ts';
 import type { ProductPort } from './product-port.ts';
 import { specChecks } from './product-specs.ts';
@@ -243,8 +244,8 @@ export async function runProductRegroup(port: ProductPort, job: ProductRegroupJo
       throw new HoldJob('gian hàng mất uỷ quyền');
     }
     if (err.kind === 'unavailable' && !attempt?.lastAttempt) throw err;
-    const code = err.kind === 'unavailable' ? 'marketplace_unavailable' : err.platformCode && PRECHECK_CODES.has(err.platformCode) ? err.platformCode : 'marketplace_rejected';
-    await fail(errorOf(code, err.platformMessage ?? 'Sàn từ chối sản phẩm'));
+    // Dịch lỗi sàn như lượt đẩy (#567).
+    await fail(await marketplacePushError(adapter, err, { companyId: job.companyId, platform: shop.platform, productId: job.productId, externalCategoryId: null }, true));
     return;
   }
   const done = await inCompany(() => findShopProduct(sp.id));

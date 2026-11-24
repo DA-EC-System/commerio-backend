@@ -24,7 +24,6 @@ import {
   type PriceQuantity,
   type ProductSku,
   productSkus,
-  PROMOTION_LOCKED,
   type RemoteCounts,
   type RemoteLineInfo,
   type RemoteLineStatus,
@@ -53,6 +52,8 @@ import { lazadaReturnMethods } from './lazada-returns.ts';
 import { downloadDocument } from './image-source.ts';
 import { lazadaPackingMethods, type LazadaPackingDeps } from './lazada-packing.ts';
 import { lazadaDeleteMethods } from './lazada-delete.ts';
+import { LAZADA_PUSH_ERRORS } from './lazada-push-errors.ts';
+import type { PlatformErrorDetail } from '../../domain/platform-error.ts';
 
 export interface LazadaConfig {
   appKey: string | undefined;
@@ -112,14 +113,6 @@ const TRANSIENT_CODES = new Set([
 ]);
 // UpdatePriceQuantity, UpdateSellableQuantity: tối đa 50 SKU một lần, Lazada khuyên 20.
 const PRICE_QTY_BATCH = 20;
-/**
- * Mã Lazada khi SKU đang trong chiến dịch (#223, 25 §6.5 bước 3): 4170 "During the Bday Mega campaign, there are
- * restrictions for stock adjustments in effect between YYYY-MM-DD HH:MM:SS - YYYY-MM-DD HH:MM:SS. Sellers can increase
- * stocks, but may not decrease stocks." Hướng xử lý của tài liệu: "This SKU is participating in a special Campaign, so this
- * SKU can't be updated to set stock less than current stock." (bảng mã UpdatePriceQuantity, UpdateSellableQuantity,
- * open.lazada.com, tra 12/11/2026). Bảng mã không có mã nào cho giá bị khoá do khuyến mãi.
- */
-const LAZADA_PROMOTION_CODES = new Set(['4170']);
 // GetProducts: `limit` tối đa 50; một sản phẩm một SKU (#104 A1). `offset` tối đa 10000 (open.lazada.com, tra 06/11/2026).
 const SKU_LIST_BATCH = 50;
 // GetMultipleOrderItems: "No more than 50 at a time" (open.lazada.com, tra 06/11/2026, #267).
@@ -220,12 +213,39 @@ function lazadaMessage(res: LazadaResponse): string | null {
   return message ? `${message} (${details.join('; ')})` : details.join('; ');
 }
 
+/** Mã chi tiết đứng đầu câu (`BIZ_CHECK_PACKAGE_WEIGHT_BY_KG_INVALID:Khối lượng…`); chỉ mã có gạch dưới, `C006:` không tính. */
+const LEADING_CODE = /^([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+):\s*/;
+
+/**
+ * `detail[]` thành lý do có cấu trúc (#567). Ba dạng đã gặp: `{ field, message, code }` (gọi thật 17/11/2026); mã đứng đầu
+ * `message`, không có `code` (ca đêm 18/11/2026, `field: "Product"`); có cả `code` lẫn mã đầu câu (gọi thật 24/11/2026). Mã đầu
+ * câu thì tách, câu còn lại là phần sau dấu `:`.
+ */
+export function lazadaDetails(res: LazadaResponse): PlatformErrorDetail[] {
+  if (!Array.isArray(res.detail)) return [];
+  return res.detail.flatMap((d: { field?: unknown; message?: unknown; code?: unknown }) => {
+    if (!d || typeof d !== 'object') return [];
+    const field = typeof d.field === 'string' && d.field ? d.field : null;
+    let message = typeof d.message === 'string' && d.message ? d.message : null;
+    let code = typeof d.code === 'string' && d.code ? d.code : null;
+    // Mã đứng đầu câu: lấy làm mã khi không có `code`, bỏ khỏi câu khi trùng `code` (gọi thật 24/11/2026, request_id
+    // 0baf8cf917955163221227541: `{ field: 'Product', code: 'BIZ_CHECK_MAIN_IMAGE_REQUIRE', message: 'BIZ_CHECK_MAIN_IMAGE_REQUIRE:Main image is require' }`).
+    const lead = message ? LEADING_CODE.exec(message) : null;
+    if (lead && (!code || code === lead[1])) {
+      code = lead[1]!;
+      message = message!.slice(lead[0].length) || null;
+    }
+    return field || message || code ? [{ field, code, message }] : [];
+  });
+}
+
 export function lazadaError(res: LazadaResponse): MarketplaceError {
   const code = String(res.code ?? 'unknown');
   const message = lazadaMessage(res);
   const kind = AUTH_CODES.has(code) ? 'unauthorized' : res.type === 'SYSTEM' || TRANSIENT_CODES.has(code) ? 'unavailable' : 'rejected';
   const err = new MarketplaceError(kind, code, message);
   err.requestId = platformRequestId(res);
+  err.details = lazadaDetails(res);
   return err;
 }
 
@@ -779,9 +799,10 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
       body = await request(config.apiUrl, path, { access_token: accessToken, payload }, 'FORM');
     } catch (err) {
       if (!(err instanceof MarketplaceError)) throw err;
-      const code = err.platformCode ?? 'marketplace_unavailable';
-      const message = err.platformMessage ?? 'Sàn lỗi tạm';
-      return batch.map((i) => ({ externalSkuId: i.externalSkuId, ok: false, code, message }));
+      // Lỗi tạm giữ mã của app (bên gọi coi là lỗi kết nối); sàn từ chối cả lô thì mã của sàn đi qua bảng `errorMap` (#571).
+      const code = err.kind === 'unavailable' ? 'marketplace_unavailable' : (err.platformCode ?? 'marketplace_rejected');
+      const message = err.platformMessage ?? (err.kind === 'unavailable' ? 'Sàn lỗi tạm' : '');
+      return batch.map((i) => ({ externalSkuId: i.externalSkuId, ok: false, code, message, requestId: err.requestId ?? null }));
     }
     if (body.code === '0') return batch.map((i) => ({ externalSkuId: i.externalSkuId, ok: true }));
     const err = lazadaError(body);
@@ -795,8 +816,10 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
       return {
         externalSkuId: i.externalSkuId,
         ok: false,
-        code: LAZADA_PROMOTION_CODES.has(code) ? PROMOTION_LOCKED : code,
+        // Mã gốc của sàn (4170 khoá do chiến dịch…), dịch ở `errorMap` (`lazada-push-errors.ts`, #571).
+        code,
         message: String(d?.message ?? body.message ?? ''),
+        requestId: platformRequestId(body),
       };
     });
   }
@@ -1125,6 +1148,7 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
     }),
     name: 'Lazada',
     capabilities: LAZADA_CAPABILITIES,
+    errorMap: LAZADA_PUSH_ERRORS,
     connectMethods() {
       // Chỉ OAuth cần trang callback; nối bằng token không cần.
       return oauthReady ? ['oauth', 'token'] : hasCredentials ? ['token'] : [];
@@ -1406,12 +1430,13 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
     // Tồn trước, giá sau, mỗi loại theo lô 20; SKU có cả hai thì lỗi ở một trong hai là lỗi của SKU (giữ lỗi đầu tiên).
     async updatePriceQuantity(accessToken, items) {
       // Tồn và giá là hai API riêng: kết quả trả riêng từng phần (#223), tồn bị khoá (4170) không làm giá thành lỗi.
-      const errors = { stock: new Map<string, { code: string; message: string }>(), price: new Map<string, { code: string; message: string }>() };
+      type SkuError = { code: string; message: string; requestId?: string | null };
+      const errors = { stock: new Map<string, SkuError>(), price: new Map<string, SkuError>() };
       for (const kind of ['stock', 'price'] as const) {
         const subset = items.filter((i) => (kind === 'stock' ? i.quantity !== undefined : i.price !== undefined));
         for (const batch of chunks(subset, PRICE_QTY_BATCH)) {
           for (const r of await priceQuantityBatch(accessToken, batch, kind)) {
-            if (!r.ok && !errors[kind].has(r.externalSkuId)) errors[kind].set(r.externalSkuId, { code: r.code, message: r.message });
+            if (!r.ok && !errors[kind].has(r.externalSkuId)) errors[kind].set(r.externalSkuId, { code: r.code, message: r.message, requestId: r.requestId });
           }
         }
       }

@@ -111,17 +111,21 @@ describe('lượt đồng bộ do người bấm', () => {
     const run = await getRun(runId);
     expect(run).toMatchObject({ status: 'done', progress: { processed: 4, total: 4 }, succeeded: 1, failed: 3, error: null });
     const byCode = Object.fromEntries(run.errors.map((e) => [e.code, e]));
-    expect(byCode.E0004).toMatchObject({
+    // Mã sàn chưa có trong bảng dịch: `marketplace_rejected`, câu chung kèm câu sàn, mã gốc ở `platformCode` (#571).
+    expect(byCode.marketplace_rejected).toMatchObject({
       sku: rejected.sku,
       variantId: rejected.id,
       productId: rejected.productId,
       productName: 'Áo thun',
       attributesLabel: 'Trắng / M',
-      message: 'Sàn từ chối cập nhật tồn',
+      message: expect.stringContaining('không nhận cập nhật tồn: Product Status not online'),
+      kind: 'platform',
+      target: null,
+      platformCode: 'E0004',
       platformMessage: 'Product Status not online',
       fix: null,
     });
-    expect(byCode.price_missing).toMatchObject({ variantId: noPrice.id, fix: 'variant_price', platformMessage: null });
+    expect(byCode.price_missing).toMatchObject({ variantId: noPrice.id, fix: 'variant_price', platformMessage: null, platformCode: null, kind: null });
     expect(byCode.stock_not_counted).toMatchObject({ variantId: notCounted.id, fix: 'stocktake', platformMessage: null });
     expect(byCode.stock_not_counted!.message).toContain('Chưa có số tồn');
 
