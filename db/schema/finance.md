@@ -126,7 +126,7 @@ Cột:
 
 - `id` uuid · khoá chính · mặc định `gen_random_uuid()`
 - `company_id` uuid · not null → `core.companies` (theo công ty)
-- `kind` enum `finance.ledger_kind` · not null: `revenue` | `platform_subsidy` | `shipping_income` | `shipping_cost` | `fee_fixed` | `fee_transaction` | `fee_service` | `fee_optional` | `withholding_tax` | `customer_refund` | `return_fee` | `lost_compensation` | `penalty` | `cogs` | `cogs_reversal` | `ads` | `opex` | `supplier_payment` | `supplier_refund` | `cod_collected` | `adjustment` | `withdrawal`
+- `kind` enum `finance.ledger_kind` · not null: `revenue` | `platform_subsidy` | `shipping_income` | `shipping_cost` | `fee_fixed` | `fee_transaction` | `fee_service` | `fee_optional` | `fee_per_item` | `withholding_tax` | `customer_refund` | `return_fee` | `lost_compensation` | `penalty` | `cogs` | `cogs_reversal` | `ads` | `opex` | `supplier_payment` | `supplier_refund` | `cod_collected` | `adjustment` | `withdrawal`
 - `amount` numeric(18,2) · not null
 - `is_estimate` boolean · not null
 - `occurred_on` date · not null
