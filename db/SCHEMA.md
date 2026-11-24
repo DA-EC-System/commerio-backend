@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V153** (`20261124125629_bieu-phi-mau-quyen-du-lieu`): 105 bảng trong 6 schema, 95 khoá ngoại, 83 cột tham chiếu không có khoá ngoại. Lịch sử từng phiên bản: [VERSIONS.md](VERSIONS.md).
+Phiên bản **V153** (`20261124125551_dong-bo-category-du-lieu`): 105 bảng trong 6 schema, 95 khoá ngoại, 84 cột tham chiếu không có khoá ngoại. Lịch sử từng phiên bản: [VERSIONS.md](VERSIONS.md).
 
 Nguồn: snapshot của migration mới nhất, comment trong `src/modules/<lớn>/<con>/repository/schema.ts`, khoá ngoại, trigger, index, EXCLUDE viết tay trong migration. Cột, kiểu, ràng buộc, quan hệ của từng bảng ở `db/schema/<schema>.md`.
 
@@ -94,14 +94,13 @@ Chi tiết: [schema/order.md](schema/order.md)
 - `order.unmatched_return_parcel_lines` (fulfillment): Dòng hàng của kiện trả không khớp: số kho quét lúc nhận, chỉ món đã rõ SKU (Documents/19, Documents/21 §20).
 - `order.unmatched_return_parcels` (fulfillment): Kiện hàng trả quét được mà không khớp yêu cầu trả nào; hàng nằm ở chờ xử lý tới khi gắn hoặc bỏ (Documents/21 mục 20).
 
-## `finance` · Tài chính · lớp 4 · 22 bảng
+## `finance` · Tài chính · lớp 4 · 21 bảng
 
 Chi tiết: [schema/finance.md](schema/finance.md)
 
 - `finance.bank_matches` (finance): Khớp dòng sổ (rút tiền, NCC hoàn tiền, bồi thường) với sao kê ngân hàng (#117, Documents/21 §21.3).
 - `finance.config_versions` (finance): Phiên bản cấu hình phí (theo gian hàng), loại hình thuế, quy tắc thuế, ngưỡng lệch, biên tối thiểu.
 - `finance.doc_counters` (finance): Bộ đếm số hoá đơn, phiếu thu, phiếu chi; `period` theo tháng nếu #27 đánh số theo kỳ (plan chuẩn bị A4/K5).
-- `finance.fee_templates` (finance): Biểu phí mẫu của nền tảng (Documents/21 §21.6, 19; Thành chốt 22/11/2026): dữ liệu chuẩn dùng chung, không có `company_id`, mọi công ty đọc; chỉ quản trị nền tảng (route `/platform/fee-templates`) và…
 - `finance.gateway_configs` (payment): Khoá cổng của công ty, mã hoá AES-256-GCM.
 - `finance.ledger_entries` (finance): Sổ tiền, chỉ thêm (T1): mỗi khoản một dòng, số có dấu (vào dương, ra âm), cờ ước tính hay thực tế.
 - `finance.ledger_package_lines` (finance): Dòng hàng của kiện đã giao (#231), chép từ payload `fulfillment.package_delivered` lúc ghi sổ: lãi theo SKU (25 §10.2) gộp trong schema finance, không đọc chéo bảng kiện.
@@ -121,7 +120,7 @@ Chi tiết: [schema/finance.md](schema/finance.md)
 - `finance.unmatched_receipts` (finance): Tiền về không gán được vào đơn (không có mã, lệch tiền, đơn đã huỷ); gán hoặc hoàn sau (UC-PF-07).
 - `finance.webhook_events` (payment): Webhook cổng đã nhận (sau khi kiểm chữ ký), chống xử lý lặp.
 
-## `channel` · Kênh bán · lớp 5 · 24 bảng
+## `channel` · Kênh bán · lớp 5 · 25 bảng
 
 Chi tiết: [schema/channel.md](schema/channel.md)
 
@@ -137,6 +136,7 @@ Chi tiết: [schema/channel.md](schema/channel.md)
 - `channel.messages` (inbox): Tin nhắn; tin gửi đi chưa có mã ngoài cho tới khi nền tảng nhận.
 - `channel.platform_categories` (channel): Bản sao cây category của sàn (#400, Documents/19 mục 3.3).
 - `channel.platform_category_attributes` (channel): Attribute của một leaf category (#400, Documents/19 mục 3.3).
+- `channel.platform_category_group_maps` (channel): Ánh xạ category sàn sang danh mục chuẩn (#569, Documents/21 §18.5, Documents/19 mục 3.3): dữ liệu chuẩn dùng chung mọi công ty, chỉ migration ghi (`commerio_app` chỉ `SELECT`), không `company_id`, kh…
 - `channel.price_calculations` (channel): Một lần chạy bộ lọc giá cho một SKU trên một gian hàng (25 §6.2): lưu đầu vào, kết quả từng bước và phiên bản cấu hình phí, thuế đã dùng, để biết giá trên sàn ra từ đâu.
 - `channel.product_specs` (channel): Thông tin sàn của một sản phẩm cha, một bộ mỗi sàn, mọi gian hàng của sàn dùng chung (#400, Documents/19 mục 3.3).
 - `channel.raw_orders` (channel): Dữ liệu gốc của đơn sàn mỗi lần cập nhật; `order_id` có khi đã tạo đơn trong `order`.

@@ -50,8 +50,23 @@ export const marketplaces = channelSchema.table('marketplaces', {
   code: text('code').primaryKey(),
   /** `false`: sàn không mở cho người dùng ở môi trường này (sàn chưa có adapter, sàn giả lập `mock`). */
   enabled: boolean('enabled').notNull().default(true),
+  /**
+   * Trạng thái lượt đồng bộ cây category của sàn (#569, Documents/21 §18.5 "Đồng bộ category khi nối gian hàng"): việc nền
+   * `channel.category_sync` ghi, route `GET /shops/:id/category-sync` đọc (không đọc bảng của pg-boss). `unsupported`: adapter
+   * không đọc được cây. Ghi bằng role chủ bảng ngoài `withCompany` (`commerio_app` chỉ `SELECT`).
+   */
+  categorySyncState: text('category_sync_state').$type<CategoryTreeSyncState>().notNull().default('idle'),
+  /** Lỗi đã chuẩn hoá của lượt hỏng (không chứa token); xoá khi lượt sau chạy xong. */
+  categorySyncError: text('category_sync_error'),
+  /** Lần đổi trạng thái gần nhất. */
+  categorySyncAt: timestamp('category_sync_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => [
+  check('marketplaces_category_sync_state', sql`${t.categorySyncState} in ('idle', 'queued', 'running', 'failed', 'unsupported')`),
+]);
+
+export type CategoryTreeSyncState = 'idle' | 'queued' | 'running' | 'failed' | 'unsupported';
+export type CategoryPermissionsState = 'queued' | 'running' | 'ready' | 'failed';
 
 /**
  * Mã sàn, khoá của `channel.marketplaces`. Khoá ngoại của mọi cột `platform` viết tay ở migration `*_bang-san-fk`
@@ -144,6 +159,16 @@ export const shops = channelSchema.table(
      */
     ordersPulledOkAt: timestamp('orders_pulled_ok_at', { withTimezone: true }),
     /**
+     * Lượt đọc quyền category của gian hàng (#569, Documents/21 §18.5; chỉ sàn có quyền theo gian hàng, TikTok): việc nền
+     * `channel.shop_category_permissions_sync` ghi. Null: chưa từng xếp (gian hàng nối trước #569, hay sàn không có quyền
+     * theo gian hàng).
+     */
+    categoryPermissionsState: text('category_permissions_state').$type<CategoryPermissionsState>(),
+    /** Lỗi đã chuẩn hoá của lượt hỏng (không chứa token). */
+    categoryPermissionsError: text('category_permissions_error'),
+    /** Lần đọc quyền xong gần nhất. */
+    categoryPermissionsCheckedAt: timestamp('category_permissions_checked_at', { withTimezone: true }),
+    /**
      * Bản nháp thiết lập (#569, Documents/21 §18.7.5): lựa chọn từng SKU sàn, danh mục theo sản phẩm sàn, cách đẩy tồn,
      * mốc xác nhận từng bước. Xoá khi hoàn tất thiết lập hoặc ngắt gian hàng. `POST /setup` chỉ đọc từ đây.
      */
@@ -184,6 +209,7 @@ export const shops = channelSchema.table(
       sql`${t.allocationStocktakeId} is null or (${t.openingStocktakeId} is null and ${t.orderCutoffAt} is not null)`,
     ),
     check('shops_orders_pulled_ok_at', sql`${t.ordersPulledOkAt} is null or ${t.orderCutoffAt} is not null`),
+    check('shops_category_permissions_state', sql`${t.categoryPermissionsState} in ('queued', 'running', 'ready', 'failed')`),
     // Mất uỷ quyền thì xoá mốc: nối lại là "đơn chưa cập nhật" tới khi lấy đơn xong trọn (25 E28, #223).
     check('shops_reauth_orders_pulled', sql`${t.status} <> 'needs_reauth' or ${t.ordersPulledOkAt} is null`),
     // Một công ty một kho: hai phiếu đếm toàn kho có thể áp chênh lệch hai lần (#198 A12).
@@ -512,6 +538,23 @@ export const platformCategories = channelSchema.table(
     check('platform_categories_status', sql`${t.status} in ('active', 'removed')`),
     check('platform_categories_size_chart_rule', sql`${t.sizeChartRule} in ('required', 'optional', 'unsupported')`),
   ],
+);
+
+/**
+ * Ánh xạ category sàn sang danh mục chuẩn (#569, Documents/21 §18.5, Documents/19 mục 3.3): dữ liệu chuẩn dùng chung mọi công
+ * ty, chỉ migration ghi (`commerio_app` chỉ `SELECT`), không `company_id`, không RLS. `external_category_id` thường là category
+ * cấp 1, thêm cấp sâu hơn khi một nhánh phải chia sang nhiều danh mục; tra từ leaf lên gốc, lấy dòng sâu nhất. `group_id` là
+ * dòng nền tảng của `product.product_groups`, **không khoá ngoại chéo schema** (như `spec_field_mappings.field_id`): dòng không
+ * còn thì coi như không ánh xạ.
+ */
+export const platformCategoryGroupMaps = channelSchema.table(
+  'platform_category_group_maps',
+  {
+    platform: text('platform').notNull(),
+    externalCategoryId: text('external_category_id').notNull(),
+    groupId: uuid('group_id').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.platform, t.externalCategoryId] })],
 );
 
 /**

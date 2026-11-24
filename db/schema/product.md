@@ -339,6 +339,7 @@ Trỏ vào bảng này:
 - `product.group_spec_fields.group_id` (khoá ngoại)
 - `product.products.group_id` (khoá ngoại)
 - `product.purchase_request_lines.new_group_id` (tham chiếu, không có khoá ngoại)
+- `channel.platform_category_group_maps.group_id` (tham chiếu, không có khoá ngoại)
 
 ## `product.product_images`
 

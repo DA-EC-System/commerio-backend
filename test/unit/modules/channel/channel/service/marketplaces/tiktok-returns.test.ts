@@ -151,6 +151,7 @@ describe('listReturns, listCancellations', () => {
         returnTrackingCode: null,
         respondBy: null,
         sellerHandledReceipt: true,
+        refundConfirmed: true,
         createdAt: new Date(1793634765 * 1000),
         updatedAt: new Date(1793634867 * 1000),
       },
@@ -470,7 +471,7 @@ describe('returnReasons, decideReturn, approveReturnRefund, returnHistory', () =
 
   it('D3-08: approveReturnRefund → approve APPROVE_RECEIVED_PACKAGE, có idempotency_key', async () => {
     const { adapter, calls } = fakeSan({ [approve]: () => ok({}) });
-    await adapter.approveReturnRefund!(TOKEN, RET);
+    await adapter.approveReturnRefund!(TOKEN, RET, []);
     expect(calls[0]!.body).toEqual({ decision: 'APPROVE_RECEIVED_PACKAGE' });
     expect(calls[0]!.query.get('idempotency_key')).toBe(`commerio-ret-${RET}-APPROVE_RECEIVED_PACKAGE`);
   });
@@ -483,7 +484,7 @@ describe('returnReasons, decideReturn, approveReturnRefund, returnHistory', () =
         [approve]: () => json({ code: 25011011, message: 'reverse status cannot approve' }),
         [search]: () => ok({ return_orders: [{ return_id: RET, return_status: status }] }),
       });
-      await expect(adapter.approveReturnRefund!(TOKEN, RET)).resolves.toBeUndefined();
+      await expect(adapter.approveReturnRefund!(TOKEN, RET, [])).resolves.toBeUndefined();
       expect(calls[1]!.body).toEqual({ return_ids: [RET] });
     },
   );
@@ -493,7 +494,7 @@ describe('returnReasons, decideReturn, approveReturnRefund, returnHistory', () =
       [approve]: () => json({ code: 25011011, message: 'reverse status cannot approve' }),
       [search]: () => ok({ return_orders: [{ return_id: RET, return_status: 'BUYER_SHIPPED_ITEM' }] }),
     });
-    await expect(adapter.approveReturnRefund!(TOKEN, RET)).rejects.toMatchObject({ kind: 'rejected', platformCode: '25011011' });
+    await expect(adapter.approveReturnRefund!(TOKEN, RET, [])).rejects.toMatchObject({ kind: 'rejected', platformCode: '25011011' });
   });
 
   it('sàn từ chối, đọc lại cũng lỗi → ném lỗi của lệnh', async () => {
@@ -501,12 +502,12 @@ describe('returnReasons, decideReturn, approveReturnRefund, returnHistory', () =
       [approve]: () => json({ code: 25011011, message: 'reverse status cannot approve' }),
       [search]: () => json({ code: 36009003, message: 'busy' }),
     });
-    await expect(adapter.approveReturnRefund!(TOKEN, RET)).rejects.toMatchObject({ platformCode: '25011011' });
+    await expect(adapter.approveReturnRefund!(TOKEN, RET, [])).rejects.toMatchObject({ platformCode: '25011011' });
   });
 
   it('lỗi tạm của lệnh không đọc lại, ném luôn', async () => {
     const { adapter, calls } = fakeSan({ [approve]: () => new Response('', { status: 503 }) });
-    await expect(adapter.approveReturnRefund!(TOKEN, RET)).rejects.toMatchObject({ kind: 'unavailable' });
+    await expect(adapter.approveReturnRefund!(TOKEN, RET, [])).rejects.toMatchObject({ kind: 'unavailable' });
     expect(calls.every((c) => c.path.endsWith('/approve'))).toBe(true);
   });
 

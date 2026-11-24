@@ -298,7 +298,7 @@ export function platformOf(platform: string): { platform: Platform; adapter: Mar
 }
 
 /** Lỗi sàn đổi sang mã app, giữ mã gốc (Documents/21 §1.1 R8, R9). */
-function toAppError(err: MarketplaceError): AppError {
+export function toAppError(err: MarketplaceError): AppError {
   const platform = { platformCode: err.platformCode, platformMessage: err.platformMessage };
   // Sàn trả số tiền không đọc được (#349): lỗi của hệ thống, không phải sàn từ chối. Người dùng thấy câu cố định;
   // trường, chứng từ, giá trị gốc ở `platformMessage` cho kỹ thuật.
@@ -313,7 +313,7 @@ function toAppError(err: MarketplaceError): AppError {
     case 'unauthorized':
       return new AppError(409, 'marketplace_unauthorized', 'Sàn từ chối token của gian hàng, cần kết nối lại', platform);
     default:
-      return new AppError(409, 'marketplace_rejected', 'Sàn từ chối yêu cầu', platform);
+      return new AppError(409, 'marketplace_rejected', err.userMessage ?? 'Sàn từ chối yêu cầu', platform);
   }
 }
 
