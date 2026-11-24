@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V150**, 21 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
+Phiên bản **V151**, 21 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
 **Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
 
@@ -126,7 +126,7 @@ Cột:
 
 - `id` uuid · khoá chính · mặc định `gen_random_uuid()`
 - `company_id` uuid · not null → `core.companies` (theo công ty)
-- `kind` enum `finance.ledger_kind` · not null: `revenue` | `platform_subsidy` | `shipping_income` | `shipping_cost` | `fee_fixed` | `fee_transaction` | `fee_service` | `fee_optional` | `withholding_tax` | `customer_refund` | `return_fee` | `lost_compensation` | `penalty` | `cogs` | `cogs_reversal` | `ads` | `opex` | `supplier_payment` | `supplier_refund` | `cod_collected` | `adjustment` | `withdrawal`
+- `kind` enum `finance.ledger_kind` · not null: `revenue` | `platform_subsidy` | `shipping_income` | `shipping_cost` | `fee_fixed` | `fee_transaction` | `fee_service` | `fee_optional` | `fee_per_item` | `withholding_tax` | `customer_refund` | `return_fee` | `lost_compensation` | `penalty` | `cogs` | `cogs_reversal` | `ads` | `opex` | `supplier_payment` | `supplier_refund` | `cod_collected` | `adjustment` | `withdrawal`
 - `amount` numeric(18,2) · not null
 - `is_estimate` boolean · not null
 - `occurred_on` date · not null
