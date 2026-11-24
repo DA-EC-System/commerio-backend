@@ -102,6 +102,10 @@ export interface VariantCapabilities {
   salesRequired: string[];
   /** Thêm phân loại vào sản phẩm sàn đã có (`addVariants`, Documents/21 §18.8.4) */
   addVariant: boolean;
+  /** Số ký tự tối đa của một giá trị phân loại; null khi sàn không công bố. Chỉ kiểm trên thuộc tính biến thể ghép (#568) */
+  maxValueLength: number | null;
+  /** Số giá trị tối đa của một thuộc tính biến thể; null khi sàn không công bố. Chỉ kiểm trên thuộc tính biến thể ghép (#568) */
+  maxAxisValues: number | null;
 }
 
 /**

@@ -4,6 +4,7 @@ import { recordAudit, responsibleOrgOf } from '../../../core/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
+import { combineTarget } from '../domain/axis-combine.ts';
 import { type AxisInput, suggestAxes } from '../domain/axis-match.ts';
 import {
   CUSTOM_AXIS,
@@ -75,7 +76,8 @@ export interface SpecView {
   suggestedAxisMap: Record<string, string> | null;
   suggestedValueMap: Record<string, string> | null;
   /** Khả năng khai biến thể của leaf đó; null khi sàn không khai hoặc không có leaf (#448). */
-  variantCapabilities: VariantCapabilities | null;
+  /** Khả năng của adapter kèm `combineTarget` tính trên leaf (#568) */
+  variantCapabilities: (VariantCapabilities & { combineTarget: string | null }) | null;
 }
 
 /** Dữ liệu sản phẩm cần cho spec: trục phân loại, giá trị trục, xuất xứ, thương hiệu. */
@@ -232,7 +234,11 @@ export async function axisSuggestion(
     standard: adapter.standardSalesAttributes ?? {},
     caps,
   });
-  return { suggestedAxisMap: axisMap, suggestedValueMap: valueMap, variantCapabilities: caps };
+  return {
+    suggestedAxisMap: axisMap,
+    suggestedValueMap: valueMap,
+    variantCapabilities: caps && { ...caps, combineTarget: combineTarget(leaf, caps) },
+  };
 }
 
 /** Spec kèm `missing` như route `GET` trả (cũng là `current` của 409 `version_conflict`). Gọi trong `withCompany`. */
