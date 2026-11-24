@@ -964,6 +964,56 @@ export const PushResult = z
 
 export const PushResults = z.object({ results: z.array(PushResult) }).strict().meta({ id: 'PushResults' });
 
+const variantIdList = z
+  .array(z.uuid('Biến thể không hợp lệ'), 'Chọn ít nhất một biến thể')
+  .min(1, 'Chọn ít nhất một biến thể')
+  .max(200, 'Tối đa 200 biến thể mỗi lần xem trước');
+
+/** Body của kiểm trước khi đăng hàng loạt (21 §18.11, be#566): như `push` nhưng tới 200 biến thể. */
+export const PushPreviewBody = z
+  .object({
+    variantIds: variantIdList,
+    listPrices: z
+      .record(z.string(), z.number('Giá là số đồng').int('Giá là số nguyên đồng').positive('Giá phải lớn hơn 0'))
+      .optional()
+      .meta({ description: 'Giá niêm yết người bán gõ theo biến thể; không làm tròn (`rounding` null)' }),
+  })
+  .superRefine((body, ctx) => {
+    const ids = new Set(body.variantIds);
+    for (const id of Object.keys(body.listPrices ?? {})) {
+      if (!ids.has(id)) ctx.addIssue({ code: 'custom', path: ['listPrices', id], message: 'Biến thể không nằm trong lần đăng này' });
+    }
+  })
+  .meta({ id: 'ListingPushPreviewInput' });
+
+export const PushPreviewRow = z
+  .object({
+    variantId: z.uuid(),
+    productId: z.uuid(),
+    productName: z.string(),
+    attributesLabel: z.string(),
+    sku: z.string(),
+    status: z.enum(['ready', 'blocked']),
+    blockers: z.array(Blocker).meta({
+      description:
+        'Cùng hàm với readiness (18.10) và `push`. Người gọi thiếu `inventory.cost.view` không nhận `below_floor` (lệnh đăng vẫn chặn)',
+    }),
+    listPrice: z.number().int().nullable().meta({ description: 'Giá lần đăng sẽ gửi (đã làm tròn); null khi chưa tính được' }),
+    rounding,
+    stockToPush: z.number().int().nullable(),
+    stockHeldReason: z.enum(['shop_waiting_opening', 'not_counted']).nullable(),
+    netReceived: z.number().nullable(),
+    feePct: z.number().nullable().meta({ description: '(listPrice − netReceived) / listPrice' }),
+    feeConfigId: z.string().nullable(),
+  })
+  .strict()
+  .meta({ id: 'PushPreviewRow' });
+
+export const PushPreview = z
+  .object({ rows: z.array(PushPreviewRow), summary: z.object({ ready: z.number().int(), blocked: z.number().int() }).strict() })
+  .strict()
+  .meta({ id: 'PushPreview' });
+
 export const ListingSyncResult = z
   .object({
     queued: z.boolean().meta({ description: '`true`: vừa xếp một lượt đồng bộ; `false`: gian hàng đã có lượt chờ, không xếp thêm' }),

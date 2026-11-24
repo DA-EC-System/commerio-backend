@@ -91,13 +91,13 @@ export async function productReadiness(port: ProductPort, productId: string, sho
 }
 
 /** "Category {path} chỉ nhận {maxAxes} thuộc tính biến thể, sản phẩm có {n}" (21 §18.10). */
-function axisLimitLabel(category: CategoryState, variants: readonly { attributes: readonly { attributeId: string }[] }[]): string | null {
+export function axisLimitLabel(category: CategoryState, variants: readonly { attributes: readonly { attributeId: string }[] }[]): string | null {
   if (category.maxAxes === null) return null;
   const axes = new Set(variants.flatMap((v) => v.attributes.map((a) => a.attributeId))).size;
   return `Category ${category.path ?? category.externalCategoryId} chỉ nhận ${category.maxAxes} thuộc tính biến thể, sản phẩm có ${axes}`;
 }
 
-async function categoryState(
+export async function categoryState(
   platform: Marketplace,
   productId: string,
   sameGroupOf: () => Promise<ReadonlySet<string>>,
