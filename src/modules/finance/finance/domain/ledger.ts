@@ -14,6 +14,7 @@ export const LEDGER_KINDS = [
   'fee_transaction',
   'fee_service',
   'fee_optional',
+  'fee_per_item',
   'withholding_tax',
   'customer_refund',
   'return_fee',
@@ -59,6 +60,7 @@ export const LEDGER_KIND_SCOPE: Readonly<Record<LedgerKind, 'shop' | 'company'>>
   fee_transaction: 'shop',
   fee_service: 'shop',
   fee_optional: 'shop',
+  fee_per_item: 'shop',
   withholding_tax: 'shop',
   customer_refund: 'shop',
   return_fee: 'shop',
@@ -150,18 +152,20 @@ export function postDelivered(pkg: DeliveredPackage, configs: DeliveredConfigs):
   push(out, 'platform_subsidy', new Decimal(pkg.platformSubsidy));
   push(out, 'shipping_income', new Decimal(pkg.shippingIncome));
   push(out, 'shipping_cost', new Decimal(pkg.shippingCost).negated());
-  out.push(...configDraftsOfDelivered(revenue, configs));
+  const units = pkg.lines.reduce((s, l) => s + l.quantity, 0);
+  out.push(...configDraftsOfDelivered(revenue, configs, units));
   push(out, 'cogs', cost.negated());
   return out;
 }
 
 /**
- * Khoản theo cấu hình của kiện giao xong, tính trên doanh thu của kiện: bốn loại phí theo cấu hình phí của gian hàng,
+ * Khoản theo cấu hình của kiện giao xong, tính trên doanh thu và số món (`quantity`) của kiện: bốn loại phí phần trăm
+ * và phí cố định mỗi món (`perItemFee` × số món, 25 §6.2, #381) theo cấu hình phí của gian hàng,
  * thuế sàn khấu trừ (chỉ hộ kinh doanh, cá nhân: GTGT + TNCN của quy tắc thuế). Doanh nghiệp không bị sàn khấu trừ;
  * GTGT đầu ra chỉ bỏ khỏi doanh thu khi tính lãi (`profitOf`), không ghi dòng: sàn trả đủ giá bán, dòng doanh thu là
  * tiền sàn sẽ trả để so với quyết toán. Dùng cả khi ghi điều chỉnh hồi tố (25 §10.4).
  */
-export function configDraftsOfDelivered(revenue: Decimal.Value, configs: DeliveredConfigs): Draft[] {
+export function configDraftsOfDelivered(revenue: Decimal.Value, configs: DeliveredConfigs, quantity: number): Draft[] {
   const base = new Decimal(revenue);
   const out: Draft[] = [];
   const fee = configs.fee;
@@ -171,6 +175,7 @@ export function configDraftsOfDelivered(revenue: Decimal.Value, configs: Deliver
     push(out, 'fee_transaction', pct(fee.payload.transactionPct), fee.id);
     push(out, 'fee_service', pct(fee.payload.servicePct), fee.id);
     push(out, 'fee_optional', pct(fee.payload.optionalPct), fee.id);
+    push(out, 'fee_per_item', new Decimal(fee.payload.perItemFee ?? 0).times(quantity).negated(), fee.id);
   }
   const { regime, rules } = configs;
   if (regime && regime.payload.regime !== 'company' && rules) {
@@ -181,11 +186,11 @@ export function configDraftsOfDelivered(revenue: Decimal.Value, configs: Deliver
 
 /**
  * Loại dòng mỗi nhóm cấu hình sinh ra, theo nguồn dòng (điều chỉnh hồi tố, 25 §10.4): cấu hình phí sinh bốn loại phí
- * khi kiện giao và phí khi hoàn khi kiện hoàn về; loại hình thuế, quy tắc thuế sinh thuế sàn khấu trừ khi kiện giao.
+ * phần trăm và phí mỗi món khi kiện giao và phí khi hoàn khi kiện hoàn về; loại hình thuế, quy tắc thuế sinh thuế sàn khấu trừ khi kiện giao.
  * Ngưỡng lệch, biên tối thiểu không sinh dòng sổ.
  */
 export const RETRO_KINDS = {
-  fee: { package: ['fee_fixed', 'fee_transaction', 'fee_service', 'fee_optional'], package_return: ['return_fee'] },
+  fee: { package: ['fee_fixed', 'fee_transaction', 'fee_service', 'fee_optional', 'fee_per_item'], package_return: ['return_fee'] },
   tax: { package: ['withholding_tax'], package_return: [] },
 } as const satisfies Record<string, Record<'package' | 'package_return', readonly LedgerKind[]>>;
 

@@ -82,6 +82,17 @@ export async function currentListingRows(shopId: string): Promise<ListingRow[]> 
     .orderBy(listings.variantId, ...CURRENT_FIRST);
 }
 
+/** Như `findListingRow` cho một lô biến thể, một câu (be#564: kiểm trước khi đăng tới 200 biến thể). */
+export async function currentListingRowsOf(shopId: string, variantIds: readonly string[]): Promise<Map<string, ListingRow>> {
+  if (!variantIds.length) return new Map();
+  const rows = await getDb()
+    .selectDistinctOn([listings.variantId])
+    .from(listings)
+    .where(and(eq(listings.shopId, shopId), inArray(listings.variantId, [...variantIds])))
+    .orderBy(listings.variantId, ...CURRENT_FIRST);
+  return new Map(rows.map((r) => [r.variantId!, r]));
+}
+
 /**
  * Dòng "không quản tồn" hiện hành theo mã SKU sàn (không có biến thể nên `currentListingRows` không gồm): dòng chưa gỡ,
  * không có thì dòng gỡ mới nhất. Cho nối lại gian hàng (#220 đợt 2).

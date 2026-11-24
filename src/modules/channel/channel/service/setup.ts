@@ -372,7 +372,7 @@ function pickListings(
       picked.push({ ...s, variantId: v.id });
     }
   });
-  if (toCreate.length && !input.createGroupId) errors.createGroupId = 'Chọn nhóm hàng cho sản phẩm tạo từ sàn';
+  if (toCreate.length && !input.createGroupId) errors.createGroupId = 'Chọn danh mục sản phẩm cho sản phẩm tạo từ sàn';
   return picked;
 }
 

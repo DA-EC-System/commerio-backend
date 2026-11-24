@@ -1055,15 +1055,8 @@
     {
       "idx": 150,
       "version": "7",
-      "when": 1795520752502,
-      "tag": "20261124114552_can-nang-kich-thuoc-du-lieu",
-      "breakpoints": true
-    },
-    {
-      "idx": 151,
-      "version": "7",
-      "when": 1795520755476,
-      "tag": "20261124114555_can-nang-kich-thuoc-tran",
+      "when": 1795521024769,
+      "tag": "20261124115024_phi-moi-mon",
       "breakpoints": true
     }
   ]

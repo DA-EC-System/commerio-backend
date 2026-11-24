@@ -44,7 +44,9 @@ async function sample() {
   await ledgerRow(c, { kind: 'revenue', amount: 55555, day: '2026-10-17', shopId: shopA });
   const p2 = randomUUID();
   await ledgerRow(c, { kind: 'revenue', amount: 80000, day, shopId: shopB, estimate: true, sourceId: p2 });
-  await ledgerRow(c, { kind: 'fee_fixed', amount: -5000, day, shopId: shopB, estimate: true, sourceId: p2 });
+  await ledgerRow(c, { kind: 'fee_fixed', amount: -3000, day, shopId: shopB, estimate: true, sourceId: p2 });
+  // Phí mỗi món (#381) cũng là phí sàn (21 §21.5 `platformFee`).
+  await ledgerRow(c, { kind: 'fee_per_item', amount: -2000, day, shopId: shopB, estimate: true, sourceId: p2 });
   await ledgerRow(c, { kind: 'cogs', amount: -50000, day, shopId: shopB, sourceId: p2 });
   await ledgerRow(c, { kind: 'supplier_payment', amount: -300000, day });
   await ledgerRow(c, { kind: 'opex', amount: -20000, day });

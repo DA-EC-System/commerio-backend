@@ -170,7 +170,7 @@ describe('GET /variants/bulk-edit', () => {
     expect(list.status).toBe(200);
     const byGroup = rowOf(list, inGroup.variants[0]!.id).suggestions.targetNetPrice!;
     expect(byGroup.value).toBe(120_000);
-    expect(byGroup.basis).toMatch(new RegExp(`theo nhóm ${electronics.name}$`));
+    expect(byGroup.basis).toMatch(new RegExp(`theo danh mục ${electronics.name}$`));
     const byCompany = rowOf(list, inBlank.variants[0]!.id).suggestions.targetNetPrice!;
     expect(byCompany.value).toBe(200_000);
     expect(byCompany.basis).toMatch(/theo công ty$/);

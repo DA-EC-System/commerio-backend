@@ -3,7 +3,7 @@ import { currentCompanyId, getDb } from '../../../../shared/db/client.ts';
 import type { ConfigKind, ConfigStatus } from '../domain/config-version.ts';
 import { type LedgerKind, type NetLine, NOT_SALES_PROFIT } from '../domain/ledger.ts';
 import { isReplaced } from './ledger.ts';
-import { configVersions, ledgerEntries, ledgerReplacements } from './schema.ts';
+import { configVersions, ledgerEntries, ledgerPackageLines, ledgerReplacements } from './schema.ts';
 
 export type ConfigRow = typeof configVersions.$inferSelect;
 
@@ -152,6 +152,8 @@ export interface RetroSource {
   day: string;
   /** Doanh thu của kiện (dòng `revenue`), cơ sở tính phí, thuế. */
   revenue: string;
+  /** Số món của kiện (`ledger_package_lines`, #231), cơ sở phí mỗi món; 0 với kiện hoàn và kiện giao trước #231. */
+  quantity: number;
   /** Đã ghi: dòng ước tính thuộc `kinds` cộng điều chỉnh hồi tố trước đó của nguồn do phiên bản thuộc `configKinds`. */
   charged: string;
 }
@@ -173,6 +175,7 @@ export async function retroSources(
     select e.source_id as "sourceId", e.order_id as "orderId", e.shop_id as "shopId", e.package_id as "packageId",
       e.occurred_on::text as "day",
       coalesce(sum(e.amount) filter (where e.kind = 'revenue'), 0)::text as "revenue",
+      coalesce((select sum(l.quantity) from ${ledgerPackageLines} l where ${type} = 'package' and l.package_id = e.package_id), 0)::int as "quantity",
       (coalesce(sum(e.amount) filter (where e.kind in (${list(kinds)})), 0) + coalesce((
         select sum(a.amount) from ${ledgerEntries} a join ${configVersions} c on c.id = a.config_version_id
         where a.kind = 'adjustment' and a.source_type = ${type} and a.source_id = e.source_id and c.kind in (${list(configKinds)})
