@@ -45,7 +45,11 @@ export function lazadaVariation(
   );
 }
 
-/** Khai báo `variation` của sản phẩm đang có trên sàn (`/product/item/get` `data.variation`), theo thứ tự `Variation1`, `Variation2`… */
+/**
+ * Khai báo `variation` của sản phẩm đang có trên sàn (`/product/item/get` `data.variation`), theo thứ tự `Variation1`, `Variation2`…
+ * Hình dạng đo qua đọc lại item trên shop thử 24/11/2026 (khoá viết hoa `Variation1 { name, label, hasImage, customize, options }`);
+ * request_id của riêng lời gọi `item/get` chưa ghi. Trống thì `lazadaAddVariation` tính như lúc tạo nên vẫn an toàn.
+ */
 export function existingVariation(data: unknown): { name: string; hasImage: boolean }[] {
   const v = (data as { variation?: Record<string, { name?: unknown; hasImage?: unknown }> | null } | undefined)?.variation;
   if (!v || typeof v !== 'object') return [];
@@ -77,7 +81,8 @@ export function lazadaAddVariation(
       { name: axisName(a), hasImage: existing[at]!.hasImage, customize: a.code === null, options: { option: a.values.map((v) => v.label).filter((l) => keep(i, l)) } },
     ]),
   );
-  for (const v of Object.values(fresh)) out[`variation${Object.keys(out).length + 1}`] = v;
+  // Khoá nối sau bắt đầu sau mọi khai báo đang có trên sàn (kể cả thuộc tính sản phẩm này không dùng), không đè khoá đã đặt.
+  Object.values(fresh).forEach((v, n) => (out[`variation${existing.length + n + 1}`] = v));
   return out;
 }
 

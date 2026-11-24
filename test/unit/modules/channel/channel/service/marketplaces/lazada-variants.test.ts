@@ -375,6 +375,11 @@ describe('Lazada: thứ tự khai báo và thêm phân loại (#572)', () => {
       variation1: { name: 'color_family', hasImage: true, customize: false, options: { option: ['Đen'] } },
       variation2: { name: 'smartwear_size', hasImage: false, customize: false, options: { option: ['M'] } },
     });
+    // Sàn có [A, B], lượt này có [B, C]: khoá của C không đè khoá của B
+    expect(lazadaAddVariation([color, custom], [sku(['Đen', 'Ức'])], [{ name: 'smartwear_size', hasImage: false }, { name: 'color_family', hasImage: true }])).toEqual({
+      variation2: { name: 'color_family', hasImage: true, customize: false, options: { option: ['Đen'] } },
+      variation3: { name: 'Phần', hasImage: false, customize: true, options: { option: ['Ức'] } },
+    });
     expect(lazadaAddVariation([size, custom], [sku(['M', 'Ức'])], [{ name: 'smartwear_size', hasImage: false }])).toEqual({
       variation1: { name: 'smartwear_size', hasImage: false, customize: false, options: { option: ['M'] } },
       variation2: { name: 'Phần', hasImage: false, customize: true, options: { option: ['Ức'] } },
