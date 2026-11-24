@@ -212,7 +212,7 @@ describe('ghi vào dữ liệu chuẩn (#521, Documents/21 mục 5.6)', () => {
     problem(await api(token).delete(`/groups/${group.id}?version=1`), 403, 'platform_managed');
     const renamed = await api(token).put(`/groups/${group.id}`, { name: 'Đổi tên', version: group.version });
     problem(renamed, 422, 'validation_failed');
-    expect(renamed.body.errors.name).toBe('Nhóm chuẩn không đổi tên được');
+    expect(renamed.body.errors.name).toBe('Danh mục mặc định không đổi tên được');
     const suggest = { marginCoefficient: 1.4, priceRounding: 1000, reorderLeadDays: null, reorderSafetyQty: null, reorderDefaultQty: null };
     const set = await api(token).put(`/groups/${group.id}`, { suggest, version: 0 });
     ok(set);
@@ -303,7 +303,7 @@ describe('ghi vào dữ liệu chuẩn (#521, Documents/21 mục 5.6)', () => {
     ok(own, 201);
     const withAxes = await api(token).put(`/groups/${group.id}/template`, { axisAttributeIds: [], fields: [], version: tpl.body.version });
     problem(withAxes, 422, 'validation_failed');
-    expect(withAxes.body.errors.axisAttributeIds).toBe('Trục của nhóm chuẩn do nền tảng đặt');
+    expect(withAxes.body.errors.axisAttributeIds).toBe('Thuộc tính biến thể của danh mục mặc định do nền tảng đặt');
     const dup = await api(token).put(`/groups/${group.id}/template`, { fields: [{ fieldId: std[0].fieldId, required: false }], version: tpl.body.version });
     problem(dup, 422, 'validation_failed');
     expect(dup.body.errors['fields.0.fieldId']).toBe('Đã có trong mẫu chuẩn');

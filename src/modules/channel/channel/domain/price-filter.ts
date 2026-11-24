@@ -117,3 +117,25 @@ export function targetForPrice(price: string, fee: FeeInput, taxPct: Decimal.Val
   }
   return t.gt(0) ? t.toFixed() : null;
 }
+
+/** Quy tắc làm tròn đã áp cho giá bộ lọc (Documents/21 §18.11 `PriceRounding`); đuôi 0 trả `null` như ví dụ của hợp đồng. */
+export interface PriceRounding {
+  step: number;
+  ending: number | null;
+  /** Giá sau bước 2, làm tròn tới đồng để hiện. */
+  before: number;
+  after: number;
+}
+
+/** Giá trước, sau bước 4 của một lần tính bộ lọc (không áp cho giá gõ tay: bên gọi trả `null`). Hàm thuần. */
+export function roundingOf(
+  fee: Pick<FeeInput, 'roundStep' | 'roundEnding'>,
+  calc: { rawPrice: string; roundedPrice: string },
+): PriceRounding {
+  return {
+    step: fee.roundStep,
+    ending: fee.roundEnding === 0 ? null : fee.roundEnding,
+    before: toDong(new Decimal(calc.rawPrice)).toNumber(),
+    after: Number(calc.roundedPrice),
+  };
+}

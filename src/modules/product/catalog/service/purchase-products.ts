@@ -106,8 +106,8 @@ async function plan(
       // So với nhóm hợp lệ đầu tiên: dòng đầu sai nhóm thì chỉ dòng đó báo, dòng sau không bị kéo theo.
       const groupId = rows.map(({ item }) => item.groupId).find((g) => g && groups.has(g));
       for (const { item, i } of rows) {
-        if (!item.groupId || !groups.has(item.groupId)) fail(i, 'groupId', 'Chọn nhóm hàng');
-        else if (item.groupId !== groupId) fail(i, 'groupId', 'Các dòng cùng sản phẩm cha phải cùng nhóm hàng');
+        if (!item.groupId || !groups.has(item.groupId)) fail(i, 'groupId', 'Chọn danh mục sản phẩm');
+        else if (item.groupId !== groupId) fail(i, 'groupId', 'Các dòng cùng sản phẩm cha phải cùng danh mục sản phẩm');
       }
       if (onReceipt) {
         // Người nhập kho thường không có quyền sửa sản phẩm: câu nói rõ sản phẩm nào giữ tên và ai đổi được (KB2 2.3).
