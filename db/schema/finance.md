@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V152**, 21 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
+Phiên bản **V153**, 21 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
 **Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
 
@@ -36,7 +36,7 @@ Cột:
 
 - `id` uuid · khoá chính · mặc định `gen_random_uuid()`
 - `company_id` uuid · not null → `core.companies` (theo công ty)
-- `kind` enum `finance.config_kind` · not null: `fee` | `tax_regime` | `tax_rules` | `mismatch_threshold` | `min_margin` | `account_map`
+- `kind` enum `finance.config_kind` · not null: `fee` | `tax_regime` | `tax_rules` | `mismatch_threshold` | `min_margin`
 - `shop_id` uuid · null → `channel.shops.id` (tham chiếu, không có khoá ngoại)
 - `status` enum `finance.config_status` · not null · mặc định `'draft'`: `draft` | `pending_approval` | `rejected` | `scheduled` | `active` | `superseded` | `cancelled`
 - `payload` jsonb · not null
