@@ -13,6 +13,14 @@ import { type Actor, ownShop } from './shops.ts';
 /** Lượt `queued`, `running` quá ngưỡng này (việc mất, worker chết) đọc ra `failed` `run_stale`. */
 export const SYNC_RUN_STALE_MS = STALE_PUSH_MS;
 
+/** Lỗi của lượt quá `SYNC_RUN_STALE_MS`: GET đọc ra, và POST ghi hẳn vào lượt `queued` cũ trước khi tạo lượt mới. */
+export const RUN_STALE_ERROR = { code: 'run_stale', message: 'Quá 30 phút chưa có kết quả, bấm Đồng bộ lại' } as const;
+
+/** Ngưỡng lượt `queued` cũ cho `queuedRunOrInsert`: xếp trước mốc này thì thành `failed` `run_stale`, không dùng lại. */
+export function staleRunCutoff(now = Date.now()): { before: Date; error: { code: string; message: string } } {
+  return { before: new Date(now - SYNC_RUN_STALE_MS), error: { ...RUN_STALE_ERROR } };
+}
+
 export interface SyncRunView {
   id: string;
   shopId: string;
@@ -23,7 +31,7 @@ export interface SyncRunView {
   progress: { processed: number; total: number | null };
   succeeded: number;
   failed: number;
-  errors: SyncRunErrorRow[];
+  errors: Required<SyncRunErrorRow>[];
   error: { code: string; message: string } | null;
 }
 
@@ -40,8 +48,9 @@ export function toSyncRunView(row: SyncRunRow, now = Date.now()): SyncRunView {
     progress: { processed: row.processed, total: row.total },
     succeeded: row.succeeded,
     failed: row.failed,
-    errors: row.errors,
-    error: stale ? { code: 'run_stale', message: 'Quá 30 phút chưa có kết quả, bấm Đồng bộ lại' } : (row.error ?? null),
+    // Dòng ghi trước #571 không có `kind`, `target`, `platformCode`.
+    errors: row.errors.map((e) => ({ ...e, kind: e.kind ?? null, target: e.target ?? null, platformCode: e.platformCode ?? null })),
+    error: stale ? { ...RUN_STALE_ERROR } : (row.error ?? null),
   };
 }
 
@@ -70,17 +79,19 @@ export function syncFixOf(code: string): SyncRunErrorRow['fix'] {
   return null;
 }
 
-/** Câu cho người bán của lỗi do app giữ (lỗi của sàn thì bên gọi tự đặt câu và `platformMessage`). */
+/** Câu cho người bán của lỗi do app giữ (lỗi của sàn đã dịch sẵn câu bằng `errorMap`, #571). */
 const APP_MESSAGES: Record<string, string> = {
   price_missing: 'Chưa có giá bán: chưa có giá chuẩn hay giá muốn thực nhận',
 };
 
-/** Một dòng lỗi của lượt từ lỗi của listing. `platform` là lỗi sàn trả: câu tiếng Việt của app, câu sàn ở `platformMessage`. */
+/**
+ * Một dòng lỗi của lượt từ lỗi của listing. Lỗi sàn đã dịch (`syncErrorOf`, #571): câu tiếng Việt, loại, chỗ sửa; mã và câu
+ * gốc ở `platformCode`, `platformMessage`. Lỗi do app giữ không có các trường đó.
+ */
 export function syncRunErrorOf(
   row: { id: string; variantId: string | null; sellerSku: string | null },
   variant: Pick<ListingVariant, 'productId' | 'productName' | 'attributesLabel'> | undefined,
   error: SyncError,
-  platform: { what: 'tồn' | 'giá' } | null = null,
 ): SyncRunErrorRow {
   return {
     listingId: row.id,
@@ -90,12 +101,11 @@ export function syncRunErrorOf(
     attributesLabel: variant?.attributesLabel || null,
     sku: row.sellerSku,
     code: error.code,
-    message: platform
-      ? error.code === 'no_result'
-        ? 'Sàn không trả kết quả cho SKU này'
-        : `Sàn từ chối cập nhật ${platform.what}`
-      : (APP_MESSAGES[error.code] ?? error.message),
-    platformMessage: platform ? error.message : null,
+    message: APP_MESSAGES[error.code] ?? error.message,
+    kind: error.kind ?? null,
+    target: error.target ?? null,
+    platformCode: error.platformCode ?? null,
+    platformMessage: error.platformMessage ?? null,
     at: error.at,
     fix: syncFixOf(error.code),
   };

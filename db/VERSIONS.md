@@ -3,21 +3,14 @@
 <!-- Sinh tự động bởi `npm run db:docs` từ db/migrations. Không sửa tay. -->
 
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
-Mới nhất: **V150**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+Mới nhất: **V149**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
 
-## V150 · 24/11/2026 · bieu-phi-mau-quyen-du-lieu
+## V149 · 24/11/2026 · onboarding-trang-thai
 
-`db/migrations/20261124090818_bieu-phi-mau-quyen-du-lieu.sql` · viết tay
+`db/migrations/20261124103058_onboarding-trang-thai.sql` · sinh từ schema
 
-- viết tay: quyền, dữ liệu
-- Biểu phí mẫu của nền tảng (Documents/21 §21.6): commerio_app chỉ đọc (ghi bằng role chủ bảng ở route quản trị nền tảng), dữ liệu TikTok ban đầu.
-
-## V149 · 24/11/2026 · bieu-phi-mau
-
-`db/migrations/20261124090816_bieu-phi-mau.sql` · sinh từ schema
-
-- + bảng `finance.fee_templates`
-- `finance.config_versions`: + cột `source_template_id`, `source_template_version`; + khoá ngoại `config_versions_source_template_id_fee_templates_id_fk`; + check `config_versions_source_template`
+- `channel.shops`: + cột `setup_draft`, `setup_draft_version`
+- `core.companies`: + cột `onboarding_completed_at`
 
 ## V148 · 21/11/2026 · luot-dong-bo-rls
 

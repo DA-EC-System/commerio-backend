@@ -130,17 +130,17 @@ describe('updatePriceQuantity', () => {
       'POST /product/202309/products/P2/inventory/update': ok({}),
     });
     const result = await san.methods().updatePriceQuantity(TOKEN, [item('P1', 'S1', { quantity: 1, price: '1000' }), item('P2', 'S2', { quantity: 3 })]);
-    // 12052038 là khuyến mãi khoá giá (docv2 update-price-202309): đổi thành `promotion_locked`, giữ câu của sàn (#223).
+    // 12052038 là khuyến mãi khoá giá (docv2 update-price-202309): adapter trả nguyên mã, dịch ở errorMap (#571).
     expect(result).toMatchObject([
-      { externalSkuId: 'S1', ok: false, code: 'promotion_locked', message: 'Product price locked due to ongoing promotion.' },
+      { externalSkuId: 'S1', ok: false, code: '12052038', message: 'Product price locked due to ongoing promotion.' },
       { externalSkuId: 'S2', ok: true },
     ]);
     // Kết quả riêng từng phần (#223 review 3): tồn của S1 đã lên sàn, chỉ giá lỗi.
-    expect(result[0]).toMatchObject({ stock: { ok: true }, price: { ok: false, code: 'promotion_locked' } });
+    expect(result[0]).toMatchObject({ stock: { ok: true }, price: { ok: false, code: '12052038' } });
     expect(result[1]).toEqual({ externalSkuId: 'S2', ok: true, stock: { ok: true } });
   });
 
-  it('mã khoá do khuyến mãi của tồn (12052393, 12052165) và giá (12019045) → promotion_locked; mã khác giữ nguyên', async () => {
+  it('mã khoá do khuyến mãi của tồn (12052393, 12052165) và giá (12019045) trả nguyên mã của sàn (#571)', async () => {
     const lockedStock = 'Product locked for Promotion and stock can\'t be updated below current stock';
     const san = fakeSan({
       'GET /logistics/202309/warehouses': ok(WAREHOUSES),
@@ -160,10 +160,10 @@ describe('updatePriceQuantity', () => {
       item('P2', 'S4', { price: '1000' }),
     ]);
     expect(result).toMatchObject([
-      { externalSkuId: 'S1', ok: false, code: 'promotion_locked', message: lockedStock },
-      { externalSkuId: 'S2', ok: false, code: 'promotion_locked', message: 'insufficient inventory to cover campaign reservations' },
+      { externalSkuId: 'S1', ok: false, code: '12052393', message: lockedStock },
+      { externalSkuId: 'S2', ok: false, code: '12052165', message: 'insufficient inventory to cover campaign reservations' },
       { externalSkuId: 'S3', ok: false, code: '12052097', message: 'The warehouse does not exist' },
-      { externalSkuId: 'S4', ok: false, code: 'promotion_locked', message: 'price is locked' },
+      { externalSkuId: 'S4', ok: false, code: '12019045', message: 'price is locked' },
     ]);
   });
 
@@ -524,6 +524,11 @@ describe('createProduct: kiểm điều kiện đăng trước khi tạo (#305)'
       platformCode: 'listing_check_failed',
       platformMessage:
         '12052051: The product name must be between 25 and 255 characters, inclusive.; 12052104: The following product attribute is missing, include it and try again. ID:101489',
+      // #567: mỗi lý do một detail để bảng dịch khớp mã Create Product.
+      details: [
+        { field: null, code: '12052051', message: 'The product name must be between 25 and 255 characters, inclusive.' },
+        { field: null, code: '12052104', message: 'The following product attribute is missing, include it and try again. ID:101489' },
+      ],
     });
     expect(paths(san)).not.toContain(CREATE);
   });
