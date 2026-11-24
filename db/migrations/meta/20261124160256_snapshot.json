@@ -1,6 +1,6 @@
 {
-  "id": "0346f346-ad99-4e2e-a248-bed4e502faf2",
-  "prevId": "83c606eb-5da2-4958-b755-297eba6325f8",
+  "id": "c0855841-7497-4b56-a136-0156b196ddfa",
+  "prevId": "5b07e287-b835-486c-af85-70e09fb7910f",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -13625,6 +13625,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "count_source": {
+          "name": "count_source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "expected_qty": {
           "name": "expected_qty",
           "type": "integer",
@@ -13760,6 +13766,10 @@
         "stock_document_lines_counted": {
           "name": "stock_document_lines_counted",
           "value": "\"product\".\"stock_document_lines\".\"counted_qty\" >= 0"
+        },
+        "stock_document_lines_count_source": {
+          "name": "stock_document_lines_count_source",
+          "value": "\"product\".\"stock_document_lines\".\"count_source\" is null or (\"product\".\"stock_document_lines\".\"count_source\" in ('manual', 'platform') and \"product\".\"stock_document_lines\".\"counted_qty\" is not null)"
         },
         "stock_document_lines_inspection": {
           "name": "stock_document_lines_inspection",
