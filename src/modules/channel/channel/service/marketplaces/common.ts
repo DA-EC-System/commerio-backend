@@ -5,6 +5,7 @@ import type { LedgerKind } from '../../../../finance/index.ts';
 import type { RemoteState } from '../../domain/listing.ts';
 import type { PlatformAttribute, PlatformKind, VariantCapabilities } from '../../domain/product-spec.ts';
 import type { DeclaredCapabilities, ShopCapabilities } from '../../domain/shop.ts';
+import type { PlatformErrorDetail, PlatformErrorRule } from '../../domain/platform-error.ts';
 import type { ResponsibleOrg } from '../../../../core/index.ts';
 
 export type { DeclaredCapabilities, PlatformAttribute, ShopCapabilities };
@@ -1027,6 +1028,11 @@ export interface MarketplaceAdapter {
    * ảnh theo giá trị có một phần thì chặn đẩy trước khi gọi sàn. Không khai là sàn không đòi.
    */
   readonly requiresAllVariantImages?: boolean;
+  /**
+   * Bảng dịch lỗi đẩy của sàn (#567, Documents/21 §18.6.4): mã sàn → mã app, loại, câu tiếng Việt, chỗ sửa. Không khai thì
+   * mọi lỗi đẩy ra câu chung `marketplace_rejected`.
+   */
+  readonly errorMap?: readonly PlatformErrorRule[];
   /** Kiểu ảnh sàn nhận làm minh chứng khi từ chối yêu cầu trả (#437); không khai là sàn chưa nhận ảnh qua app. */
   readonly returnImageTypes?: readonly string[];
   /** Báo sàn kho đã nhận hàng trả lúc quét, chưa kiểm hàng (#202, §20.1; Lazada `confirmDelivery`). */
@@ -1178,6 +1184,11 @@ export class MarketplaceError extends Error {
   readonly platformMessage: string | null;
   /** `request_id` sàn trả trong phản hồi lỗi (#504): pino ghi cùng `err` ở các dòng log lỗi, đối chiếu ticket với sàn. */
   requestId: string | null = null;
+  /**
+   * Lý do có cấu trúc của sàn (#567): Lazada `detail[]`, TikTok `fail_reasons` của Check Product Listing. Việc đẩy dịch bằng
+   * `errorMap` của adapter, khớp mã chi tiết trước mã ngoài cùng.
+   */
+  details: PlatformErrorDetail[] = [];
 
   constructor(kind: MarketplaceErrorKind, platformCode: string | null = null, platformMessage: string | null = null) {
     super(`Sàn trả lỗi ${kind}${platformCode ? ` (${platformCode})` : ''}`);

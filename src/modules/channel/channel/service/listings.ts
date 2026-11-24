@@ -49,6 +49,7 @@ import { PUSH_IMAGE_MAX, sendListingPush, sendProductPush } from './shop-jobs.ts
 import { findAppShopProduct, findShopProduct, insertAppShopProduct, matchShopProductsOf, setShopProductPushStarted } from '../repository/shop-products.ts';
 import { MarketplaceError } from './marketplaces/index.ts';
 import { type Actor, onMarketplace, ownShop, platformOf, shopSession } from './shops.ts';
+import { pushErrorView, type PushErrorView } from './push-error.ts';
 
 export const ENTITY = 'listings';
 /** Mỗi lần đẩy tối đa 20 biến thể (`PushBody`). */
@@ -63,7 +64,7 @@ export interface ChannelListing {
   sellerSku: string | null;
   status: ListingStatus;
   rejectReason: string | null;
-  pushError: SyncError | null;
+  pushError: PushErrorView | null;
   pushAttempts: number;
   hiddenBy: ListingRow['hiddenBy'];
   stockSync: ListingRow['stockSync'];
@@ -161,7 +162,7 @@ export function toListing(r: ListingRow, names: ReadonlyMap<string, string> = ne
     sellerSku: r.sellerSku,
     status: r.status,
     rejectReason: r.rejectReason,
-    pushError: r.pushError,
+    pushError: pushErrorView(r.pushError),
     pushAttempts: r.pushAttempts,
     hiddenBy: r.hiddenBy,
     stockSync: r.stockSync,
