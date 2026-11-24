@@ -54,7 +54,7 @@ describe('ghi sổ khi kiện giao xong (25 §10.1)', () => {
 
   it('khoản theo cấu hình tính lại trên doanh thu của kiện (dùng cho điều chỉnh hồi tố): khớp các dòng của postDelivered', () => {
     const fromPkg = postDelivered(pkg, { fee, regime: household, rules }).filter((d) => d.configVersionId);
-    expect(configDraftsOfDelivered('258000.00', { fee, regime: household, rules })).toEqual(fromPkg);
+    expect(configDraftsOfDelivered('258000.00', { fee, regime: household, rules }, 2)).toEqual(fromPkg);
   });
 
   it('khoản 0 đồng không ghi: phí tuỳ chọn 0%, không trợ giá, không ship', () => {
@@ -72,6 +72,24 @@ describe('ghi sổ khi kiện giao xong (25 §10.1)', () => {
     const one = { ...pkg, lines: [{ variantId: 'x', quantity: 1, unitPrice: '99999.00', unitCost: '0' }] };
     const odd = { id: 'f', payload: { ...fee.payload, fixedPct: 4.44, transactionPct: 0, servicePct: 0 } };
     expect(amounts(postDelivered(one, { fee: odd })).fee_fixed).toBe('-4440.00');
+  });
+
+  it('phí cố định mỗi món (#381): một dòng fee_per_item = phí × tổng số món của kiện, mang mã phiên bản phí', () => {
+    const perItem = { id: 'fee-v2', payload: { ...fee.payload, perItemFee: 3000 } };
+    const two = { ...pkg, lines: [{ ...pkg.lines[0]!, quantity: 2 }] };
+    const drafts = postDelivered(two, { fee: perItem });
+    expect(drafts.find((d) => d.kind === 'fee_per_item')).toEqual({ kind: 'fee_per_item', amount: '-6000.00', configVersionId: 'fee-v2' });
+    expect(configDraftsOfDelivered('258000.00', { fee: perItem }, 2)).toEqual(drafts.filter((d) => d.configVersionId));
+  });
+
+  it('bản phí không có phí mỗi món (hay bằng 0): không có dòng fee_per_item, sổ như trước', () => {
+    expect(postDelivered(pkg, { fee }).some((d) => d.kind === 'fee_per_item')).toBe(false);
+    const zero = { id: 'f0', payload: { ...fee.payload, perItemFee: 0 } };
+    expect(postDelivered(pkg, { fee: zero }).some((d) => d.kind === 'fee_per_item')).toBe(false);
+    // Kiện không có dòng hàng (giao trước #231, hồi tố đọc 0 món) thì không ước tính phí mỗi món.
+    expect(configDraftsOfDelivered('258000.00', { fee: { id: 'f', payload: { ...fee.payload, perItemFee: 3000 } } }, 0)).not.toContainEqual(
+      expect.objectContaining({ kind: 'fee_per_item' }),
+    );
   });
 });
 
