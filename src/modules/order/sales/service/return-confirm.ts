@@ -46,9 +46,9 @@ export async function markReturnConfirmed(id: string): Promise<boolean> {
 // trước mỗi lượt kéo yêu cầu trả (`returnsAwaitingRefundApproval` → `markRefundApproved` / `flagRefundApprovalFailed`).
 
 export const REFUND_APPROVAL_FAILED_NOTE = 'Chưa báo được sàn đồng ý hoàn tiền';
-export const REFUND_CLAIM_NOTE = 'Hàng trả về thiếu hoặc sai';
+export const REFUND_CLAIM_NOTE = 'Hàng trả về thiếu, sai mẫu hoặc hỏng';
 
-/** Câu cờ khi phiếu kiểm hàng hoàn có khiếu nại: app không báo sàn, người bán xử lý trên sàn. */
+/** Câu cờ khi phiếu kiểm hàng hoàn có dòng thiếu, sai mẫu, hỏng: app không báo sàn, người bán quyết trên Seller Center. */
 export const refundClaimNote = (inspectionNumber: string | null) =>
   `${REFUND_CLAIM_NOTE}${inspectionNumber ? ` (phiếu ${inspectionNumber})` : ''}: app không báo sàn đồng ý hoàn tiền. Từ chối nhận hàng hoặc khiếu nại trên Seller Center trước hạn của sàn.`;
 

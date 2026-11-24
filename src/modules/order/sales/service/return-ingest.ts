@@ -286,8 +286,9 @@ export async function onReturnInspected(
 }
 
 /**
- * Sàn có bước đồng ý hoàn tiền sau kiểm hàng (#392, TikTok): phiếu không khiếu nại thì chờ channel báo sàn (`pending`); có
- * khiếu nại (hàng về thiếu, sai) thì không báo, bật Cần xử lý để người bán từ chối nhận hàng hay khiếu nại trên sàn (25 mục 9).
+ * Sàn có bước đồng ý hoàn tiền sau kiểm hàng (#392 TikTok, #437 Lazada): phiếu không có vấn đề thì chờ channel báo sàn
+ * (`pending`); có dòng thiếu, sai mẫu hay hỏng (`returnInspectionClaimed`) thì không báo, bật Cần xử lý để người bán quyết trên
+ * Seller Center (25 mục 9). Luật chung mọi sàn.
  */
 async function refundApprovalOf(row: ReturnRow, inspectionId: string, ctx?: { marketplaceReturns?: MarketplaceReturns }): Promise<ReturnPatch> {
   if (row.source !== 'marketplace' || !row.shopId || !ctx?.marketplaceReturns) return {};
