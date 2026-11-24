@@ -11,4 +11,4 @@ export type BlockerTarget =
   | { kind: 'product_field'; field: 'images' | 'variantImages' | 'sizeChart' | 'name' }
   | { kind: 'shop'; field: 'fee_config' | 'category_permission' }
   | { kind: 'platform_product'; externalProductIds: string[] }
-  | { kind: 'listing'; listingId: string };
+  | { kind: 'listing'; listingId: string | null };

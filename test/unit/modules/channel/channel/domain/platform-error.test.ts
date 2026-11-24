@@ -186,6 +186,7 @@ describe('appPushError: mã của app có kind và chỗ sửa', () => {
     ['dimensions_missing', 'data', { kind: 'variant_field', field: 'dimensions' }],
     ['images_missing', 'data', { kind: 'product_field', field: 'images' }],
     ['category_unmapped', 'data', { kind: 'category' }],
+    ['axis_shape', 'data', { kind: 'axis' }],
     ['category_not_permitted', 'platform', { kind: 'shop', field: 'category_permission' }],
     ['marketplace_unavailable', 'connection', null],
     ['shop_not_connected', 'connection', null],

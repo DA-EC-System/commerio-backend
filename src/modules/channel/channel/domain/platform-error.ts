@@ -158,10 +158,11 @@ const APP_ERRORS: Record<string, { kind: PushErrorKind; target: BlockerTarget | 
   variant_images_missing: { kind: 'data', target: { kind: 'product_field', field: 'variantImages' } },
   size_chart_missing: { kind: 'data', target: { kind: 'product_field', field: 'sizeChart' } },
   category_unmapped: { kind: 'data', target: { kind: 'category' } },
+  // Mã chung của spec, câu không nêu attribute nào: mở tab sàn ở category (readiness #564 tách theo từng attribute).
   spec_incomplete: { kind: 'data', target: { kind: 'category' } },
   category_not_permitted: { kind: 'platform', target: { kind: 'shop', field: 'category_permission' } },
   axis_unmapped: { kind: 'data', target: { kind: 'axis' } },
-  axis_shape: { kind: 'data', target: { kind: 'category' } },
+  axis_shape: { kind: 'data', target: { kind: 'axis' } },
   platform_product_ambiguous: { kind: 'data', target: null },
   marketplace_unavailable: { kind: 'connection', target: null },
   shop_not_connected: { kind: 'connection', target: null },

@@ -386,8 +386,9 @@ const listingStatus = z.enum(['pushing', 'push_failed', 'under_review', 'rejecte
 const syncState = z.enum(['synced', 'pending', 'error']);
 const syncError = z.object({ code: z.string(), message: z.string(), at: iso }).strict().nullable();
 
-/** Chỗ sửa (21 §18.10 `BlockerTarget`). */
-const blockerTarget = z
+// BẢN TẠM (#567): chép y hệt `BlockerTarget` của #564 (feature/564-readiness); gộp #564 thì bỏ bản này, dùng bản gốc.
+/** Chỗ sửa của mục chặn (21 §18.10 `BlockerTarget`, cộng `listing` của 18.11; kiểu ở `domain/blocker.ts`). */
+export const BlockerTarget = z
   .discriminatedUnion('kind', [
     z.object({ kind: z.literal('category') }).strict(),
     z.object({ kind: z.literal('spec_attribute'), attributeCode: z.string() }).strict(),
@@ -396,7 +397,7 @@ const blockerTarget = z
     z.object({ kind: z.literal('product_field'), field: z.enum(['images', 'variantImages', 'sizeChart', 'name']) }).strict(),
     z.object({ kind: z.literal('shop'), field: z.enum(['fee_config', 'category_permission']) }).strict(),
     z.object({ kind: z.literal('platform_product'), externalProductIds: z.array(z.string()) }).strict(),
-    z.object({ kind: z.literal('listing'), listingId: z.string() }).strict(),
+    z.object({ kind: z.literal('listing'), listingId: z.uuid().nullable() }).strict(),
   ])
   .meta({ id: 'BlockerTarget' });
 
@@ -406,7 +407,7 @@ const pushError = z
     code: z.string(),
     kind: z.enum(['data', 'platform', 'connection']).nullable(),
     message: z.string(),
-    target: blockerTarget.nullable(),
+    target: BlockerTarget.nullable(),
     variantId: z.string().nullable(),
     platformCode: z.string().nullable(),
     platformMessage: z.string().nullable(),

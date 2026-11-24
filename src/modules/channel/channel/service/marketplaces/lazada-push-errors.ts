@@ -80,7 +80,7 @@ export const LAZADA_PUSH_ERRORS: readonly PlatformErrorRule[] = [
     platformCode: /^(BIZ_CHECK_EXIST_OUTER_IMAGE|4138)$/,
     code: 'image_rejected',
     kind: 'platform',
-    message: 'Lazada không tải được ảnh sản phẩm; thay ảnh khác',
+    message: (m) => `${m.ctx.platformName} không tải được ảnh sản phẩm; thay ảnh khác`,
     target: { kind: 'product_field', field: 'images' },
   },
   {
