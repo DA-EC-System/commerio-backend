@@ -281,10 +281,11 @@ export interface RemoteFilter {
 
 function pageFilter(shopId: string, { status, search, skuIds }: RemoteFilter): SQL {
   const parts: SQL[] = [sql`${remoteSkus.shopId} = ${shopId}`];
-  // Cả danh sách là một tham số mảng (không một tham số mỗi id): shop lớn có hàng chục nghìn SKU trong nháp vẫn dưới giới hạn
-  // 65 535 tham số của PostgreSQL.
-  if (skuIds && 'in' in skuIds) parts.push(sql`${remoteSkus.externalSkuId} = any(${[...skuIds.in]}::text[])`);
-  if (skuIds && 'notIn' in skuIds && skuIds.notIn.length) parts.push(sql`${remoteSkus.externalSkuId} <> all(${[...skuIds.notIn]}::text[])`);
+  // Cả danh sách là MỘT tham số chuỗi JSON: Drizzle trải mảng truyền vào `sql` thành một tham số mỗi phần tử (và `($1,$2)::text[]`
+  // không phải mảng), nên shop lớn có hàng chục nghìn SKU trong nháp vượt giới hạn 65 535 tham số của PostgreSQL.
+  const idList = (ids: readonly string[]) => sql`array(select jsonb_array_elements_text(${JSON.stringify(ids)}::jsonb))`;
+  if (skuIds && 'in' in skuIds) parts.push(sql`${remoteSkus.externalSkuId} = any(${idList(skuIds.in)})`);
+  if (skuIds && 'notIn' in skuIds && skuIds.notIn.length) parts.push(sql`${remoteSkus.externalSkuId} <> all(${idList(skuIds.notIn)})`);
   if (status !== 'all') parts.push(sql`(${linkStatus}) = ${status}`);
   if (search?.trim()) {
     const hay = sql`concat_ws(' ', ${remoteSkus.title}, ${remoteSkus.titleEn}, ${remoteSkus.sellerSku}, ${remoteSkus.externalSkuId}, ${remoteSkus.externalProductId})`;
