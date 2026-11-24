@@ -45,26 +45,25 @@ describe('targetCombinable', () => {
   const leaf = [attr({ code: 'color_family' }), attr({ code: 'size', allowCustom: false })];
 
   it('mã sales attribute theo combinable; mã không có trong leaf thì không', () => {
-    expect(targetCombinable('color_family', leaf, null)).toBe(true);
-    expect(targetCombinable('size', leaf, null)).toBe(false);
-    expect(targetCombinable('lạ', leaf, null)).toBe(false);
+    expect(targetCombinable('color_family', leaf)).toBe(true);
+    expect(targetCombinable('size', leaf)).toBe(false);
+    expect(targetCombinable('lạ', leaf)).toBe(false);
   });
 
-  it('__custom theo customAxisName; caps null coi như nhận', () => {
-    expect(targetCombinable('__custom', leaf, { customAxisName: true })).toBe(true);
-    expect(targetCombinable('__custom', leaf, { customAxisName: false })).toBe(false);
-    expect(targetCombinable('__custom', leaf, null)).toBe(true);
+  it('__custom không bao giờ là đích ghép (mỗi trục tên tự đặt là một thuộc tính riêng)', () => {
+    expect(targetCombinable('__custom', leaf)).toBe(false);
+    expect(targetCombinable('__custom', null)).toBe(false);
   });
 
   it('leaf chưa lấy attribute thì cho qua', () => {
-    expect(targetCombinable('color_family', null, null)).toBe(true);
+    expect(targetCombinable('color_family', null)).toBe(true);
   });
 });
 
 describe('combineTarget', () => {
   it('ưu tiên sale prop bắt buộc ghép được', () => {
     const leaf = [attr({ code: 'color_family' }), attr({ code: 'size', required: true })];
-    expect(combineTarget(leaf, { customAxisName: false })).toBe('size');
+    expect(combineTarget(leaf)).toBe('size');
   });
 
   it('không có bắt buộc ghép được thì lấy sale prop ghép được đầu tiên', () => {
@@ -73,17 +72,15 @@ describe('combineTarget', () => {
       attr({ code: 'color_family' }),
       attr({ code: 'scent' }),
     ];
-    expect(combineTarget(leaf, { customAxisName: false })).toBe('color_family');
+    expect(combineTarget(leaf)).toBe('color_family');
   });
 
-  it('không sale prop nào ghép được thì __custom khi sàn nhận tên tự đặt, không thì null', () => {
-    const leaf = [attr({ code: 'weight', input: 'number' })];
-    expect(combineTarget(leaf, { customAxisName: true })).toBe('__custom');
-    expect(combineTarget(leaf, { customAxisName: false })).toBeNull();
+  it('không sale prop nào ghép được thì null, kể cả sàn nhận tên tự đặt', () => {
+    expect(combineTarget([attr({ code: 'weight', input: 'number' })])).toBeNull();
   });
 
   it('leaf chưa lấy attribute thì null', () => {
-    expect(combineTarget(null, { customAxisName: true })).toBeNull();
+    expect(combineTarget(null)).toBeNull();
   });
 });
 
@@ -94,6 +91,13 @@ describe('axisGroups', () => {
     ).toEqual([
       { target: 'color_family', attributeIds: ['c', 'a'] },
       { target: 'size', attributeIds: ['b'] },
+    ]);
+  });
+
+  it('mỗi trục __custom một nhóm riêng', () => {
+    expect(axisGroups({ a: '__custom', b: '__custom' }, ['a', 'b'])).toEqual([
+      { target: '__custom', attributeIds: ['a'] },
+      { target: '__custom', attributeIds: ['b'] },
     ]);
   });
 });

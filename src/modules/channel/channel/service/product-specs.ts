@@ -75,8 +75,7 @@ export interface SpecView {
   /** Gợi ý ghép trục cho leaf đang xét (`?categoryId` hoặc leaf của spec); null khi không có leaf hay chưa có attribute (#448). */
   suggestedAxisMap: Record<string, string> | null;
   suggestedValueMap: Record<string, string> | null;
-  /** Khả năng khai biến thể của leaf đó; null khi sàn không khai hoặc không có leaf (#448). */
-  /** Khả năng của adapter kèm `combineTarget` tính trên leaf (#568) */
+  /** Khả năng khai biến thể của leaf đó kèm `combineTarget` (#568); null khi sàn không khai hoặc không có leaf (#448). */
   variantCapabilities: (VariantCapabilities & { combineTarget: string | null }) | null;
 }
 
@@ -85,6 +84,8 @@ export interface SpecProduct {
   productId: string;
   axes: AxisInput[];
   valueIds: Map<string, string>; // attributeValueId → attributeId
+  /** Giá trị trục của từng SKU (attributeId → nhãn), kiểm thuộc tính biến thể ghép (#568). */
+  variantValues: Record<string, string>[];
   originCountry: string | null;
   brand: string | null;
 }
@@ -105,6 +106,7 @@ export function specProductOf(variants: readonly ListingVariant[]): SpecProduct 
     productId: first?.productId ?? '',
     axes: [...axes.values()],
     valueIds,
+    variantValues: variants.map((v) => Object.fromEntries(v.attributes.map((a) => [a.attributeId, a.value]))),
     originCountry: first?.originCountry ?? null,
     brand: first?.brand ?? null,
   };
@@ -200,6 +202,8 @@ export async function missingOf(
     axes: product.axes,
     fallbacks: resolvedValues(resolved),
     caps: attributes ? (adapter.variantCapabilities?.(attributes) ?? null) : null,
+    variants: product.variantValues,
+    platformName: adapter.name,
   });
   return { missing, attributes, resolved };
 }
@@ -237,7 +241,7 @@ export async function axisSuggestion(
   return {
     suggestedAxisMap: axisMap,
     suggestedValueMap: valueMap,
-    variantCapabilities: caps && { ...caps, combineTarget: combineTarget(leaf, caps) },
+    variantCapabilities: caps && { ...caps, combineTarget: combineTarget(leaf) },
   };
 }
 
@@ -535,6 +539,8 @@ export async function specChecks(
       axes: product.axes,
       fallbacks: resolvedValues(resolved),
       caps: attributes ? (adapter.variantCapabilities?.(attributes) ?? null) : null,
+      variants: product.variantValues,
+      platformName: adapter.name,
     });
     out.set(productId, {
       externalCategoryId: row.externalCategoryId,

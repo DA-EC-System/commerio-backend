@@ -23,7 +23,7 @@ const cascade: PlatformAttribute = {
   tier: 'category',
   raw: { id: 35 },
 };
-const product: SpecProduct = { productId: 'p', axes: [], valueIds: new Map(), originCountry: null, brand: null };
+const product: SpecProduct = { productId: 'p', axes: [], valueIds: new Map(), variantValues: [], originCountry: null, brand: null };
 const run = (value: string | string[] | undefined, attr = cascade) =>
   normalizeSpec({ externalCategoryId: 'L', attributes: value === undefined ? {} : { propCascade: value }, axisMap: {}, valueMap: {}, version: null }, [attr], product, {});
 

@@ -109,11 +109,55 @@ describe('specMissing với caps', () => {
     expect(specMissing({ spec: { ...base, axisMap: { a1: 'color_family' } }, attributes, axes, caps })).toEqual([]);
   });
 
-  it('axis_shape: nhiều trục hơn category nhận', () => {
+  it('axis_shape: nhiều trục hơn category nhận; mỗi trục __custom tính riêng', () => {
     const two = [...axes, { attributeId: 'a2', name: 'Cỡ' }];
     const spec = { ...base, axisMap: { a1: CUSTOM_AXIS, a2: CUSTOM_AXIS } };
     expect(specMissing({ spec, attributes: [], axes: two, caps: { ...tiktokCaps, maxAxes: 1 } })).toEqual([
       { code: 'axes', label: 'Sản phẩm có 2 trục, category này nhận tối đa 1', reason: 'axis_shape' },
     ]);
+  });
+
+  describe('thuộc tính biến thể ghép (#568)', () => {
+    const two = [...axes, { attributeId: 'a2', name: 'Cỡ' }];
+    const leaf = [sales('color_family', 'Màu sắc')];
+    const caps: VariantCapabilities = { ...lazadaCaps, maxAxes: 1, maxValueLength: 20, maxAxisValues: 50 };
+    const combinedSpec = { ...base, axisMap: { a1: 'color_family', a2: 'color_family' } };
+    const variants = [
+      { a1: 'Đỏ', a2: 'S' },
+      { a1: 'Đỏ', a2: 'M' },
+    ];
+
+    it('hai trục cùng đích ghép được tính là một thuộc tính biến thể: không axis_shape', () => {
+      expect(specMissing({ spec: combinedSpec, attributes: leaf, axes: two, caps, variants, platformName: 'Lazada' })).toEqual([]);
+    });
+
+    it('đích không nhận chữ ghép (chỉ lựa chọn có sẵn, kiểu số) thì axis_unmapped từng trục', () => {
+      for (const bad of [{ ...leaf[0]!, allowCustom: false }, { ...leaf[0]!, input: 'number' as const }]) {
+        expect(specMissing({ spec: combinedSpec, attributes: [bad], axes: two, caps, variants }).map((m) => [m.code, m.reason])).toEqual([
+          ['a1', 'axis_unmapped'],
+          ['a2', 'axis_unmapped'],
+        ]);
+      }
+    });
+
+    it('axis_value_too_long: giá trị ghép dài hơn maxValueLength, chặn chứ không rút gọn', () => {
+      const long = [{ a1: 'Xanh dương đậm', a2: 'XXL rộng' }];
+      expect(specMissing({ spec: combinedSpec, attributes: leaf, axes: two, caps, variants: long, platformName: 'Lazada' })).toEqual([
+        { code: 'color_family', label: 'Giá trị “Xanh dương đậm - XXL rộng” dài 25 ký tự, Lazada nhận tối đa 20', reason: 'axis_value_too_long' },
+      ]);
+    });
+
+    it('axis_too_many_values: số giá trị ghép vượt maxAxisValues', () => {
+      const many = Array.from({ length: 3 }, (_, i) => ({ a1: 'Đỏ', a2: String(i) }));
+      expect(specMissing({ spec: combinedSpec, attributes: leaf, axes: two, caps: { ...caps, maxAxisValues: 2 }, variants: many })).toEqual([
+        { code: 'color_family', label: 'Thuộc tính biến thể ghép có 3 giá trị, sàn nhận tối đa 2', reason: 'axis_too_many_values' },
+      ]);
+    });
+
+    it('giới hạn chỉ kiểm trên trục ghép: trục đơn dài vẫn qua', () => {
+      const spec = { ...base, axisMap: { a1: 'color_family' } };
+      const one = [{ a1: 'Một giá trị rất dài hơn hai mươi ký tự' }];
+      expect(specMissing({ spec, attributes: leaf, axes, caps, variants: one })).toEqual([]);
+    });
   });
 });

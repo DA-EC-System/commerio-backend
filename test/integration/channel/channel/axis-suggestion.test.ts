@@ -156,7 +156,7 @@ describe('gợi ý ghép trục', () => {
       addVariant: true,
       maxValueLength: null,
       maxAxisValues: null,
-      combineTarget: '__custom',
+      combineTarget: null,
     });
   });
 
