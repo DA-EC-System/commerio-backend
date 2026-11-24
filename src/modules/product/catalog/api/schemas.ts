@@ -6,8 +6,9 @@ import { skuPatternError, valueCode } from '../domain/sku.ts';
 import { PLATFORM_KINDS, SPEC_INPUTS } from '../domain/specs.ts';
 import { MAX_PRODUCT_IMAGES } from '../service/product-images.ts';
 
-// Giới hạn (Documents/21 V24, mục 5.2): tên nhóm hàng 60, sản phẩm 200, mô tả 5000; tên thuộc tính 15, giá trị 20
-// (luật Lazada `VARIATION_*`, 19/11/2026).
+// Giới hạn (Documents/21 V24, mục 5.2): tên nhóm hàng 60, sản phẩm 200, mô tả 5000; tên thuộc tính 20, giá trị 20.
+// Tên 20 là giới hạn tên tự đặt nhỏ nhất của các sàn đang nối (TikTok 20, Lazada 50 đo thật; trước là 15 theo tài liệu Lazada
+// cũ, đổi 24/11/2026, #572); giới hạn của từng sàn kiểm lúc đăng bằng `variantCapabilities.maxAxisNameLength`.
 
 const name = (what: string, max: number) =>
   z
@@ -115,7 +116,7 @@ export const SettingsBody = z.object({ skuPattern, suggest: keepSuggest, version
 // ---------- Thuộc tính ----------
 
 const CODE = /^[A-Z0-9]{1,6}$/;
-const MAX_ATTRIBUTE_NAME = 15;
+const MAX_ATTRIBUTE_NAME = 20;
 const MAX_VALUE = 20;
 /** Lazada: tối đa 50 giá trị mỗi trục của một sản phẩm. */
 const MAX_AXIS_VALUES = 50;

@@ -61,7 +61,7 @@ Ràng buộc và index:
 - unique index (`company_id`, `lower("name")`) `attributes_company_lower_name_uq` where `company_id is not null`
 - unique index (`platform_kind`) `attributes_platform_kind_uq` where `company_id is null and platform_kind is not null`
 - check `attributes_platform_kind`: `platform_kind in ('color', 'size', 'shoe_size', 'bra_size', 'age', 'ring_size', 'storage', 'version', 'screen_size', 'connector', 'length', 'battery_capacity', 'voltage', 'power', 'volume', 'weight', 'flavor', 'scent', 'pack', 'diaper_size', 'bed_size', 'style', 'compatible_model')`
-- check `attributes_name_length`: `char_length(name) <= 15`
+- check `attributes_name_length`: `char_length(name) <= 20`
 
 Trỏ vào bảng này:
 
