@@ -90,6 +90,7 @@ export const Shop = z
     platform: z.string().meta({ description: 'Mã sàn (`ShopPlatform.platform`)' }),
     externalShopId: z.string().meta({ description: 'Mã gian hàng (người bán) phía sàn' }),
     shopName: z.string(),
+    displayName: z.string().nullable().meta({ description: 'Tên người dùng đặt (1–60 ký tự); null thì hiện `shopName` (#565)' }),
     region: z.string().nullable(),
     status: z.enum(['connecting', 'active', 'needs_reauth', 'disconnected']),
     accessExpiresAt: iso.nullable(),
@@ -103,6 +104,8 @@ export const Shop = z
     lastOrderSyncAt: iso.nullable(),
     orderCutoffAt: iso.nullable().meta({ description: 'Mốc kéo đơn, null khi chưa thiết lập' }),
     ordersPulledOkAt: iso.nullable().meta({ description: 'Giờ bắt đầu lượt lấy đơn gần nhất chạy xong trọn (#223)' }),
+    openOrdersPulledAt: iso.nullable().meta({ description: 'Lượt kéo đơn còn mở sau thiết lập đã xong; null khi chưa xong (#198)' }),
+    unlinkedSkuCount: z.number().int().meta({ description: 'Số SKU sàn chưa liên kết, không tính SKU chờ CEO duyệt (#565)' }),
     ordersStale: z.boolean().meta({
       description:
         'Đơn chưa cập nhật (21 §18.6.6): mất uỷ quyền, hoặc 15 phút chưa có lượt lấy đơn chạy trọn. SKU bán ở gian hàng này tạm không đẩy tăng tồn trên mọi gian hàng; listing bị giữ có `stockSyncError.code = orders_stale`',
@@ -1030,9 +1033,22 @@ export const UpdateShopBody = z
       .int('Hạn trả hàng là số ngày nguyên')
       .min(1, 'Hạn trả hàng từ 1 đến 60 ngày')
       .max(60, 'Hạn trả hàng từ 1 đến 60 ngày')
-      .meta({ description: 'Hạn trả hàng (ngày); chỉ sàn `capabilities.returnWindow = days` (#362)' }),
+      .optional()
+      .meta({ description: 'Hạn trả hàng (ngày); chỉ sàn `capabilities.returnWindow = days` (#362). Bỏ trống là giữ' }),
+    displayName: z
+      .string('Tên gian hàng là chuỗi')
+      .trim()
+      .min(1, 'Tên gian hàng từ 1 đến 60 ký tự')
+      .max(60, 'Tên gian hàng từ 1 đến 60 ký tự')
+      .nullable()
+      .optional()
+      .meta({ description: 'Tên đặt riêng (#565, 21 §18.7.1); `null` bỏ tên riêng, hiện tên sàn; bỏ trống là giữ' }),
   })
   .strict()
+  .refine((b) => b.returnWindowDays !== undefined || b.displayName !== undefined, {
+    message: 'Chọn ít nhất một thông tin để sửa',
+    path: ['returnWindowDays'],
+  })
   .meta({ id: 'ShopUpdateInput' });
 
 // Category và attribute của sàn (#400, Documents/21 §18.5).
