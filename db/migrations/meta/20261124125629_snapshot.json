@@ -1,6 +1,6 @@
 {
-  "id": "818476e4-5ef4-4e50-a0d1-7b5c682f9848",
-  "prevId": "901ee953-e8b2-4232-9e35-76f4bdbb9890",
+  "id": "2e8801a6-c201-4b03-9d93-9f92b0675346",
+  "prevId": "7b7a1dae-c08c-4636-bbe3-186d9f5931a2",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -16003,6 +16003,7 @@
         "fee_transaction",
         "fee_service",
         "fee_optional",
+        "fee_per_item",
         "withholding_tax",
         "customer_refund",
         "return_fee",
