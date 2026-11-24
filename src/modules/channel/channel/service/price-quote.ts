@@ -4,6 +4,7 @@
 // `belowFloor`, `marginPct` null (luật R4 của 21): route nhận giá tuỳ ý, cờ dưới giá thấp nhất cho mọi giá gõ thử là dò
 // được giá thấp nhất rồi suy ra giá vốn.
 import { AppError } from '../../../../shared/errors/app-error.ts';
+import { type PriceRounding, roundingOf } from '../domain/price-filter.ts';
 import type { ProductPort } from './product-port.ts';
 import { evaluatePrices, shopPriceConfig } from './price-inputs.ts';
 import { firstPushCalculations } from './repricing.ts';
@@ -24,13 +25,15 @@ export interface Quote {
   netReceived: number | null;
   belowFloor: boolean | null;
   feeWarning: 'over_50' | null;
+  /** Làm tròn đã áp (21 §18.11); null khi giá gõ thử hoặc chưa tính được giá. */
+  rounding: PriceRounding | null;
   feeConfigId: string | null;
   blocked: { code: 'price_missing' | 'fee_config_invalid' | 'fee_not_configured' } | null;
   /** null khi người gọi thiếu `inventory.cost.view`, hoặc chưa có giá vốn. */
   marginPct: number | null;
 }
 
-const empty = { netReceived: null, belowFloor: null, feeWarning: null } as const;
+const empty = { netReceived: null, belowFloor: null, feeWarning: null, rounding: null } as const;
 
 export async function quotePrices(port: ProductPort, productId: string, items: readonly QuoteItem[], canSeeCost: boolean): Promise<Quote[]> {
   const own = new Set((await port.variants(undefined, { productIds: [productId] })).map((v) => v.id));
@@ -82,6 +85,7 @@ export async function quotePrices(port: ProductPort, productId: string, items: r
               netReceived: Number(r.net),
               belowFloor: canSeeCost ? r.belowFloor : null,
               feeWarning: r.feeWarning,
+              rounding: it.listPrice === undefined ? roundingOf(config.fee, preview.get(it.variantId)!) : null,
               marginPct: canSeeCost && r.marginPct !== null ? Number(r.marginPct) : null,
               blocked: null,
             }

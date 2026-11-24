@@ -205,6 +205,8 @@ export const MISSING_REASONS = [
   'category_removed',
   'sales_required',
   'axis_shape',
+  // Số thuộc tính biến thể vượt `maxAxes` của leaf (be#564, Documents/21 §18.8.6, §18.10); `axis_shape` còn lại cho SKU khác bộ trục.
+  'axis_limit',
   'axis_value_too_long',
   'axis_too_many_values',
   'axis_name_too_long',
@@ -292,7 +294,7 @@ export function specMissing(input: SpecMissingInput): MissingItem[] {
     // Đếm thuộc tính biến thể sẽ gửi sàn: mỗi đích một cái; trục chưa ánh xạ tính riêng (#568)
     const count = groups.length + axes.filter((a) => !spec.axisMap[a.attributeId]).length;
     if (count > caps.maxAxes) {
-      out.push({ code: 'axes', label: `Sản phẩm có ${count} trục, category này nhận tối đa ${caps.maxAxes}`, reason: 'axis_shape' });
+      out.push({ code: 'axes', label: `Sản phẩm có ${count} thuộc tính biến thể, category này nhận tối đa ${caps.maxAxes}`, reason: 'axis_limit' });
     }
     out.push(...combinedLimits(combined, input.variants ?? [], caps, input.platformName ?? 'sàn'));
     if (caps.maxAxisNameLength !== null) {

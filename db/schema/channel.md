@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V150**, 24 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
+Phiên bản **V151**, 24 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
 **Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
 
@@ -551,6 +551,12 @@ Cột:
 - `title` text · not null
 - `title_en` text · null
   Tên tiếng Anh trên sàn (Lazada `name_en`, #396); null khi sàn không có.
+- `variant_label` text · null
+  Nhãn biến thể sàn trả (giá trị thuộc tính bán, vd "Đỏ, M"; TikTok `sales_attributes[].value_name`, Lazada `saleProp`), null khi sàn không có (#565, Documents/21 §18.12): lõi gợi ý ghép theo tên cần nhãn để phân biệt SKU anh em.
+- `image_url` text · null
+  Ảnh đầu tiên của sản phẩm trên sàn (#565, `RemoteProduct.imageUrl`); null khi sàn chưa trả.
+- `external_category_id` text · null: mã bên ngoài (sàn, cổng thanh toán)
+  Category lá của sản phẩm trên sàn (#565, `RemoteProduct.externalCategoryId`); null khi sàn chưa trả.
 - `state` text · not null
 - `quantity` integer · not null
 - `price` numeric(18,2) · null
@@ -670,6 +676,8 @@ Cột:
 - `platform` text · not null → `channel.marketplaces.code` (khoá ngoại viết tay)
 - `external_shop_id` text · not null: mã bên ngoài (sàn, cổng thanh toán)
 - `shop_name` text · not null
+- `display_name` text · null
+  Tên người dùng đặt ở trang Gian hàng (#565, Documents/21 §18.7.1), 1–60 ký tự; null thì hiện `shop_name` (tên sàn trả, ghi đè mỗi lần nối lại).
 - `region` text · null
 - `access_token_enc` bytea · null
 - `refresh_token_enc` bytea · null
@@ -730,6 +738,7 @@ Ràng buộc và index:
 - unique index (`company_id`) `shops_one_opening_stocktake_uq` where `opening_stocktake_id is not null`
 - check `shops_active_cutoff`: `status <> 'active' or order_cutoff_at is not null`
 - check `shops_return_window_days`: `return_window_days between 1 and 60`
+- check `shops_display_name`: `char_length(display_name) between 1 and 60`
 - check `shops_opening_stocktake`: `(opening_stocktake_id is null) = (opening_stocktake_number is null) and (opening_stocktake_id is null or order_cutoff_at is not null)`
 - check `shops_setup_mode`: `opening_stock_mode is null or opening_stock_mode in ('push', 'stocktake')`
 - check `shops_open_orders_skipped`: `open_orders_skipped >= 0`

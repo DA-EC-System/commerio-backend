@@ -238,8 +238,8 @@ describe('cha mới', () => {
     expect(res.status).toBe(422);
     expect(res.body.errors).toEqual({
       'lines.0.newProduct.parentName': 'Đã có sản phẩm cùng tên',
-      'lines.1.newProduct.groupId': 'Chọn nhóm hàng',
-      'lines.3.newProduct.groupId': 'Các dòng cùng sản phẩm cha phải cùng nhóm hàng',
+      'lines.1.newProduct.groupId': 'Chọn danh mục sản phẩm',
+      'lines.3.newProduct.groupId': 'Các dòng cùng sản phẩm cha phải cùng danh mục sản phẩm',
     });
   });
 
@@ -443,7 +443,7 @@ describe('hình dạng newProduct', () => {
     const keys = Object.keys(res.body.errors);
     expect(keys.some((k) => k.startsWith('lines.0.newProduct'))).toBe(true);
     expect(res.body.errors['lines.1.newProduct.parentName']).toBe('Chọn sản phẩm cha có sẵn hoặc nhập tên sản phẩm cha mới');
-    expect(res.body.errors['lines.2.newProduct.groupId']).toBe('Chọn nhóm hàng');
+    expect(res.body.errors['lines.2.newProduct.groupId']).toBe('Chọn danh mục sản phẩm');
     expect(keys.some((k) => k.startsWith('lines.3.newProduct.optionValues'))).toBe(true);
     expect(keys.some((k) => k.startsWith('lines.4.newProduct.optionValues'))).toBe(true);
     expect(res.body.errors['lines.5.newProduct.parentId']).toBe('Chọn sản phẩm cha');

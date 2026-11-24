@@ -2,10 +2,10 @@
 // Thứ tự: giá ghi đè tay > lần tính đã xác nhận (`shop`) > giá chuẩn. Thực nhận và cờ Dưới giá thấp nhất tính lúc đọc từ
 // giá đang bán với phí, thuế, giá vốn hiện tại, nên đổi giá vốn không cần ghi gì thêm. Không trả giá vốn, giá thấp nhất.
 import type { Decimal } from 'decimal.js';
-import type { PriceFilterResult } from '../domain/price-filter.ts';
+import { type PriceFilterResult, type PriceRounding, roundingOf } from '../domain/price-filter.ts';
 import type { ListingRow } from '../repository/listings.ts';
 import { findCalculations, pendingCalculations } from '../repository/price-calculations.ts';
-import { evaluatePrices } from './price-inputs.ts';
+import { evaluatePrices, shopPriceConfig } from './price-inputs.ts';
 import { firstPushCalculations } from './repricing.ts';
 
 export interface ListingPrice {
@@ -17,6 +17,8 @@ export interface ListingPrice {
   netReceived: number | null;
   belowFloor: boolean | null;
   feeWarning: 'over_50' | null;
+  /** Làm tròn của giá bộ lọc lần đăng tới sẽ gửi (21 §18.11, §18.6.7); null với giá đang bán, giá chuẩn, giá ghi đè. */
+  rounding: PriceRounding | null;
 }
 
 /** Thực nhận, cờ, cảnh báo phí từ kết quả bước 5; tổng phí từ 100% trở lên thì thực nhận ≤ 0, coi như dưới giá thấp nhất. */
@@ -93,6 +95,8 @@ export async function listingPrices(
     }),
   );
   const { hasFee, results } = await evaluatePrices(shopId, listedPrices);
+  // Cấu hình phí đang áp, cùng bản `firstPushCalculations` vừa dùng; chỉ đọc khi có giá bộ lọc để ghi lý do làm tròn.
+  const fee = preview.size ? (await shopPriceConfig(shopId)).fee : null;
   return new Map(
     variantIds.map((id): [string, ListingPrice] => {
       const next = pending.get(id);
@@ -103,6 +107,7 @@ export async function listingPrices(
           pendingPrice: next ? Number(next.roundedPrice) : null,
           configVersionId: next?.feeVersionId ?? null,
           ...floorView(hasFee ? results.get(id) : undefined),
+          rounding: fee && preview.has(id) ? roundingOf(fee, preview.get(id)!) : null,
         },
       ];
     }),

@@ -1048,8 +1048,15 @@
     {
       "idx": 149,
       "version": "7",
-      "when": 1795519691006,
-      "tag": "20261124112811_ten-thuoc-tinh-20",
+      "when": 1795518376499,
+      "tag": "20261124110616_lien-ket-sku-565",
+      "breakpoints": true
+    },
+    {
+      "idx": 150,
+      "version": "7",
+      "when": 1795524478851,
+      "tag": "20261124124758_ten-thuoc-tinh-20",
       "breakpoints": true
     }
   ]
