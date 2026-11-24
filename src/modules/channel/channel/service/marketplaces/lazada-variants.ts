@@ -8,14 +8,20 @@ import { type CreatedSku, MarketplaceError, type ProductSku, type SalesAttribute
 /** Tên trục gửi cho sàn: mã sale prop của leaf; trục tự đặt tên (`code` null) thì chính tên. */
 const axisName = (a: SalesAttribute) => a.code ?? a.name;
 
-/** `Product.Variation`: mỗi trục một `VariationN`, `hasImage` khi có giá trị mang ảnh. */
+/**
+ * Lazada không nhận ảnh trên sale prop chuẩn `size` (`VARIATION_CATEGORY_SIZE_IMAGE`, open.lazada.com "Custom sales
+ * attributes", đọc 24/11/2026): trục đó không gửi ảnh, kể cả khi là thuộc tính biến thể ghép có trục màu mang ảnh (#568).
+ */
+const takesImage = (a: SalesAttribute) => a.code !== 'size';
+
+/** `Product.Variation`: mỗi trục một `VariationN`, `hasImage` khi có giá trị mang ảnh và trục nhận ảnh. */
 export function lazadaVariation(attrs: readonly SalesAttribute[]): Record<string, unknown> {
   return Object.fromEntries(
     attrs.map((a, i) => [
       `Variation${i + 1}`,
       {
         name: axisName(a),
-        hasImage: a.values.some((v) => v.imageUri),
+        hasImage: takesImage(a) && a.values.some((v) => v.imageUri),
         customize: a.code === null,
         options: { option: a.values.map((v) => v.label) },
       },
@@ -30,7 +36,7 @@ export function lazadaVariation(attrs: readonly SalesAttribute[]): Record<string
 export function lazadaSkuIdentity(sku: ProductSku, attrs: readonly SalesAttribute[] | undefined) {
   const axes = skuAxes(attrs, sku);
   if (!axes.length) return { SellerSku: sku.sellerSku };
-  const images = axes.flatMap((x) => (x.value?.imageUri ? [x.value.imageUri] : []));
+  const images = axes.flatMap((x) => (takesImage(x.attr) && x.value?.imageUri ? [x.value.imageUri] : []));
   return {
     SellerSku: sku.sellerSku,
     saleProp: Object.fromEntries(axes.map((x) => [axisName(x.attr), x.label])),

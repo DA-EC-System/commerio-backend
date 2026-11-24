@@ -11,7 +11,7 @@
 .idea/
 
 # Node
-node_modules/
+node_modules
 dist/
 coverage/
 # ERD sinh bằng npm run db:erd

@@ -1,6 +1,7 @@
 /**
  * Luật thuần của category, attribute sàn và spec sản phẩm (#400, Documents/21 §18.5, Documents/19 mục 3.3). Không I/O.
  */
+import { type AxisGroup, axisGroups, CUSTOM_AXIS, joinValues, targetCombinable } from './axis-combine.ts';
 
 export type AttributeKind = 'sales' | 'property';
 export type AttributeInput = 'select' | 'multiselect' | 'text' | 'number' | 'date' | 'image' | 'cascade';
@@ -76,8 +77,8 @@ export interface PlatformAttribute {
   raw: Record<string, unknown>;
 }
 
-/** Trục phân loại tự đặt, không ánh xạ sang sales attribute nào của sàn. */
-export const CUSTOM_AXIS = '__custom';
+/** Trục phân loại tự đặt, không ánh xạ sang sales attribute nào của sàn (khai ở `axis-combine.ts` để hai file không import vòng). */
+export { CUSTOM_AXIS } from './axis-combine.ts';
 
 /**
  * Loại thuộc tính phân loại của catalog (`attributes.platform_kind`) dùng để ghép trục với sales attribute của sàn (#448).
@@ -102,6 +103,10 @@ export interface VariantCapabilities {
   salesRequired: string[];
   /** Thêm phân loại vào sản phẩm sàn đã có (`addVariants`, Documents/21 §18.8.4) */
   addVariant: boolean;
+  /** Số ký tự tối đa của một giá trị phân loại; null khi sàn không công bố. Chỉ kiểm trên thuộc tính biến thể ghép (#568) */
+  maxValueLength: number | null;
+  /** Số giá trị tối đa của một thuộc tính biến thể; null khi sàn không công bố. Chỉ kiểm trên thuộc tính biến thể ghép (#568) */
+  maxAxisValues: number | null;
 }
 
 /**
@@ -198,6 +203,8 @@ export const MISSING_REASONS = [
   'category_removed',
   'sales_required',
   'axis_shape',
+  'axis_value_too_long',
+  'axis_too_many_values',
 ] as const;
 export type MissingReason = (typeof MISSING_REASONS)[number];
 export interface MissingItem {
@@ -220,6 +227,10 @@ export interface SpecMissingInput {
   fallbacks?: Readonly<Record<string, SpecAttributeValue | null | undefined>>;
   /** Khả năng khai biến thể của category (#448); không có (null) thì không xét `sales_required`, `axis_shape`, `__custom` luôn hợp lệ. */
   caps?: VariantCapabilities | null;
+  /** Giá trị trục của từng SKU (attributeId → nhãn), để kiểm giá trị của thuộc tính biến thể ghép (#568). */
+  variants?: readonly Readonly<Record<string, string>>[];
+  /** Tên sàn trong câu báo (`adapter.name`). */
+  platformName?: string;
 }
 
 const hasValue = (v: SpecAttributeValue | string | null | undefined): boolean =>
@@ -255,11 +266,18 @@ export function specMissing(input: SpecMissingInput): MissingItem[] {
     }
   }
   const salesCodes = attributes ? new Set(attributes.filter((a) => a.kind === 'sales').map((a) => a.code)) : null;
+  const groups = axisGroups(spec.axisMap, axes.map((a) => a.attributeId));
+  const combined = groups.filter((g) => g.attributeIds.length > 1);
   for (const axis of axes) {
     const target = spec.axisMap[axis.attributeId];
     const customOk = target === CUSTOM_AXIS && (caps === null || caps.customAxisName);
     const mapped = target != null && (customOk || (target !== CUSTOM_AXIS && (salesCodes === null || salesCodes.has(target))));
-    if (!mapped) out.push({ code: axis.attributeId, label: axis.name, reason: 'axis_unmapped' });
+    if (!mapped) {
+      out.push({ code: axis.attributeId, label: axis.name, reason: 'axis_unmapped' });
+    } else if (combined.some((g) => g.attributeIds.includes(axis.attributeId)) && !targetCombinable(target, attributes)) {
+      // Spec lưu trước khi leaf đổi: đích không còn nhận chữ ghép thì chọn lại trục (#568)
+      out.push({ code: axis.attributeId, label: `${axis.name} (thuộc tính biến thể đích không nhận chữ ghép)`, reason: 'axis_unmapped' });
+    }
   }
   if (caps) {
     const used = new Set(Object.values(spec.axisMap));
@@ -268,8 +286,44 @@ export function specMissing(input: SpecMissingInput): MissingItem[] {
       const label = attributes?.find((a) => a.code === code)?.label ?? code;
       out.push({ code, label, reason: 'sales_required' });
     }
-    if (axes.length > caps.maxAxes) {
-      out.push({ code: 'axes', label: `Sản phẩm có ${axes.length} trục, category này nhận tối đa ${caps.maxAxes}`, reason: 'axis_shape' });
+    // Đếm thuộc tính biến thể sẽ gửi sàn: mỗi đích một cái; trục chưa ánh xạ tính riêng (#568)
+    const count = groups.length + axes.filter((a) => !spec.axisMap[a.attributeId]).length;
+    if (count > caps.maxAxes) {
+      out.push({ code: 'axes', label: `Sản phẩm có ${count} trục, category này nhận tối đa ${caps.maxAxes}`, reason: 'axis_shape' });
+    }
+    out.push(...combinedLimits(combined, input.variants ?? [], caps, input.platformName ?? 'sàn'));
+  }
+  return out;
+}
+
+/** Giá trị ghép quá dài, quá nhiều giá trị trên thuộc tính biến thể ghép: chặn, không tự rút gọn (#568, Thành chốt 24/11/2026). */
+function combinedLimits(
+  combined: readonly AxisGroup[],
+  variants: readonly Readonly<Record<string, string>>[],
+  caps: VariantCapabilities,
+  platformName: string,
+): MissingItem[] {
+  const out: MissingItem[] = [];
+  for (const g of combined) {
+    const values = new Set<string>();
+    for (const v of variants) {
+      const labels = g.attributeIds.map((id) => v[id]);
+      if (labels.every((x): x is string => x !== undefined)) values.add(joinValues(labels));
+    }
+    if (caps.maxValueLength !== null) {
+      for (const value of values) {
+        const n = [...value].length;
+        if (n > caps.maxValueLength) {
+          out.push({ code: g.target, label: `Giá trị “${value}” dài ${n} ký tự, ${platformName} nhận tối đa ${caps.maxValueLength}`, reason: 'axis_value_too_long' });
+        }
+      }
+    }
+    if (caps.maxAxisValues !== null && values.size > caps.maxAxisValues) {
+      out.push({
+        code: g.target,
+        label: `Thuộc tính biến thể ghép có ${values.size} giá trị, ${platformName} nhận tối đa ${caps.maxAxisValues}`,
+        reason: 'axis_too_many_values',
+      });
     }
   }
   return out;

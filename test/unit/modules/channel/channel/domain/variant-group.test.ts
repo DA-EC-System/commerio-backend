@@ -101,3 +101,50 @@ describe('groupVariants: ảnh theo giá trị (#295)', () => {
     }
   });
 });
+
+describe('groupVariants: thuộc tính biến thể ghép (#568)', () => {
+  const free: PlatformAttribute[] = [{ ...leaf[0]!, allowCustom: true }];
+  const cv = (value: string, valueId: string) => ({ attributeId: 'a-color', attributeName: 'Màu', value, valueId });
+  const sv = (value: string, valueId: string) => ({ attributeId: 'a-size', attributeName: 'Cỡ', value, valueId });
+  const both = { 'a-color': 'color_family', 'a-size': 'color_family' };
+
+  it('hai trục cùng đích thành một thuộc tính biến thể, giá trị nối " - " theo thứ tự trục', () => {
+    const g = groupVariants(
+      [
+        { id: 'v1', attributes: [cv('Đen', 'den'), sv('S', 's')] },
+        { id: 'v2', attributes: [cv('Đen', 'den'), sv('M', 'm')] },
+      ],
+      both,
+      free,
+    );
+    expect(g).toEqual({
+      ok: true,
+      axes: [{ code: 'color_family', name: 'Màu sắc', values: [{ optionId: null, label: 'Đen - S' }, { optionId: null, label: 'Đen - M' }] }],
+      valuesOf: new Map([
+        ['v1', ['Đen - S']],
+        ['v2', ['Đen - M']],
+      ]),
+    });
+  });
+
+  it('mỗi trục __custom vẫn là một thuộc tính riêng', () => {
+    const g = groupVariants([{ id: 'v1', attributes: [cv('Đen', 'den'), sv('S', 's')] }], { 'a-color': '__custom', 'a-size': '__custom' }, null);
+    expect(g.ok && g.axes.map((a) => a.name)).toEqual(['Màu', 'Cỡ']);
+  });
+
+  it('trục ảnh nằm trong nhóm ghép: mỗi giá trị ghép lấy ảnh giá trị màu của nó', () => {
+    const g = groupVariants(
+      [
+        { id: 'v1', attributes: [cv('Đen', 'den'), sv('S', 's')], image: { attributeValueId: 'den', url: 'u-den' } },
+        { id: 'v2', attributes: [cv('Trắng', 'trang'), sv('S', 's')], image: { attributeValueId: 'trang', url: 'u-trang' } },
+      ],
+      both,
+      free,
+    );
+    if (!g.ok) throw new Error(g.message);
+    expect(g.axes[0]!.values).toEqual([
+      { optionId: null, label: 'Đen - S', imageUrl: 'u-den' },
+      { optionId: null, label: 'Trắng - S', imageUrl: 'u-trang' },
+    ]);
+  });
+});
