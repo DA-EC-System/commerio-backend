@@ -12,8 +12,11 @@
 // - Get Unsettled Transactions 202507 `GET /finance/202507/orders/unsettled`: số **ước tính** của đơn chưa quyết toán
 //   ("estimated amount which subject to change before settlement"), chỉ dùng cho mẫu gợi ý, không bao giờ vào sổ tiền.
 // Sandbox không quyết toán (gọi thật 21/11/2026: sao kê rỗng, giao dịch toàn 0), nên dạng số đối chiếu bằng fixture OAS.
-// Dấu: ví dụ OAS lẫn dấu (`platform_commission_amount: "20"` dương, `fee_tax_amount: "-30"` âm), nên phí, thuế khấu trừ,
-// vận chuyển luôn ghi âm (`-|x|`) theo quy ước sổ tiền (vào dương, ra âm); doanh thu, điều chỉnh giữ dấu của sàn.
+// Dấu: ví dụ OAS lẫn dấu (`platform_commission_amount: "20"` dương, `fee_tax_amount: "-30"` âm), nên phí, thuế khấu trừ
+// luôn ghi âm (`-|x|`) theo quy ước sổ tiền (vào dương, ra âm); doanh thu, vận chuyển, điều chỉnh giữ dấu của sàn (plan:
+// "Phí luôn ghi âm; doanh thu, vận chuyển giữ dấu của sàn"). `shipping_cost_amount` là tổng có dấu của
+// `shipping_cost_breakdown` (phí vận chuyển thực, khách trả, sàn trợ giá…), nên có thể dương: dương → `shipping_income`,
+// âm → `shipping_cost`.
 import { Decimal } from 'decimal.js';
 import type { FeeSample, LedgerKind, SampleFeeKind } from '../../../../finance/index.ts';
 import { INVALID_AMOUNT, type MarketplaceAdapter, MarketplaceError, type SettlementTxn } from './common.ts';
@@ -121,7 +124,7 @@ export function tiktokStatementRows(statementId: string, date: string, t: Row): 
   const revenue = tiktokAmount(t.revenue_amount, where('revenue_amount'));
   if (!revenue.isZero()) out.push(row('revenue_amount', revenue.toString(), 'revenue'));
   const shipping = tiktokAmount(t.shipping_cost_amount, where('shipping_cost_amount'));
-  if (!shipping.isZero()) out.push(row('shipping_cost_amount', outflow(shipping), 'shipping_cost'));
+  if (!shipping.isZero()) out.push(row('shipping_cost_amount', shipping.toString(), shipping.gt(0) ? 'shipping_income' : 'shipping_cost'));
   const breakdown = (t.fee_tax_breakdown ?? {}) as { fee?: Row; tax?: Row };
   for (const [field, raw] of Object.entries(breakdown.fee ?? {})) {
     if (IGNORED_FEE_FIELDS.has(field)) continue;

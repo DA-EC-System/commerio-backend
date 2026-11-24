@@ -38,7 +38,7 @@ const oasOrder = {
 };
 
 describe('tiktokStatementRows', () => {
-  it('đơn: doanh thu giữ dấu; phí, vận chuyển, thuế khấu trừ luôn âm dù OAS ghi dương hay âm; trường tham khảo bỏ; trường lạ kind null', () => {
+  it('đơn: doanh thu, vận chuyển giữ dấu; phí, thuế khấu trừ luôn âm dù OAS ghi dương hay âm; trường tham khảo bỏ; trường lạ kind null', () => {
     const rows = tiktokStatementRows('S1', '2026-11-20', oasOrder);
     const by = Object.fromEntries(rows.map((r) => [r.feeName, [r.amount, r.kind]]));
     expect(by).toEqual({
@@ -57,6 +57,13 @@ describe('tiktokStatementRows', () => {
     expect(rows.every((r) => r.externalOrderId === 'O1' && r.date === '2026-11-20' && r.withholding === '0')).toBe(true);
     expect(rows[0]!.txnId).toBe('S1:T1:revenue_amount');
     expect(new Set(rows.map((r) => r.txnId)).size).toBe(rows.length);
+  });
+
+  it('vận chuyển giữ dấu của sàn: dương (khách trả, sàn trợ giá lớn hơn phí thực) là shipping_income, âm là shipping_cost', () => {
+    const ship = (v: string) => tiktokStatementRows('S', 'd', { id: 'T', type: 'ORDER', order_id: 'O', shipping_cost_amount: v });
+    expect(ship('15.5')).toMatchObject([{ feeName: 'shipping_cost_amount', amount: '15.5', kind: 'shipping_income' }]);
+    expect(ship('-22')).toMatchObject([{ feeName: 'shipping_cost_amount', amount: '-22', kind: 'shipping_cost' }]);
+    expect(ship('0')).toEqual([]);
   });
 
   it('điều chỉnh theo type (phạt, hoa hồng, quảng cáo, loại lạ); giữ tiền dự trữ kind null; số 0 không ghi', () => {
