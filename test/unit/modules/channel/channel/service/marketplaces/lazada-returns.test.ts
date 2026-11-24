@@ -242,6 +242,17 @@ describe('lazadaReturnMethods', () => {
     await expect(methods.approveReturnRefund('tok', '7000', ['7001', '7002'])).resolves.toBeUndefined();
   });
 
+  it.each(['REFUND_REJECT', 'REQUEST_CANCEL', 'CANCEL_SUCCESS'])('agreeRefund bị từ chối mà dòng đã %s trên sàn thì báo lỗi kèm câu cho người dùng, không coi là xong', async (status) => {
+    const { methods } = fakeCall({
+      '/order/reverse/return/update': new MarketplaceError('rejected', '114', 'E0114: this reverse does not support this action'),
+      '/reverse/getreverseordersforseller': { result: { items: [item([line(1, { reverse_status: 'REFUND_PENDING' }), line(2, { reverse_status: status })])] } },
+    });
+    await expect(methods.approveReturnRefund('tok', '7000', ['7001', '7002'])).rejects.toMatchObject({
+      kind: 'rejected',
+      userMessage: 'Lazada đã từ chối hoặc huỷ hoàn tiền yêu cầu này, kiểm trên Seller Center',
+    });
+  });
+
   it('agreeRefund bị từ chối mà đơn ngược chưa qua bước hoàn tiền thì ném lỗi; lỗi tạm không đọc lại', async () => {
     const { methods } = fakeCall({
       '/order/reverse/return/update': new MarketplaceError('rejected', '113', 'E0113: reverse order line have unknown status'),

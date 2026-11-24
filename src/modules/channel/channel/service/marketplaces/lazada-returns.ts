@@ -157,9 +157,12 @@ export function toLazadaReturn(item: Row, amount: LazadaAmountReader): RemoteRet
 const idList = (ids: readonly string[]) => `[${ids.join(',')}]`;
 
 /** Đơn ngược đã qua bước quyết hoàn tiền: gọi `agreeRefund` lại thì sàn từ chối, không phải lỗi. */
-const REFUND_DECIDED = new Set(['REFUND_PENDING', 'REFUND_SUCCESS', 'REFUND_REJECT', 'REQUEST_CANCEL', 'CANCEL_SUCCESS']);
+/** Dòng đã được đồng ý hoàn tiền (người bán làm trên Seller Center, hay lệnh trước đã tới sàn). */
+const REFUND_AGREED = new Set(['REFUND_PENDING', 'REFUND_SUCCESS']);
+/** Dòng đã bị từ chối hoàn tiền hoặc huỷ trên sàn: app không coi là đã đồng ý (review #583). */
+const REFUND_STOPPED = new Set(['REFUND_REJECT', 'REQUEST_CANCEL', 'CANCEL_SUCCESS']);
 
-/** E0114 "this reverse does not support this action": Lazada trả mã `114` (bảng mã của ReverseOrderReturnUpdate). */
+/** E0114 "this reverse does not support this action" (bảng mã của ReverseOrderReturnUpdate). Dạng mã trần `114` chưa đo, nhận phòng khi sàn bỏ tiền tố. */
 const isE0114 = (err: MarketplaceError) => err.platformCode === '114' || err.platformCode === 'E0114' || Boolean(err.platformMessage?.includes('E0114'));
 
 /**
@@ -302,14 +305,19 @@ export function lazadaReturnMethods(
     },
     async approveReturnRefund(accessToken, externalReturnId, externalLineIds) {
       // Sau phiếu kiểm hàng hoàn ghi sổ (#437): người bán đồng ý hoàn tiền mọi món của yêu cầu. Sàn từ chối vì đơn ngược đã
-      // qua bước này (người bán làm trên Seller Center, khách huỷ) thì đọc lại trạng thái, coi là xong.
+      // qua bước này thì đọc lại: mọi dòng đã đồng ý hoàn tiền là xong; dòng bị từ chối, huỷ thì báo lỗi để yêu cầu bật Cần xử lý.
       try {
         await update(accessToken, 'agreeRefund', externalReturnId, externalLineIds);
       } catch (err) {
         if (!(err instanceof MarketplaceError) || err.kind !== 'rejected') throw err;
         const item = await reverseOrder(accessToken, externalReturnId).catch(() => null);
         const lines = ((item?.reverse_order_lines ?? []) as Row[]).filter((l) => l && typeof l === 'object');
-        if (lines.length && lines.every((l) => REFUND_DECIDED.has(str(l.reverse_status)))) return;
+        if (lines.length && lines.every((l) => REFUND_AGREED.has(str(l.reverse_status)))) return;
+        if (lines.some((l) => REFUND_STOPPED.has(str(l.reverse_status)))) {
+          const stopped = new MarketplaceError('rejected', err.platformCode ?? 'refund_stopped', err.platformMessage ?? 'refund rejected or cancelled');
+          stopped.userMessage = 'Lazada đã từ chối hoặc huỷ hoàn tiền yêu cầu này, kiểm trên Seller Center';
+          throw stopped;
+        }
         throw err;
       }
     },
