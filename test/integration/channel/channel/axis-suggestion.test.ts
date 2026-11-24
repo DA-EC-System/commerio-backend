@@ -1,6 +1,6 @@
 // Gợi ý ghép trục phân loại với sales attribute của sàn (#448 L5, Documents/21 §18.8.3): `GET …/specs/:platform?categoryId`
 // trả suggestedAxisMap, suggestedValueMap, variantCapabilities; lần `PUT` đầu điền trục còn thiếu; `__custom` ở sàn không nhận
-// tên tự đặt là 422; `missing` thêm axis_shape. Cổng product thật (platformKind từ catalog).
+// tên tự đặt là 422; `missing` thêm axis_limit. Cổng product thật (platformKind từ catalog).
 import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -208,7 +208,7 @@ describe('gợi ý ghép trục', () => {
     expect(res.body.spec.axisMap).toEqual({ [colorAttr]: '100000', [sizeAttr]: '__custom' });
   });
 
-  it('missing: spec Lazada có __custom (dữ liệu cũ) báo axis_unmapped; nhiều trục hơn leaf nhận báo axis_shape', async () => {
+  it('missing: spec Lazada có __custom (dữ liệu cũ) báo axis_unmapped; nhiều trục hơn leaf nhận báo axis_limit', async () => {
     const other = await createVariant(ceo.companyId);
     await bindValues(other.variantId, [redId, mId]);
     await testPool().query(
@@ -221,7 +221,7 @@ describe('gợi ý ghép trục', () => {
     expect(res.body.missing).toEqual(
       expect.arrayContaining([
         { code: sizeAttr, label: 'Kích cỡ', reason: 'axis_unmapped' },
-        { code: 'axes', label: 'Sản phẩm có 2 trục, category này nhận tối đa 1', reason: 'axis_shape' },
+        { code: 'axes', label: 'Sản phẩm có 2 thuộc tính biến thể, category này nhận tối đa 1', reason: 'axis_limit' },
       ]),
     );
   });

@@ -142,7 +142,7 @@ export async function createProductsFromPlatform(
     seen.add(v.sku);
     if (error) errors.set(v.key, error);
   }
-  const groupError = group ? null : 'Nhóm hàng không thuộc công ty';
+  const groupError = group ? null : 'Danh mục sản phẩm không thuộc công ty';
   if (groupError || errors.size) return { ok: false, groupError, errors };
 
   const variantIds = new Map<string, string>();

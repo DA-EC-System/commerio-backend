@@ -16,9 +16,12 @@ import { attributeCatalog, listSpecMappings, putSpecMapping } from '../service/s
 import { pushZeroStock, restoreAfterZeroStock, requestListingSync } from '../service/listing-sync.ts';
 import { getLatestSyncRun, getSyncRun } from '../service/sync-runs.ts';
 import * as listings from '../service/listings.ts';
+import { productReadiness } from '../service/readiness.ts';
 import * as mapping from '../service/mapping.ts';
 import { createVariantFromRemote, matchBulk } from '../service/remote-link.ts';
 import { matchPreview } from '../service/match-preview.ts';
+import { remoteProducts } from '../service/remote-products.ts';
+import { linkSkus } from '../service/sku-links.ts';
 import { resolveOutsideChange } from '../service/outside-change.ts';
 import { recreateOpeningStocktake } from '../service/opening-stocktake.ts';
 import { pullShopOrders } from '../service/order-pull.ts';
@@ -28,11 +31,14 @@ import { productPort } from '../service/product-port.ts';
 import { requestRegroup, separateProductsOf } from '../service/product-regroup.ts';
 import * as prices from '../service/pending-prices.ts';
 import { COST_VIEW, quotePrices } from '../service/price-quote.ts';
+import { previewPush } from '../service/push-preview.ts';
 import * as setup from '../service/setup.ts';
 import { deleteShop } from '../service/shop-delete.ts';
 import { updateShopSettings } from '../service/shop-settings.ts';
 import * as shops from '../service/shops.ts';
 import {
+  RemoteProductsQuery,
+  SkuLinksBody,
   ApplyCategoryBody,
   AxisMappingBody,
   AxisMappingParams,
@@ -53,6 +59,7 @@ import {
   TakeOverContentBody,
   TakeOverContentParams,
   PushBody,
+  PushPreviewBody,
   MatchBulkBody,
   CreateVariantBody,
   CreateVariantParams,
@@ -72,6 +79,7 @@ import {
   CategorySyncBody,
   ProductSpecBody,
   ProductListingsParams,
+  ReadinessQuery,
   RegroupParams,
   ProductSpecParams,
   ProductSpecQuery,
@@ -364,6 +372,13 @@ export function channelRouter(ctx: ModuleContext): Router {
     );
   });
 
+  // Readiness đăng theo gian hàng (be#564, 21 §18.10): không ghi, không gọi sàn.
+  router.get('/products/:productId/readiness', view, validate({ params: ProductListingsParams, query: ReadinessQuery }), async (_req, res) => {
+    const { productId } = validated<typeof ProductListingsParams>(res, 'params');
+    const { shopId } = validated<typeof ReadinessQuery>(res, 'query');
+    res.json(await withCompany(actor(res).companyId, () => productReadiness(productPort(ctx), productId, shopId)));
+  });
+
   router.get('/shops/:id/listings', view, validate({ params: ShopParams }), async (_req, res) => {
     const { id } = validated<typeof ShopParams>(res, 'params');
     res.json(await withCompany(actor(res).companyId, () => listings.listListings(productPort(ctx), id)));
@@ -374,6 +389,14 @@ export function channelRouter(ctx: ModuleContext): Router {
     const { id } = validated<typeof ShopParams>(res, 'params');
     const { variantIds, listPrices } = validated<typeof PushBody>(res, 'body');
     res.json(await listings.pushListings(productPort(ctx), actor(res), id, { variantIds, listPrices }));
+  });
+
+  // Kiểm trước khi đăng hàng loạt (21 §18.11, be#566): không ghi, không gọi sàn; cùng hàm chặn với readiness và `push`.
+  router.post('/shops/:id/listings/push-preview', manage, validate({ params: ShopParams, body: PushPreviewBody }), async (_req, res) => {
+    const { id } = validated<typeof ShopParams>(res, 'params');
+    const { variantIds, listPrices } = validated<typeof PushPreviewBody>(res, 'body');
+    const a = actor(res);
+    res.json(await previewPush(productPort(ctx), a, id, { variantIds, listPrices }, a.permissions.includes(COST_VIEW)));
   });
 
   // Tính thử giá trước khi đăng (21 §18.9 R1): không ghi gì, không trả giá thấp nhất; biên lãi theo quyền xem giá vốn (R4).
@@ -430,6 +453,19 @@ export function channelRouter(ctx: ModuleContext): Router {
     const { unmatched } = validated<typeof RemoteSkusQuery>(res, 'query');
     const { accepted, ...list } = await withRetryAfter(res, () => mapping.remoteSkus(productPort(ctx), actor(res), id, unmatched ?? false, true));
     res.status(accepted ? 202 : 200).json(list);
+  });
+
+  // Liên kết SKU sàn gom theo sản phẩm sàn (#565, 21 §18.12). `remote-skus`, `match-bulk`, `create-variant` còn tới khi
+  // FE#460 chuyển sang hai route này (luật chuyển tiếp 18.6), rồi bỏ ở PR riêng.
+  router.get('/shops/:id/remote-products', match, validate({ params: ShopParams, query: RemoteProductsQuery }), async (_req, res) => {
+    const { id } = validated<typeof ShopParams>(res, 'params');
+    const q = validated<typeof RemoteProductsQuery>(res, 'query');
+    res.json(await remoteProducts(productPort(ctx), actor(res), id, { status: q.status, search: q.search || undefined, page: q.page, pageSize: q.pageSize }));
+  });
+
+  router.post('/shops/:id/sku-links', match, validate({ params: ShopParams, body: SkuLinksBody }), async (_req, res) => {
+    const { id } = validated<typeof ShopParams>(res, 'params');
+    res.json(await linkSkus(productPort(ctx), actor(res), id, validated<typeof SkuLinksBody>(res, 'body')));
   });
 
   // Xem trước số sẽ đẩy khi ghép (#460): hộp ghép gọi khi người dùng chọn một cặp.

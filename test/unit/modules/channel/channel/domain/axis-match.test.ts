@@ -1,5 +1,5 @@
 // Ghép trục phân loại với sales attribute của sàn (#448 L2): nguồn công ty → mặc định theo platform_kind → __custom,
-// mỗi mã một trục, valueMap theo nhãn; `specMissing` thêm sales_required, axis_shape, __custom theo caps.
+// mỗi mã một trục, valueMap theo nhãn; `specMissing` thêm sales_required, axis_limit, __custom theo caps.
 import { describe, expect, it } from 'vitest';
 import { suggestAxes, type AxisInput } from '#src/modules/channel/channel/domain/axis-match.ts';
 import { CUSTOM_AXIS, type PlatformAttribute, specMissing, type VariantCapabilities } from '#src/modules/channel/channel/domain/product-spec.ts';
@@ -121,11 +121,11 @@ describe('specMissing với caps', () => {
     expect(specMissing({ spec: { ...base, axisMap: { a1: 'color_family' } }, attributes, axes, caps })).toEqual([]);
   });
 
-  it('axis_shape: nhiều trục hơn category nhận; mỗi trục __custom tính riêng', () => {
+  it('axis_limit: nhiều thuộc tính biến thể hơn category nhận; mỗi trục __custom tính riêng', () => {
     const two = [...axes, { attributeId: 'a2', name: 'Cỡ' }];
     const spec = { ...base, axisMap: { a1: CUSTOM_AXIS, a2: CUSTOM_AXIS } };
     expect(specMissing({ spec, attributes: [], axes: two, caps: { ...tiktokCaps, maxAxes: 1 } })).toEqual([
-      { code: 'axes', label: 'Sản phẩm có 2 trục, category này nhận tối đa 1', reason: 'axis_shape' },
+      { code: 'axes', label: 'Sản phẩm có 2 thuộc tính biến thể, category này nhận tối đa 1', reason: 'axis_limit' },
     ]);
   });
 
@@ -139,7 +139,7 @@ describe('specMissing với caps', () => {
       { a1: 'Đỏ', a2: 'M' },
     ];
 
-    it('hai trục cùng đích ghép được tính là một thuộc tính biến thể: không axis_shape', () => {
+    it('hai trục ghép một đích, maxAxes 1: tính là một thuộc tính biến thể, không axis_limit', () => {
       expect(specMissing({ spec: combinedSpec, attributes: leaf, axes: two, caps, variants, platformName: 'Lazada' })).toEqual([]);
     });
 

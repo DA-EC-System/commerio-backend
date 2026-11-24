@@ -24,7 +24,7 @@ const page = {
 
 export const StockListQuery = z.object({
   ...page,
-  groupId: z.uuid('Nhóm hàng không hợp lệ').optional(),
+  groupId: z.uuid('Danh mục sản phẩm không hợp lệ').optional(),
   productId: z.uuid('Sản phẩm không hợp lệ').optional(),
   belowMin: z
     .enum(['true', 'false'], 'belowMin là true hoặc false')
