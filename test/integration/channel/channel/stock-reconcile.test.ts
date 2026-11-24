@@ -9,6 +9,7 @@ import { runStockPush } from '#src/modules/channel/channel/service/background.ts
 import { onAvailableChanged, syncListings } from '#src/modules/channel/channel/service/listing-sync.ts';
 import { MarketplaceError, type PerSkuResult, type PriceQuantity, type RemoteSku } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
+import { LAZADA_PUSH_ERRORS } from '#src/modules/channel/channel/service/marketplaces/lazada-push-errors.ts';
 import { type ListingVariant, setProductPort } from '#src/modules/channel/channel/service/product-port.ts';
 import { withCompany } from '#src/shared/db/client.ts';
 import { createCompany } from '../../helpers/company.ts';
@@ -74,6 +75,8 @@ const updatePriceQuantity = vi.fn(async (_t: string, items: readonly PriceQuanti
 registerAdapter(
   'lazada',
   fakeAdapter({
+    name: 'Lazada',
+    errorMap: LAZADA_PUSH_ERRORS,
     async getSeller(accessToken) {
       return { externalShopId: accessToken.slice(4), shopName: 'Shop đối chiếu', region: 'VN' };
     },
@@ -299,16 +302,22 @@ describe('gian hàng đang giữ tồn (holdsStock, #198): không lấy đơn đ
   }
 });
 
-describe('sàn từ chối vì khuyến mãi khi đẩy (promotion_locked, #223)', () => {
+describe('sàn từ chối vì khuyến mãi khi đẩy (promotion_locked, #223, #571)', () => {
   it('tồn bị khoá: listing vẫn chờ, có lỗi báo sàn đang cao hơn, không bật Lệch tồn; lượt sau gửi lại', async () => {
     await testPool().query(`update channel.listings set stock_sync = 'pending' where shop_id = $1 and variant_id = $2`, [shopId, a.id]);
-    pushErrors.set(a.sku, { code: 'promotion_locked', message: "Product locked for Promotion and stock can't be updated below current stock" });
+    pushErrors.set(a.sku, { code: '4170', message: "Product locked for Promotion and stock can't be updated below current stock" });
     await runStockPush(port, { companyId: company.companyId, shopId });
     const row = await listing(a.id);
     expect(row).toMatchObject({ stock_sync: 'pending', platform_stock: 5 });
-    expect(row.stock_sync_error).toMatchObject({ code: 'promotion_locked' });
+    expect(row.stock_sync_error).toMatchObject({
+      code: 'promotion_locked',
+      kind: 'platform',
+      target: null,
+      variantId: a.id,
+      platformCode: '4170',
+      platformMessage: "Product locked for Promotion and stock can't be updated below current stock",
+    });
     expect(row.stock_sync_error.message).toContain('khoá giảm tồn');
-    expect(row.stock_sync_error.message).toContain('Product locked for Promotion');
 
     pushErrors.clear();
     updatePriceQuantity.mockClear();
@@ -317,13 +326,40 @@ describe('sàn từ chối vì khuyến mãi khi đẩy (promotion_locked, #223)
     expect(await listing(a.id)).toMatchObject({ stock_sync: 'synced', stock_sync_error: null });
   });
 
-  it('giá bị khoá: giữ giá cũ, priceSync error kèm promotion_locked', async () => {
+  it('giá sai (4104): priceSync error, chỗ sửa là ô giá, giữ giá cũ', async () => {
     await testPool().query(`update channel.listings set price_sync = 'pending', listed_price = 88000 where shop_id = $1 and variant_id = $2`, [shopId, a.id]);
-    pushErrors.set(a.sku, { code: 'promotion_locked', message: 'Product price locked due to ongoing promotion.' });
+    pushErrors.set(a.sku, { code: '4104', message: 'BIZ_CHECK_PRICE_PRECISION_INVALID' });
     await runStockPush(port, { companyId: company.companyId, shopId });
     const row = await listing(a.id);
     expect(row).toMatchObject({ price_sync: 'error', listed_price: '88000.00' });
-    expect(row.price_sync_error).toMatchObject({ code: 'promotion_locked' });
+    expect(row.price_sync_error).toMatchObject({
+      code: 'price_invalid',
+      kind: 'data',
+      target: { kind: 'variant_field', field: 'price' },
+      platformCode: '4104',
+    });
+  });
+
+  it('mã chưa có trong bảng dịch: marketplace_rejected kèm câu sàn, mã gốc', async () => {
+    await testPool().query(`update channel.listings set stock_sync = 'pending' where shop_id = $1 and variant_id = $2`, [shopId, a.id]);
+    pushErrors.set(a.sku, { code: '9999', message: 'Some new error' });
+    await runStockPush(port, { companyId: company.companyId, shopId });
+    const row = await listing(a.id);
+    expect(row.stock_sync_error).toMatchObject({
+      code: 'marketplace_rejected',
+      kind: 'platform',
+      platformCode: '9999',
+      platformMessage: 'Some new error',
+      message: 'Lazada không nhận cập nhật tồn: Some new error',
+    });
+  });
+
+  it('sàn lỗi tạm: marketplace_unavailable loại connection, không có mã sàn', async () => {
+    await testPool().query(`update channel.listings set stock_sync = 'pending' where shop_id = $1 and variant_id = $2`, [shopId, a.id]);
+    pushErrors.set(a.sku, { code: 'marketplace_unavailable', message: 'Sàn lỗi tạm' });
+    await runStockPush(port, { companyId: company.companyId, shopId });
+    const row = await listing(a.id);
+    expect(row.stock_sync_error).toMatchObject({ code: 'marketplace_unavailable', kind: 'connection', platformCode: null });
   });
 });
 
@@ -333,7 +369,7 @@ describe('kết quả tồn và giá tách riêng (#223 review 3)', () => {
       `update channel.listings set stock_sync = 'pending', price_sync = 'pending', listed_price = 88000 where shop_id = $1 and variant_id = $2`,
       [shopId, a.id],
     );
-    partErrors.set(a.sku, { part: 'stock', code: 'promotion_locked', message: 'Campaign forbids decreasing stock' });
+    partErrors.set(a.sku, { part: 'stock', code: '4170', message: 'Campaign forbids decreasing stock' });
     await runStockPush(port, { companyId: company.companyId, shopId });
     const row = await listing(a.id);
     expect(row).toMatchObject({ stock_sync: 'pending', price_sync: 'synced', price_sync_error: null, listed_price: '99000.00' });
@@ -349,7 +385,7 @@ describe('kết quả tồn và giá tách riêng (#223 review 3)', () => {
     await runStockPush(port, { companyId: company.companyId, shopId });
     const row = await listing(a.id);
     expect(row).toMatchObject({ stock_sync: 'synced', stock_sync_error: null, platform_stock: 5, price_sync: 'error', listed_price: '88000.00' });
-    expect(row.price_sync_error).toMatchObject({ code: 'E_PRICE' });
+    expect(row.price_sync_error).toMatchObject({ code: 'marketplace_rejected', platformCode: 'E_PRICE', message: 'Lazada không nhận cập nhật giá: Giá dưới mức sàn cho phép' });
   });
 
   it('giá đã synced và bằng giá chuẩn: đẩy tồn không gửi kèm giá', async () => {

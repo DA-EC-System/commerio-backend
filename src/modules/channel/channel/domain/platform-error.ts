@@ -2,6 +2,9 @@
 // bảng luật do adapter khai (`errorMap`), service truyền lỗi có cấu trúc và ngữ cảnh spec, không rẽ nhánh theo sàn.
 import type { BlockerTarget } from './blocker.ts';
 
+/** Thao tác gửi lên sàn: đăng sản phẩm (#567), đẩy tồn, đẩy giá theo SKU (#571). */
+export type PlatformOp = 'push' | 'stock' | 'price';
+
 /** `data`: người bán sửa được trong app; `platform`: sàn từ chối vì lý do ngoài dữ liệu; `connection`: lỗi tạm, mất kết nối. */
 export type PushErrorKind = 'data' | 'platform' | 'connection';
 
@@ -42,6 +45,8 @@ export interface PlatformErrorRule {
   platformCode: string | RegExp;
   /** Chỉ khớp khi `detail.field` bằng giá trị này. */
   field?: string;
+  /** Thao tác luật áp dụng; mặc định `['push']`, để mã khoá giá do khuyến mãi không dịch nhầm lỗi đăng sản phẩm (#571). */
+  ops?: readonly PlatformOp[];
   code: string;
   kind: PushErrorKind;
   message: string | ((m: RuleMatch) => string);
@@ -79,6 +84,26 @@ const PRECHECK_RULES: PlatformErrorRule[] = [
   },
 ];
 
+/**
+ * Luật khoá do khuyến mãi (#223, #571): sàn từ chối giảm tồn hoặc đổi giá của SKU đang trong chương trình. Lỗi của sàn nên
+ * giữ mã gốc ở `platformCode`; mã `promotion_locked` để `SyncFix` mở trang sàn.
+ */
+export function promotionLockedRule(platformCode: string, op: 'stock' | 'price'): PlatformErrorRule {
+  return {
+    platformCode,
+    ops: [op],
+    code: 'promotion_locked',
+    kind: 'platform',
+    target: null,
+    message: (m) =>
+      op === 'stock'
+        ? `${m.ctx.platformName} đang khoá giảm tồn do khuyến mãi; sàn đang cao hơn số có thể bán, cần xử lý trên trang sàn`
+        : `${m.ctx.platformName} đang khoá giá do khuyến mãi; giá cũ giữ nguyên, đổi giá sau khi khuyến mãi kết thúc`,
+  };
+}
+
+const OP_SUBJECT: Record<PlatformOp, string> = { push: 'sản phẩm', stock: 'cập nhật tồn', price: 'cập nhật giá' };
+
 const matches = (rule: PlatformErrorRule, code: string, field: string | null): boolean =>
   (typeof rule.platformCode === 'string' ? rule.platformCode === code : rule.platformCode.test(code)) &&
   (rule.field === undefined || rule.field === field);
@@ -112,12 +137,17 @@ function apply(rule: PlatformErrorRule, m: RuleMatch): TranslatedPushError {
 }
 
 /**
- * Khớp theo mã chi tiết trước (từng `detail` theo thứ tự, luật đầu tiên khớp), rồi mã ngoài cùng; không khớp thì
- * `marketplace_rejected` với câu chung "{sàn} không nhận sản phẩm: {câu sàn}", chỗ sửa suy từ `detail.field` khi trùng
+ * Khớp theo mã chi tiết trước (từng `detail` theo thứ tự, luật đầu tiên khớp), rồi mã ngoài cùng, chỉ trong luật của thao tác
+ * `op`; không khớp thì `marketplace_rejected` với câu chung "{sàn} không nhận sản phẩm|cập nhật tồn|cập nhật giá: {câu sàn}", chỗ sửa suy từ `detail.field` khi trùng
  * attribute của leaf. `platformCode`, `platformMessage` lấy của detail khi có (Lazada: không lấy 4110/"E500").
  */
-export function translatePlatformError(rules: readonly PlatformErrorRule[], failure: PlatformFailure, ctx: PushErrorContext): TranslatedPushError {
-  const all = [...rules, ...PRECHECK_RULES];
+export function translatePlatformError(
+  rules: readonly PlatformErrorRule[],
+  failure: PlatformFailure,
+  ctx: PushErrorContext,
+  op: PlatformOp = 'push',
+): TranslatedPushError {
+  const all = [...rules, ...PRECHECK_RULES].filter((r) => (r.ops ?? ['push']).includes(op));
   const details = failure.details.filter((d) => d.code || d.message);
   for (const detail of details) {
     if (!detail.code) continue;
@@ -137,8 +167,8 @@ export function translatePlatformError(rules: readonly PlatformErrorRule[], fail
     code: 'marketplace_rejected',
     kind: target ? 'data' : 'platform',
     message: platformMessage
-      ? `${ctx.platformName} không nhận sản phẩm: ${platformMessage}`
-      : `${ctx.platformName} không nhận sản phẩm${platformCode ? ` (mã ${platformCode})` : ''}`,
+      ? `${ctx.platformName} không nhận ${OP_SUBJECT[op]}: ${platformMessage}`
+      : `${ctx.platformName} không nhận ${OP_SUBJECT[op]}${platformCode ? ` (mã ${platformCode})` : ''}`,
     target,
     platformCode,
     platformMessage,
