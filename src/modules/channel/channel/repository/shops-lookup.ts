@@ -6,7 +6,7 @@ import { shops } from './schema.ts';
 export async function findShops(ids: readonly string[]) {
   if (ids.length === 0) return [];
   return getDb()
-    .select({ id: shops.id, shopName: shops.shopName, platform: shops.platform })
+    .select({ id: shops.id, shopName: shops.shopName, platform: shops.platform, externalShopId: shops.externalShopId })
     .from(shops)
     .where(inArray(shops.id, [...ids]));
 }

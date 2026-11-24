@@ -515,6 +515,7 @@ const KIND_LABEL: Record<ConfigKind, string> = {
   tax_rules: 'biểu thuế',
   mismatch_threshold: 'ngưỡng chênh lệch đối soát',
   min_margin: 'lãi tối thiểu trên giá vốn',
+  account_map: 'tài khoản kế toán',
 };
 const SOURCE_LABEL = { fee: { package: 'phí sàn', package_return: 'phí khi hàng hoàn' }, tax: { package: 'thuế sàn khấu trừ', package_return: '' } };
 const vnd = (d: Decimal.Value) => new Decimal(d).toFixed(0);

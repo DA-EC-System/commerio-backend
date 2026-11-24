@@ -24,6 +24,7 @@ import {
   marketplaceSplitLevel,
   marketplaceSplitOrder,
   listMarketplaces,
+  remoteStockByVariant,
   returnPoliciesOf,
   settlementPayouts,
   settlementTransactions,
@@ -33,7 +34,7 @@ import { type IdentityContext, loadCompanyAccess, type PlatformContext } from '.
 import { createFeeTemplate, type FinanceContext, listPlatformFeeTemplates, paymentStatusesOf, updateFeeTemplate } from './modules/finance/index.ts';
 import { hasAssistantData } from './modules/insight/index.ts';
 import { type FulfillmentContext, orderArchiveBlockers, orderInUse, type SalesContext, soldQtyOf } from './modules/order/index.ts';
-import { type CatalogContext, hasPurchasingData, seedCompanyDefaults } from './modules/product/index.ts';
+import { type CatalogContext, hasPurchasingData, type InventoryContext, seedCompanyDefaults } from './modules/product/index.ts';
 import { createAuthorize, createMember } from './shared/auth/authorize.ts';
 import type { ModuleContext } from './shared/module.ts';
 
@@ -44,7 +45,8 @@ export type AppContext = ModuleContext &
   Required<Pick<FulfillmentContext, 'shopsOf' | 'stockHoldOf' | 'marketplacePackages'>> &
   Required<Pick<PlatformContext, 'moduleData' | 'feeTemplates'>> &
   Required<Pick<IdentityContext, 'seedCompanyDefaults'>> & { soldQtyOf: typeof soldQtyOf } &
-  Required<Pick<CatalogContext, 'orderArchiveBlockers' | 'listingArchiveBlockers' | 'listingPresenceOf' | 'channelCoverageOf' | 'orderInUse' | 'listingInUse'>>;
+  Required<Pick<CatalogContext, 'orderArchiveBlockers' | 'listingArchiveBlockers' | 'listingPresenceOf' | 'channelCoverageOf' | 'orderInUse' | 'listingInUse'>> &
+  Required<Pick<InventoryContext, 'platformStockOf'>>;
 
 /** Dữ liệu có sẵn của công ty mới. Ánh xạ sang sàn của dữ liệu chuẩn là dòng nền tảng dùng chung, không chép. Dùng cả ở seed demo. */
 export async function seedNewCompany(companyId: string): Promise<void> {
@@ -92,6 +94,8 @@ export function createModuleContext(): AppContext {
     listingArchiveBlockers,
     // #204: nhãn hiện diện trên sàn của SKU (D8) ở danh sách, chi tiết sản phẩm.
     listingPresenceOf,
+    // #569: inventory (lớp dưới) hiện tồn trên sàn cạnh số đếm của phiếu kiểm kê đầu kỳ, đọc bản sao SKU sàn của channel.
+    platformStockOf: remoteStockByVariant,
     // FE#464: độ phủ sàn theo gian hàng ở danh sách sản phẩm.
     channelCoverageOf,
     // #204: SKU đã dùng ở đơn, sàn thì không xoá hẳn sản phẩm.

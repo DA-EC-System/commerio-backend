@@ -475,7 +475,15 @@ export function channelRouter(ctx: ModuleContext): Router {
   router.get('/shops/:id/remote-products', match, validate({ params: ShopParams, query: RemoteProductsQuery }), async (_req, res) => {
     const { id } = validated<typeof ShopParams>(res, 'params');
     const q = validated<typeof RemoteProductsQuery>(res, 'query');
-    res.json(await remoteProducts(productPort(ctx), actor(res), id, { status: q.status, search: q.search || undefined, page: q.page, pageSize: q.pageSize }));
+    res.json(
+      await remoteProducts(productPort(ctx), actor(res), id, {
+        status: q.status,
+        search: q.search || undefined,
+        decision: q.decision,
+        page: q.page,
+        pageSize: q.pageSize,
+      }),
+    );
   });
 
   router.post('/shops/:id/sku-links', match, validate({ params: ShopParams, body: SkuLinksBody }), async (_req, res) => {

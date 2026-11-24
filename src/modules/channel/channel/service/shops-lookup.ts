@@ -8,6 +8,7 @@ export interface ShopRef {
   id: string;
   shopName: string;
   platform: string;
+  externalShopId: string;
 }
 
 /** Tên, sàn của các gian hàng theo id, kể cả gian hàng đã ngắt; id không thấy (công ty khác, đã xoá) vắng mặt. */

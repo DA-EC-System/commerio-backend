@@ -1,6 +1,6 @@
 {
-  "id": "5b74a87d-c96e-402f-b197-1f83651b405f",
-  "prevId": "83c606eb-5da2-4958-b755-297eba6325f8",
+  "id": "7a0a9dee-5fdc-4a63-94af-7276d8483e08",
+  "prevId": "c0855841-7497-4b56-a136-0156b196ddfa",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -13764,6 +13764,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "count_source": {
+          "name": "count_source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "expected_qty": {
           "name": "expected_qty",
           "type": "integer",
@@ -13899,6 +13905,10 @@
         "stock_document_lines_counted": {
           "name": "stock_document_lines_counted",
           "value": "\"product\".\"stock_document_lines\".\"counted_qty\" >= 0"
+        },
+        "stock_document_lines_count_source": {
+          "name": "stock_document_lines_count_source",
+          "value": "\"product\".\"stock_document_lines\".\"count_source\" is null or (\"product\".\"stock_document_lines\".\"count_source\" in ('manual', 'platform') and \"product\".\"stock_document_lines\".\"counted_qty\" is not null)"
         },
         "stock_document_lines_inspection": {
           "name": "stock_document_lines_inspection",
@@ -16171,7 +16181,8 @@
         "tax_regime",
         "tax_rules",
         "mismatch_threshold",
-        "min_margin"
+        "min_margin",
+        "account_map"
       ]
     },
     "finance.config_status": {

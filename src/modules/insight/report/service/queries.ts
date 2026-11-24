@@ -54,8 +54,12 @@ export async function byShop(viewer: Viewer, range: Range) {
     const groups = Map.groupBy(rows, (r) => r.shopId ?? '');
     const shopIds = [...new Set(rows.flatMap((r) => (r.shopId ? [r.shopId] : [])))];
     const shops = await getShops(shopIds);
-    const shopOf = (id: string | null): ShopFigures['shop'] =>
-      id ? (shops.get(id) ?? { id, shopName: null, platform: null }) : null;
+    // Chỉ ba trường hợp đồng; `getShops` còn trả `externalShopId` cho việc xuất sổ, không để lộ ra báo cáo.
+    const shopOf = (id: string | null): ShopFigures['shop'] => {
+      if (!id) return null;
+      const s = shops.get(id);
+      return s ? { id: s.id, shopName: s.shopName, platform: s.platform } : { id, shopName: null, platform: null };
+    };
     const items: ShopFigures[] = [...groups.values()].map((g) => ({
       source: sourceOf(g[0]!.shopId),
       shop: shopOf(g[0]!.shopId),
