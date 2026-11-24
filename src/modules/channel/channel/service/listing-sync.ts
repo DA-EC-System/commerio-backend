@@ -54,7 +54,7 @@ import type { ListingVariant, ProductPort } from './product-port.ts';
 import { sendListingSync, sendOrderPull, sendStockPush } from './shop-jobs.ts';
 import { type Actor, onMarketplace, ownShop, shopSession, shopStopped } from './shops.ts';
 import { ordersStaleError, raisesStock, shopOrdersStale, untrustedVariants } from './stock-trust.ts';
-import { syncRunErrorOf } from './sync-runs.ts';
+import { staleRunCutoff, syncRunErrorOf } from './sync-runs.ts';
 
 /**
  * Listing đọc trạng thái từ sàn (có mã sàn): duyệt, từ chối, khoá, gỡ khoá; `rejected`, `push_failed` còn sản phẩm trên
@@ -338,7 +338,8 @@ async function moveAfterMarketplace(
 /**
  * Nút "Đồng bộ" (Documents/21 §18.5): chỉ xếp một lượt `channel.listing_sync` cho gian hàng, không gọi sàn trong request.
  * Gian hàng không `active` hoặc mất token: 409 `shop_not_connected`. `queued = false` khi đã có việc chờ (bấm hai lần).
- * `runId`: lượt người bấm (§18 "Kết quả lượt đồng bộ"), dùng lại lượt `queued` đang có; việc đồng bộ nhận lượt lúc bắt đầu.
+ * `runId`: lượt người bấm (§18 "Kết quả lượt đồng bộ"), dùng lại lượt `queued` đang có; lượt `queued` quá 30 phút thành
+ * `failed` `run_stale` và tạo lượt mới. Việc đồng bộ nhận lượt lúc bắt đầu.
  */
 export async function requestListingSync(actor: Actor, shopId: string): Promise<{ queued: boolean; runId: string }> {
   return withCompany(actor.companyId, async () => {
@@ -346,7 +347,7 @@ export async function requestListingSync(actor: Actor, shopId: string): Promise<
     if (shop.status !== 'active' || !shop.accessTokenEnc) {
       throw new AppError(409, 'shop_not_connected', 'Gian hàng chưa kết nối hoặc cần kết nối lại', { current: shop.status });
     }
-    const run = await queuedRunOrInsert(actor.companyId, shop.id, actor.accountId);
+    const run = await queuedRunOrInsert(actor.companyId, shop.id, actor.accountId, staleRunCutoff());
     return { queued: await sendListingSync(actor.companyId, shop.id), runId: run.id };
   });
 }
@@ -688,6 +689,7 @@ async function pushDue(
     );
     await inCompany(async () => {
       let succeeded = 0;
+      let skipped = 0;
       const errors: SyncRunErrorRow[] = [];
       for (const p of batch) {
         const { row, item, locked } = p;
@@ -722,14 +724,18 @@ async function pushDue(
         if (locked.priceSyncError) runErrors.push(syncRunErrorOf(row, variant, locked.priceSyncError));
         patch = { ...patch, ...locked };
         // Lệch `version` (tồn vừa đổi, đánh dấu lại pending giữa lúc đọc và lúc ghi): bỏ kết quả lượt này, giữ dòng
-        // như đang có để lượt sau đẩy số mới; không tính là lỗi.
-        await updateListing(row.id, { version: row.version }, patch);
+        // như đang có để lượt sau đẩy số mới; không tính là lỗi, cũng không tính là xong (trừ khỏi `total` của lượt).
+        const written = await updateListing(row.id, { version: row.version }, patch);
         if (!counts(p)) continue;
+        if (!written) {
+          skipped++;
+          continue;
+        }
         // Một listing một dòng lỗi (lỗi đầu tiên: tồn trước giá), như cột trạng thái của dòng.
         if (runErrors.length) errors.push(runErrors[0]!);
         else succeeded++;
       }
-      await addRunBatch(runIds, { succeeded, failed: errors.length, errors });
+      await addRunBatch(runIds, { succeeded, failed: errors.length, skipped, errors });
     });
   }
 }
@@ -742,7 +748,9 @@ export function pushBatches<T extends { row: { externalProductId: string | null 
   const byProduct = new Map<string, T[]>();
   for (const p of plan) {
     const key = p.row.externalProductId ?? '';
-    byProduct.set(key, [...(byProduct.get(key) ?? []), p]);
+    const group = byProduct.get(key);
+    if (group) group.push(p);
+    else byProduct.set(key, [p]);
   }
   const batches: T[][] = [];
   let current: T[] = [];
