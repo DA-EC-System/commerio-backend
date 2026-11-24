@@ -1,0 +1,2 @@
+ALTER TABLE "product"."stock_document_lines" ADD COLUMN "count_source" text;--> statement-breakpoint
+ALTER TABLE "product"."stock_document_lines" ADD CONSTRAINT "stock_document_lines_count_source" CHECK ("product"."stock_document_lines"."count_source" is null or ("product"."stock_document_lines"."count_source" in ('manual', 'platform') and "product"."stock_document_lines"."counted_qty" is not null));
