@@ -171,7 +171,7 @@ describe('take-over-content (#399)', () => {
     expect(await row(l.id)).toMatchObject({
       status: 'push_failed',
       content_source: 'platform',
-      push_error: { code: 'marketplace_rejected', message: 'Sản phẩm đang bị khoá sửa' },
+      push_error: { code: 'marketplace_rejected', platformMessage: 'Sản phẩm đang bị khoá sửa' },
     });
   });
 
@@ -186,7 +186,7 @@ describe('take-over-content (#399)', () => {
     expect(after.rows[0]).toMatchObject({
       status: 'live',
       content_source: 'platform',
-      push_error: { code: 'marketplace_rejected', message: 'Sản phẩm đang bị khoá sửa' },
+      push_error: { code: 'marketplace_rejected', platformMessage: 'Sản phẩm đang bị khoá sửa' },
       stock_sync: 'pending',
       price_sync: 'pending',
     });

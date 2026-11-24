@@ -4,7 +4,8 @@ import client from 'prom-client';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { logger } from '../../../../shared/logger.ts';
 import { metricsRegistry } from '../../../../shared/observability/metrics.ts';
-import { appPushError, type PushErrorContext, translatePlatformError } from '../domain/platform-error.ts';
+import type { BlockerTarget } from '../domain/blocker.ts';
+import { appPushError, type PushErrorContext, type PushErrorKind, translatePlatformError } from '../domain/platform-error.ts';
 import { leafAttributesOf } from '../repository/platform-categories.ts';
 import { findSpec } from '../repository/product-specs.ts';
 import type { Marketplace, SyncError } from '../repository/schema.ts';
@@ -12,8 +13,8 @@ import type { MarketplaceAdapter, MarketplaceError } from './marketplaces/index.
 
 const unmapped = new client.Counter({
   name: 'channel_push_error_unmapped_total',
-  help: 'Số lỗi đẩy của sàn chưa có trong bảng dịch của adapter, theo sàn (bổ sung errorMap)',
-  labelNames: ['platform'] as const,
+  help: 'Số lỗi của sàn chưa có trong bảng dịch của adapter, theo sàn và thao tác (bổ sung errorMap)',
+  labelNames: ['platform', 'op'] as const,
   registers: [metricsRegistry],
 });
 
@@ -66,9 +67,9 @@ export async function marketplacePushError(adapter: MarketplaceAdapter, err: Mar
   const ctx = await contextOf(adapter, s);
   const out = translatePlatformError(adapter.errorMap ?? [], { platformCode: err.platformCode, platformMessage: err.platformMessage, details: err.details }, ctx);
   if (!out.mapped) {
-    unmapped.inc({ platform: s.platform });
+    unmapped.inc({ platform: s.platform, op: 'push' });
     logger.warn(
-      { platform: s.platform, platformCode: out.platformCode, platformMessage: out.platformMessage, requestId: err.requestId },
+      { platform: s.platform, op: 'push', platformCode: out.platformCode, platformMessage: out.platformMessage, requestId: err.requestId },
       'push_error_unmapped',
     );
   }
@@ -80,3 +81,29 @@ export async function marketplacePushError(adapter: MarketplaceAdapter, err: Mar
     platformMessage: out.platformMessage,
   });
 }
+
+/** `pushError` trả ra API (21 §18.6.4): bản ghi trước #567 không có các trường mới thì `null`. */
+export interface PushErrorView {
+  code: string;
+  kind: PushErrorKind | null;
+  message: string;
+  target: BlockerTarget | null;
+  variantId: string | null;
+  platformCode: string | null;
+  platformMessage: string | null;
+  requestId: string | null;
+  at: string;
+}
+
+export const pushErrorView = (e: SyncError | null): PushErrorView | null =>
+  e && {
+    code: e.code,
+    kind: e.kind ?? null,
+    message: e.message,
+    target: e.target ?? null,
+    variantId: e.variantId ?? null,
+    platformCode: e.platformCode ?? null,
+    platformMessage: e.platformMessage ?? null,
+    requestId: e.requestId ?? null,
+    at: e.at,
+  };

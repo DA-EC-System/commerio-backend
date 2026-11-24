@@ -55,6 +55,7 @@ import { sendListingSync, sendOrderPull, sendStockPush } from './shop-jobs.ts';
 import { type Actor, onMarketplace, ownShop, shopSession, shopStopped } from './shops.ts';
 import { ordersStaleError, raisesStock, shopOrdersStale, untrustedVariants } from './stock-trust.ts';
 import { staleRunCutoff, syncRunErrorOf } from './sync-runs.ts';
+import { errorOf } from './push-error.ts';
 
 /**
  * Listing đọc trạng thái từ sàn (có mã sàn): duyệt, từ chối, khoá, gỡ khoá; `rejected`, `push_failed` còn sản phẩm trên
@@ -374,7 +375,7 @@ export async function syncListings(port: ProductPort, companyId: string, shopId:
   const staleBefore = Date.now() - STALE_PUSH_MS;
   for (const row of rows.filter((r) => r.status === 'pushing' && (r.pushStartedAt?.getTime() ?? 0) < staleBefore)) {
     const message = 'Quá 30 phút chưa có kết quả từ sàn, đồng bộ lại';
-    const pushError: SyncError = { code: 'marketplace_unavailable', message, at: new Date().toISOString() };
+    const pushError = errorOf('marketplace_unavailable', message, { variantId: row.variantId });
     // Lượt take-over xuất phát từ `live` kẹt quá 30 phút: về `live` như lỗi sàn, không `push_failed` (#399).
     await inCompany(async () => {
       const failure = await pushFailureOf(row);
