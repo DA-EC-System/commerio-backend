@@ -11,7 +11,7 @@ import { AppError } from '../../../../shared/errors/app-error.ts';
 import { missingSteps, type SetupDecision, type SetupDraft, changedOf } from '../domain/setup-draft.ts';
 import { returnWindowError, shopMachine } from '../domain/shop.ts';
 import { listListingRows, nameSimilarities } from '../repository/listings.ts';
-import { upsertRemoteSkus } from '../repository/remote-skus.ts';
+import { remoteSkuIdsOf, upsertRemoteSkus } from '../repository/remote-skus.ts';
 import { lockCompanySetup, readSetupDraft, setupStateOfCompany, updateShop } from '../repository/shops.ts';
 import { insertListing } from './listing-writes.ts';
 import { saveFullSnapshot } from './remote-skus.ts';
@@ -406,18 +406,39 @@ export async function setupPreview(port: ProductPort, actor: Actor, shopId: stri
   // Nháp thiết lập (#569, §18.7.5): `draft` null và `draftVersion` 0 khi chưa có; `changed` so SKU sàn lúc xác nhận với bản vừa đọc.
   const saved = await withCompany(actor.companyId, () => readSetupDraft(shopId));
   const draft = saved?.draft ?? null;
+  // `changed` so với toàn bộ bản sao SKU sàn, không phải phần gợi ý còn đề xuất (lọc SKU đã liên kết sẽ báo "đã xoá" nhầm).
+  const remoteSkuIds = draft ? await withCompany(actor.companyId, () => remoteSkuIdsOf(shopId)) : [];
   return {
     suggestions: items,
     unmatchedRemote,
     nameMatchSkipped,
     proposedCutoffAt: new Date(),
     firstShopOfCompany,
-    draft: draft ? { ...draft, changed: changedOf(draft.baseline, items.map((s) => s.externalSkuId)) } : null,
+    draft: draft ? { ...draft, changed: changedOf(draft.baseline, remoteSkuIds) } : null,
     draftVersion: saved?.version ?? 0,
   };
 }
 
-type LegacySetupInput = SetupChoice & { openingStock: 'push' | 'stocktake'; returnWindowDays?: number | null | undefined };
+type LegacySetupInput = SetupChoice & {
+  openingStock: 'push' | 'stocktake';
+  returnWindowDays?: number | null | undefined;
+  /** Có khi hoàn tất từ nháp: kiểm lại dưới khoá dòng gian hàng trong giao dịch ghi (§18.7.5). */
+  draftVersion?: number;
+};
+
+/** Nháp phải đủ ba mốc và đúng `draftVersion` bên gọi giữ; dùng cả lúc đọc đầu và lúc kiểm lại dưới khoá. */
+function assertDraftReady(saved: { draft: SetupDraft | null; version: number }, draftVersion: number): SetupDraft {
+  const missing = saved.draft ? missingSteps(saved.draft) : (['link_skus', 'assign_groups', 'stock_sync'] as const);
+  if (!saved.draft || missing.length) {
+    throw new AppError(409, 'setup_draft_incomplete', 'Chưa xác nhận đủ các bước thiết lập', { missing });
+  }
+  if (draftVersion !== saved.version) {
+    throw new AppError(409, 'version_conflict', 'Bản nháp thiết lập vừa được cập nhật, tải lại', {
+      current: { draft: saved.draft, draftVersion: saved.version },
+    });
+  }
+  return saved.draft;
+}
 
 /** Hoàn tất từ nháp (#569, §18.7.5 `POST /setup { draftVersion }`): đủ ba mốc, đúng `draftVersion`, rồi chạy luật trên nội dung nháp. */
 async function inputOfDraft(actor: Actor, shopId: string, draftVersion: number): Promise<LegacySetupInput> {
@@ -429,17 +450,9 @@ async function inputOfDraft(actor: Actor, shopId: string, draftVersion: number):
   if (saved.status !== 'connecting') {
     throw new AppError(409, 'invalid_transition', 'Gian hàng không ở bước thiết lập', { current: saved.status });
   }
-  const missing = saved.draft ? missingSteps(saved.draft) : (['link_skus', 'assign_groups', 'stock_sync'] as const);
-  if (!saved.draft || missing.length) {
-    throw new AppError(409, 'setup_draft_incomplete', 'Chưa xác nhận đủ các bước thiết lập', { missing });
-  }
-  if (draftVersion !== saved.version) {
-    throw new AppError(409, 'version_conflict', 'Bản nháp thiết lập vừa được cập nhật, tải lại', {
-      current: { draft: saved.draft, draftVersion: saved.version },
-    });
-  }
-  const draft: SetupDraft = saved.draft;
+  const draft = assertDraftReady(saved, draftVersion);
   return {
+    draftVersion,
     decisions: draft.decisions.map((d: SetupDecision) => ({
       externalSkuId: d.externalSkuId,
       variantId: d.action === 'link' ? d.variantId : null,
@@ -500,6 +513,12 @@ async function finishSetupWith(
     if (raced) throw new AppError(422, 'validation_failed', 'Dữ liệu không hợp lệ', { errors: { openingStock: raced } });
     const { shop } = await shopSession(shopId);
     const { to } = assertTransition(shopMachine, shop.status, 'finish_setup', { actor });
+    // Hoàn tất từ nháp: `suggestions()` ở trên có thể vừa chạy `reconcileSetupDraft` (SKU sàn mới), và `PUT /setup/draft`
+    // có thể chen vào. Đọc lại dưới khoá dòng gian hàng; lệch thì 409, không hoàn tất trên quyết định đã cũ.
+    if (input.draftVersion !== undefined) {
+      const locked = await readSetupDraft(shopId, true);
+      assertDraftReady(locked ?? { draft: null, version: 0 }, input.draftVersion);
+    }
     if (toCreate.length) {
       picked.push(...(await createFromRemote(port, actor, shop, (productId) => input.createGroups?.get(productId) ?? input.createGroupId, toCreate)));
     }
@@ -555,7 +574,7 @@ async function finishSetupWith(
       input.openingStock === 'stocktake' ? await stocktakePort().createOpeningStocktake(shop.id, { actorId: actor.accountId }) : null;
     const updated = await updateShop(
       shop.id,
-      { version: shop.version, status: shop.status },
+      { version: shop.version, status: shop.status, ...(input.draftVersion !== undefined ? { draftVersion: input.draftVersion } : {}) },
       {
         status: to,
         orderCutoffAt: new Date(),

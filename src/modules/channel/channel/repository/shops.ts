@@ -94,7 +94,7 @@ export async function insertShop(values: typeof shops.$inferInsert): Promise<Sho
  */
 export async function updateShop(
   id: string,
-  expected: { version: number; status?: ShopStatus },
+  expected: { version: number; status?: ShopStatus; draftVersion?: number },
   patch: Partial<typeof shops.$inferInsert>,
 ): Promise<ShopRow | undefined> {
   const [row] = await getDb()
@@ -105,6 +105,7 @@ export async function updateShop(
         eq(shops.id, id),
         eq(shops.version, expected.version),
         expected.status ? eq(shops.status, expected.status) : undefined,
+        expected.draftVersion !== undefined ? eq(shops.setupDraftVersion, expected.draftVersion) : undefined,
       ),
     )
     .returning();

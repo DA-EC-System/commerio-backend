@@ -368,6 +368,27 @@ describe('POST /setup { draftVersion }: hoàn tất từ nháp', () => {
     expect(res.body.current.draftVersion).toBe(three.body.draftVersion);
   });
 
+  it('SKU sàn đổi giữa lúc xem và hoàn tất: 409, gian hàng vẫn connecting, SKU mới không bị bỏ sót', async () => {
+    const s = await connectingShop();
+    const decided = await s.links({
+      draftVersion: 0,
+      items: ['sku-1', 'sku-2', 'sku-3', 'sku-4'].map((externalSkuId) => ({ externalSkuId, action: 'skip' })),
+    });
+    const one = await s.put({ confirm: 'link_skus', draftVersion: decided.body.draftVersion });
+    const three = await s.put({ openingStock: 'push', returnWindowDays: 7, confirm: 'stock_sync', draftVersion: one.body.draftVersion });
+    expect(three.status).toBe(200);
+    // Sàn có SKU mới sau khi đã xác nhận; không gọi GET /setup, lần đọc sàn của chính POST /setup thấy nó.
+    remote = [...remote, sku('sku-9', 'item-D', 'LZ-9', 'Ví da')];
+    const res = await s.finish({ draftVersion: three.body.draftVersion });
+    expect(res.status).toBe(409);
+    expect(['setup_draft_incomplete', 'version_conflict']).toContain(res.body.code);
+    const row = await testPool().query('select status from channel.shops where id = $1', [s.shopId]);
+    expect(row.rows[0].status).toBe('connecting');
+    const after = await draftRow(s.shopId);
+    expect(after.setup_draft?.confirmed.link_skus).toBeNull();
+    expect(after.setup_draft_version).toBeGreaterThan(three.body.draftVersion);
+  });
+
   it('đủ ba mốc: tạo listing theo nháp (liên kết, không quản tồn), gian hàng active, nháp bị xoá', async () => {
     const s = await connectingShop();
     const decided = await s.links({

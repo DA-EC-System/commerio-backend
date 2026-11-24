@@ -405,3 +405,9 @@ export async function remoteProductSkuTotals(shopId: string, externalProductIds:
     .groupBy(remoteSkus.externalProductId);
   return new Map(rows.map((r) => [r.id, r.n]));
 }
+
+/** Mọi `external_sku_id` trong bản sao của gian hàng (không lọc theo gợi ý), để so với `baseline` của nháp. */
+export async function remoteSkuIdsOf(shopId: string): Promise<string[]> {
+  const rows = await getDb().select({ id: remoteSkus.externalSkuId }).from(remoteSkus).where(eq(remoteSkus.shopId, shopId));
+  return rows.map((r) => r.id);
+}
