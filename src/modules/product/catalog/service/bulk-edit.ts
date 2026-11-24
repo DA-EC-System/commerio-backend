@@ -180,7 +180,9 @@ export const BULK_MAX_ROWS = 200;
 export async function saveBulkEdit(ctx: BulkEditContext, viewer: BulkViewer, rawRows: readonly unknown[]) {
   if (rawRows.length > BULK_MAX_ROWS) throw new AppError(400, 'too_many_rows', `Tối đa ${BULK_MAX_ROWS} dòng mỗi lần lưu`);
   const ports = portsOf(ctx);
-  const saved: { variantId: string; version: number }[] = [];
+  const saved: { variantId: string; version: number; reorderVersion: number | null }[] = [];
+  /** Dòng không gửi `minQty`: đọc `reorderVersion` hiện tại một lần cho cả lô sau vòng lặp */
+  const untouched: string[] = [];
   const failed: BulkFailure[] = [];
   const seen = new Set<string>();
   for (const raw of rawRows) {
@@ -198,7 +200,7 @@ export async function saveBulkEdit(ctx: BulkEditContext, viewer: BulkViewer, raw
       if (row.minQty !== undefined && !viewer.permissions.includes(REORDER_MANAGE)) {
         throw new RowFailure('validation_failed', 'Không có quyền đặt ngưỡng tồn', { minQty: 'Bạn không có quyền đặt ngưỡng tồn' });
       }
-      const version = await withCompany(viewer.companyId, async () => {
+      const { version, reorderVersion } = await withCompany(viewer.companyId, async () => {
         const [current] = isUuid(row.variantId) ? await findVariants({ ids: [row.variantId] }) : [];
         if (!current) throw new RowFailure('not_found', 'Không tìm thấy SKU');
         const listed = await listedFieldErrors(ctx, current, row);
@@ -216,13 +218,27 @@ export async function saveBulkEdit(ctx: BulkEditContext, viewer: BulkViewer, raw
             throw new RowFailure('version_conflict', 'Ngưỡng tồn vừa được người khác sửa', { minQty: 'Ngưỡng tồn vừa được người khác sửa' });
           }
         }
-        return outcome === 'updated' ? current.version + 1 : current.version;
+        const nextVersion = outcome === 'updated' ? current.version + 1 : current.version;
+        if (row.minQty === undefined) return { version: nextVersion, reorderVersion: null };
+        // Đọc trong giao dịch của dòng: lần đầu tạo dòng tồn (version 1) rồi đặt ngưỡng (2); cùng giá trị thì không tăng
+        const after = (await ports.reorderRulesOf([current.id])).get(current.id);
+        return { version: nextVersion, reorderVersion: reorderVersionOf(after) };
       });
-      saved.push({ variantId: row.variantId, version });
+      if (row.minQty === undefined) untouched.push(row.variantId);
+      saved.push({ variantId: row.variantId, version, reorderVersion });
     } catch (err) {
       if (!(err instanceof RowFailure)) throw err;
       failed.push({ variantId, code: err.code, message: err.message, ...(err.errors && { errors: err.errors }) });
     }
   }
+  if (untouched.length) {
+    const rules = await withCompany(viewer.companyId, () => ports.reorderRulesOf(untouched));
+    for (const s of saved) if (untouched.includes(s.variantId)) s.reorderVersion = reorderVersionOf(rules.get(s.variantId));
+  }
   return { saved, failed };
+}
+
+/** Như `GET /variants/bulk-edit`: chưa có dòng tồn thì null (gửi lại null hoặc 0) */
+function reorderVersionOf(rule: { version: number } | undefined): number | null {
+  return rule && rule.version > 0 ? rule.version : null;
 }

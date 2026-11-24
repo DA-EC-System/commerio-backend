@@ -247,7 +247,7 @@ describe('PATCH /variants/bulk', () => {
       { variantId, version: 1, reorderVersion: null, targetNetPrice: 140_000, weightG: 250, lengthMm: 300, widthMm: 200, heightMm: 20, minQty: 9 },
     ]);
     expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(res.body).toEqual({ saved: [{ variantId, version: 2 }], failed: [] });
+    expect(res.body).toEqual({ saved: [{ variantId, version: 2, reorderVersion: 2 }], failed: [] });
     expect(await variantRow(variantId)).toMatchObject({ target_net_price: '140000.00', weight_g: 250, version: 2 });
     const stock = (await testPool().query('select min_qty from product.stock_levels where variant_id = $1', [variantId])).rows[0];
     expect(stock).toEqual({ min_qty: 9 });
@@ -255,8 +255,27 @@ describe('PATCH /variants/bulk', () => {
     expect(events.rows).toHaveLength(1);
     expect(events.rows[0].payload).toMatchObject({ variantId, to: '140000.00' });
     const row = rowOf(await bulk(ceo).list(search(product.name)), variantId);
-    expect(row).toMatchObject({ version: 2, current: { targetNetPrice: 140_000, minQty: 9 } });
-    expect(row.reorderVersion).toBeGreaterThan(0);
+    expect(row).toMatchObject({ version: 2, reorderVersion: 2, current: { targetNetPrice: 140_000, minQty: 9 } });
+  });
+
+  it('reorderVersion trong saved dùng được cho lần lưu sau: đặt lại thì tăng, cùng giá trị thì giữ, không gửi minQty thì trả bản hiện tại', async () => {
+    const { variantId } = await setup();
+    const first = await bulk(ceo).save([{ variantId, version: 1, reorderVersion: null, minQty: 3 }]);
+    expect(first.body).toEqual({ saved: [{ variantId, version: 1, reorderVersion: 2 }], failed: [] });
+    const again = await bulk(ceo).save([{ variantId, version: 1, reorderVersion: 2, minQty: 5 }]);
+    expect(again.body).toEqual({ saved: [{ variantId, version: 1, reorderVersion: 3 }], failed: [] });
+    const same = await bulk(ceo).save([{ variantId, version: 1, reorderVersion: 3, minQty: 5 }]);
+    expect(same.body).toEqual({ saved: [{ variantId, version: 1, reorderVersion: 3 }], failed: [] });
+    const noMin = await bulk(ceo).save([{ variantId, version: 1, weightG: 120 }]);
+    expect(noMin.body).toEqual({ saved: [{ variantId, version: 2, reorderVersion: 3 }], failed: [] });
+    const level = (await testPool().query('select version, min_qty from product.stock_levels where variant_id = $1', [variantId])).rows[0];
+    expect(level).toEqual({ version: 3, min_qty: 5 });
+  });
+
+  it('SKU chưa có dòng tồn, không gửi minQty: reorderVersion null', async () => {
+    const { variantId } = await setup();
+    const res = await bulk(ceo).save([{ variantId, version: 1, weightG: 80 }]);
+    expect(res.body).toEqual({ saved: [{ variantId, version: 2, reorderVersion: null }], failed: [] });
   });
 
   it('lỗi theo dòng, dòng đúng vẫn lưu: sai version, số không hợp lệ, SKU không có, SKU lặp, trường lạ', async () => {
@@ -273,7 +292,7 @@ describe('PATCH /variants/bulk', () => {
       { variantId: invalid.variantId, version: 1, imageFileId: 'x' },
     ]);
     expect(res.status).toBe(200);
-    expect(res.body.saved).toEqual([{ variantId: good.variantId, version: 2 }]);
+    expect(res.body.saved).toEqual([{ variantId: good.variantId, version: 2, reorderVersion: null }]);
     expect(res.body.failed).toEqual([
       { variantId: stale.variantId, code: 'version_conflict', message: expect.stringContaining('vừa được người khác sửa') },
       {
@@ -306,7 +325,7 @@ describe('PATCH /variants/bulk', () => {
     const { variantId } = await setup();
     await bulk(ceo).save([{ variantId, version: 1, targetNetPrice: 120_000 }]);
     const again = await bulk(ceo).save([{ variantId, version: 2, targetNetPrice: 120_000 }]);
-    expect(again.body).toEqual({ saved: [{ variantId, version: 2 }], failed: [] });
+    expect(again.body).toEqual({ saved: [{ variantId, version: 2, reorderVersion: null }], failed: [] });
     expect((await eventsOf(variantId)).rowCount).toBe(1);
   });
 
@@ -336,7 +355,7 @@ describe('PATCH /variants/bulk', () => {
       { variantId: a.variantId, version: 1, weightG: 10, minQty: 3 },
       { variantId: b.variantId, version: 1, weightG: 10 },
     ]);
-    expect(res.body.saved).toEqual([{ variantId: b.variantId, version: 2 }]);
+    expect(res.body.saved).toEqual([{ variantId: b.variantId, version: 2, reorderVersion: null }]);
     expect(res.body.failed).toEqual([
       { variantId: a.variantId, code: 'validation_failed', message: expect.any(String), errors: { minQty: expect.any(String) } },
     ]);
