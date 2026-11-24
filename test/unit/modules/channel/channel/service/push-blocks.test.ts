@@ -141,15 +141,15 @@ describe('groupBlockers', () => {
   });
 });
 
-describe('displayBlockers', () => {
+describe('byDisplayOrder', () => {
   it('xếp platform, common, shop; cùng scope giữ thứ tự gặp (push và readiness dùng chung)', async () => {
-    const { displayBlockers } = await import('#src/modules/channel/channel/service/push-block.ts');
+    const { byDisplayOrder, groupBlockers } = await import('#src/modules/channel/channel/service/push-block.ts');
     const items = [
       { code: 'fee_not_configured' as const, label: 'Phí', target: { kind: 'shop' as const, field: 'fee_config' as const } },
       { code: 'price_missing' as const, label: 'Giá', target: { kind: 'variant_field' as const, field: 'price' as const } },
       { code: 'category_unmapped' as const, label: 'Cat', target: { kind: 'category' as const } },
       { code: 'images_missing' as const, label: 'Ảnh', target: { kind: 'product_field' as const, field: 'images' as const } },
     ];
-    expect(displayBlockers([{ variantId: 'v1', items }]).map((b) => b.code)).toEqual(['category_unmapped', 'price_missing', 'images_missing', 'fee_not_configured']);
+    expect(groupBlockers([{ variantId: 'v1', items }]).sort(byDisplayOrder).map((b) => b.code)).toEqual(['category_unmapped', 'price_missing', 'images_missing', 'fee_not_configured']);
   });
 });

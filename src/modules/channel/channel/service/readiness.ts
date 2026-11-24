@@ -1,7 +1,7 @@
 // Readiness đăng của một sản phẩm theo từng gian hàng (be#564, Documents/21 §18.10). Không ghi, không gọi sàn. Mục chặn lấy từ
 // `checkVariant`, cùng hàm với `push` và `push-preview`, nên ba nơi không lệch nhau.
 import { AppError } from '../../../../shared/errors/app-error.ts';
-import { type Blocker, displayBlockers } from '../domain/blocker.ts';
+import { type Blocker, byDisplayOrder, groupBlockers } from '../domain/blocker.ts';
 import { pickSources } from '../domain/category-sources.ts';
 import type { Marketplace } from '../repository/schema.ts';
 import { categoryInfoOf } from '../repository/platform-categories.ts';
@@ -69,7 +69,7 @@ export async function productReadiness(port: ProductPort, productId: string, sho
       variants.push({ variantId: id, status: found.length ? 'blocked' : 'ready', blockerCodes: found.map((b) => b.code) });
     }
     const category = await categoryState(shop.platform, productId, sameGroupOf, ctx.specs.get(productId));
-    const blockers = displayBlockers(rows).map((b) => (b.code === 'axis_limit' ? { ...b, label: axisLimitLabel(category, live) ?? b.label } : b));
+    const blockers = groupBlockers(rows).sort(byDisplayOrder).map((b) => (b.code === 'axis_limit' ? { ...b, label: axisLimitLabel(category, live) ?? b.label } : b));
     const counts = {
       ready: variants.filter((v) => v.status === 'ready').length,
       blocked: variants.filter((v) => v.status === 'blocked').length,

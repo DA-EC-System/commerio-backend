@@ -43,7 +43,7 @@ import { currentPrices, type ListingPrice, listingPrices } from './listing-price
 import { pushAttributes, specChecks, specStatusOf } from './product-specs.ts';
 import { PUSH_IMAGE_MAX, sendListingPush, sendProductPush } from './shop-jobs.ts';
 import { checkVariant, loadPushContext } from './push-check.ts';
-import { type Blocker, displayBlockers, firstBlock, listingText, pushBlock, specBlock } from './push-block.ts';
+import { type Blocker, byDisplayOrder, firstBlock, groupBlockers, listingText, pushBlock, specBlock } from './push-block.ts';
 import { findAppShopProduct, findShopProduct, insertAppShopProduct, matchShopProductsOf, setShopProductPushStarted } from '../repository/shop-products.ts';
 import { MarketplaceError } from './marketplaces/index.ts';
 import { type Actor, onMarketplace, ownShop, platformOf, shopSession } from './shops.ts';
@@ -412,7 +412,7 @@ export async function pushListings(
     const { items, existing } = checkVariant(ctx, variantId);
     const first = firstBlock(items);
     if (first) {
-      results.push({ ...blocked(variantId, existing, first.code, first.message), blockers: displayBlockers([{ variantId, items }]) });
+      results.push({ ...blocked(variantId, existing, first.code, first.message), blockers: groupBlockers([{ variantId, items }]).sort(byDisplayOrder) });
       continue;
     }
     const v = ctx.variants.get(variantId)!;
