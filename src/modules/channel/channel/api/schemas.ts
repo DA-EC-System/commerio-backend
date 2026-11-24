@@ -1536,6 +1536,13 @@ export const CategorySyncBody = z
       .boolean('allowShrink phải là true hoặc false')
       .optional()
       .meta({ description: 'Cho lượt này ghi cả khi cây sàn trả thiếu quá ngưỡng (đánh `removed` hàng loạt). Chỉ quản trị nền tảng' }),
+    shopId: z
+      .uuid('shopId không hợp lệ')
+      .optional()
+      .meta({
+        description:
+          'Gian hàng đang thiết lập (#569): sàn cần token mà chưa có gian hàng `active` nào thì lượt mượn token của gian hàng này. Phải là gian hàng của công ty, cùng sàn; không thì 404',
+      }),
   })
   .default({})
   .meta({ id: 'CategorySyncInput' });
@@ -1694,3 +1701,30 @@ export const SyncRun = z
   })
   .strict()
   .meta({ id: 'SyncRun' });
+
+// Trạng thái đồng bộ category khi nối gian hàng (#569, Documents/21 §18.5).
+export const CategorySyncView = z
+  .object({
+    tree: z
+      .object({
+        state: z.enum(['ready', 'queued', 'running', 'failed', 'unsupported']).meta({
+          description: '`ready`: đã có cây; `unsupported`: sàn chưa đọc được category từ app; `failed` kèm `error` (nút Thử lại gọi `POST /platforms/:platform/categories/sync`)',
+        }),
+        syncedAt: z.string().nullable(),
+        leafCount: z.number().int(),
+        error: z.string().nullable(),
+      })
+      .strict(),
+    permissions: z
+      .object({
+        state: z.enum(['ready', 'queued', 'running', 'failed']),
+        checkedAt: z.string().nullable(),
+        availableCount: z.number().int().meta({ description: 'Số category lá gian hàng được bán' }),
+        error: z.string().nullable(),
+      })
+      .strict()
+      .nullable()
+      .meta({ description: '`null` khi sàn không có quyền category theo gian hàng (Lazada)' }),
+  })
+  .strict()
+  .meta({ id: 'CategorySync' });

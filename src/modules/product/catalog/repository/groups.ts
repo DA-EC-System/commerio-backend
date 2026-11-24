@@ -154,3 +154,17 @@ export async function setProductsGroup(ids: readonly string[], groupId: string):
     .set({ groupId, version: sql`${products.version} + 1`, updatedAt: sql`now()` })
     .where(inArray(products.id, [...ids]));
 }
+
+/**
+ * Id trong `ids` còn là danh mục công ty dùng được: còn dòng, không bị công ty ẩn (#569, Documents/21 §18.5: gợi ý danh mục từ
+ * category sàn). Gọi trong `withCompany` (RLS đọc dòng nền tảng và dòng của công ty).
+ */
+export async function visibleGroupIds(ids: readonly string[]): Promise<Set<string>> {
+  if (!ids.length) return new Set();
+  const rows = await getDb()
+    .select({ id: productGroups.id })
+    .from(productGroups)
+    .leftJoin(companyGroupSettings, settingsJoin)
+    .where(and(inArray(productGroups.id, [...new Set(ids)]), sql`coalesce(${companyGroupSettings.hidden}, false) = false`));
+  return new Set(rows.map((r) => r.id));
+}

@@ -46,9 +46,9 @@ export async function markReturnConfirmed(id: string): Promise<boolean> {
 // trước mỗi lượt kéo yêu cầu trả (`returnsAwaitingRefundApproval` → `markRefundApproved` / `flagRefundApprovalFailed`).
 
 export const REFUND_APPROVAL_FAILED_NOTE = 'Chưa báo được sàn đồng ý hoàn tiền';
-export const REFUND_CLAIM_NOTE = 'Hàng trả về thiếu hoặc sai';
+export const REFUND_CLAIM_NOTE = 'Hàng trả về thiếu, sai mẫu hoặc hỏng';
 
-/** Câu cờ khi phiếu kiểm hàng hoàn có khiếu nại: app không báo sàn, người bán xử lý trên sàn. */
+/** Câu cờ khi phiếu kiểm hàng hoàn có dòng thiếu, sai mẫu, hỏng: app không báo sàn, người bán quyết trên Seller Center. */
 export const refundClaimNote = (inspectionNumber: string | null) =>
   `${REFUND_CLAIM_NOTE}${inspectionNumber ? ` (phiếu ${inspectionNumber})` : ''}: app không báo sàn đồng ý hoàn tiền. Từ chối nhận hàng hoặc khiếu nại trên Seller Center trước hạn của sàn.`;
 
@@ -77,7 +77,14 @@ export function clearRefundApprovalFlag(row: { needsAttention: boolean; attentio
 /** Yêu cầu đã đóng sau kiểm hàng hoàn của gian hàng, chờ báo sàn đồng ý hoàn tiền. */
 export async function returnsAwaitingRefundApproval(shopId: string): Promise<ReturnToConfirm[]> {
   const rows = (await findReturnsAwaitingRefundApproval(shopId, RETRY_BATCH)).filter((r) => r.externalReturnId);
-  return rows.map((r) => ({ id: r.id, externalReturnId: r.externalReturnId!, externalLineIds: [] }));
+  if (!rows.length) return [];
+  // Lazada quyết theo mã dòng đơn ngược (#437); TikTok quyết theo cả yêu cầu, bỏ qua danh sách này.
+  const lines = await findReturnLines(rows.map((r) => r.id));
+  return rows.map((r) => ({
+    id: r.id,
+    externalReturnId: r.externalReturnId!,
+    externalLineIds: lines.filter((l) => l.requestId === r.id && l.externalLineId).map((l) => l.externalLineId!),
+  }));
 }
 
 /** Sàn đã nhận lệnh: `done`, gỡ cờ báo lỗi của bước này nếu có. */

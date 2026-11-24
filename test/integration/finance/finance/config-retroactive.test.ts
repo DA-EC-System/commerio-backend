@@ -214,6 +214,49 @@ async function submitted(author: Client, body: object) {
   return author.post(`/configs/${created.body.id}/submit`, { version: dry.body.version });
 }
 
+describe('phí cố định mỗi món (#381; 25 §6.2, §10.1, §10.4)', () => {
+  const perItemLines = async (companyId: string) =>
+    (
+      await testPool().query(
+        `select package_id, amount, config_version_id from finance.ledger_entries where company_id = $1 and kind = 'fee_per_item' order by created_at`,
+        [companyId],
+      )
+    ).rows;
+
+  it('kiện giao theo bản phí có phí mỗi món: dòng fee_per_item = 3.000 × 2 món; lãi theo đơn trừ đúng số này', async () => {
+    const s = await setup();
+    const v = await approve(s.admin, s.ceo, { kind: 'fee', shopId: s.shopId, payload: fee({ perItemFee: 3000 }), effectiveFrom: TODAY });
+    const pkg = await s.deliver(TODAY);
+    expect(await perItemLines(s.companyId)).toEqual([{ package_id: pkg.packageId, amount: '-6000.00', config_version_id: v.id }]);
+    // 258.000 + 10.000 + 30.000 − 30.000 − 18.060 phí % − 6.000 phí mỗi món − 3.870 thuế khấu trừ.
+    const profit = await s.ceo.get(`/orders/${pkg.orderId}/profit`);
+    expect(profit.status, JSON.stringify(profit.body)).toBe(200);
+    expect(profit.body).toMatchObject({ net: 240070 });
+  });
+
+  it('bản sửa lỗi chỉ đổi phí mỗi món: điều chỉnh phần chênh theo số món, kèm lý do; kiện không có dòng hàng (trước #231) không điều chỉnh', async () => {
+    const s = await setup();
+    const pkg = await s.deliver('2026-10-28');
+    const old = await s.deliver('2026-10-29');
+    await testPool().query('delete from finance.ledger_package_lines where package_id = $1', [old.packageId]);
+    const v1 = await approve(s.admin, s.ceo, { kind: 'fee', shopId: s.shopId, payload: fee({ perItemFee: 3000 }), effectiveFrom: '2026-10-25' });
+    const v2 = await approve(s.admin, s.ceo, {
+      kind: 'fee',
+      shopId: s.shopId,
+      payload: fee({ perItemFee: 5000 }),
+      effectiveFrom: '2026-10-25',
+      supersedesId: v1.id,
+      isCorrection: true,
+    });
+    const adj = await adjustments(s.companyId);
+    expect(adj.map((a) => [a.package_id, a.amount, a.config_version_id])).toEqual([
+      [pkg.packageId, '-6000.00', v1.id],
+      [pkg.packageId, '-4000.00', v2.id],
+    ]);
+    expect(adj[1].reason).toMatch(/^Hồi tố theo phiên bản phí sàn/);
+  });
+});
+
 describe('bản sửa lỗi (25 §10.4, E148: cùng ngày hiệu lực, thay bản đã áp dụng)', () => {
   it('sửa bản scheduled thì 422 invalid_correction_target (huỷ rồi soạn bản mới), không 500', async () => {
     const s = await setup();
