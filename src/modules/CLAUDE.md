@@ -45,7 +45,7 @@ Import giữa module (dependency-cruiser kiểm):
 | | `inbox` | Hội thoại, tin nhắn, nhãn, ghi chú | |
 | `insight` | `report` | Không có bảng (`daily_channel_summary` xoá ở #333) | Số liệu Tổng quan gom thẳng sổ tiền qua `finance.getDailyLedgerFigures` mỗi lần gọi (#333, Documents/21 §21.5) |
 | | `assistant` | Tài liệu nội bộ, vector | pgvector |
-| | `onboarding` | Không có bảng | Checklist thiết lập ban đầu `GET /onboarding` (#461), đọc chéo core, product, channel qua cổng công khai |
+| | `onboarding` | Không có bảng | Checklist thiết lập ban đầu `GET /onboarding` (#461, #569: 7 mục bắt buộc, `next`, `mustWizard`), `POST /onboarding/complete` đặt mốc `core.companies.onboarding_completed_at` qua cổng `markOnboardingCompleted` của core; đọc chéo core, product, channel qua cổng công khai |
 
 ## Lớp module lớn: ai được gọi ai
 

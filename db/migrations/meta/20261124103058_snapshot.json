@@ -1,5 +1,5 @@
 {
-  "id": "57bbf392-997c-4150-bf63-c1cad2619f30",
+  "id": "baf85ba9-4ebf-4883-bb4a-a426938d9cbd",
   "prevId": "1fea3506-d1f5-40c8-8cc6-1f6a1d0bf5e8",
   "version": "7",
   "dialect": "postgresql",
@@ -992,25 +992,6 @@
           "notNull": true,
           "default": true
         },
-        "category_sync_state": {
-          "name": "category_sync_state",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'idle'"
-        },
-        "category_sync_error": {
-          "name": "category_sync_error",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "category_sync_at": {
-          "name": "category_sync_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -1024,12 +1005,7 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {
-        "marketplaces_category_sync_state": {
-          "name": "marketplaces_category_sync_state",
-          "value": "\"channel\".\"marketplaces\".\"category_sync_state\" in ('idle', 'queued', 'running', 'failed', 'unsupported')"
-        }
-      },
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "channel.platform_categories": {
@@ -1289,45 +1265,6 @@
           "value": "\"channel\".\"platform_category_attributes\".\"tier\" in ('category', 'product', 'company')"
         }
       },
-      "isRLSEnabled": false
-    },
-    "channel.platform_category_group_maps": {
-      "name": "platform_category_group_maps",
-      "schema": "channel",
-      "columns": {
-        "platform": {
-          "name": "platform",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "external_category_id": {
-          "name": "external_category_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "group_id": {
-          "name": "group_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "platform_category_group_maps_platform_external_category_id_pk": {
-          "name": "platform_category_group_maps_platform_external_category_id_pk",
-          "columns": [
-            "platform",
-            "external_category_id"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "channel.price_calculations": {
@@ -2641,23 +2578,18 @@
           "primaryKey": false,
           "notNull": false
         },
-        "category_permissions_state": {
-          "name": "category_permissions_state",
-          "type": "text",
+        "setup_draft": {
+          "name": "setup_draft",
+          "type": "jsonb",
           "primaryKey": false,
           "notNull": false
         },
-        "category_permissions_error": {
-          "name": "category_permissions_error",
-          "type": "text",
+        "setup_draft_version": {
+          "name": "setup_draft_version",
+          "type": "integer",
           "primaryKey": false,
-          "notNull": false
-        },
-        "category_permissions_checked_at": {
-          "name": "category_permissions_checked_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
+          "notNull": true,
+          "default": 0
         },
         "created_at": {
           "name": "created_at",
@@ -2783,10 +2715,6 @@
         "shops_orders_pulled_ok_at": {
           "name": "shops_orders_pulled_ok_at",
           "value": "\"channel\".\"shops\".\"orders_pulled_ok_at\" is null or \"channel\".\"shops\".\"order_cutoff_at\" is not null"
-        },
-        "shops_category_permissions_state": {
-          "name": "shops_category_permissions_state",
-          "value": "\"channel\".\"shops\".\"category_permissions_state\" in ('queued', 'running', 'ready', 'failed')"
         },
         "shops_reauth_orders_pulled": {
           "name": "shops_reauth_orders_pulled",
@@ -4637,6 +4565,12 @@
         },
         "locked_at": {
           "name": "locked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "onboarding_completed_at": {
+          "name": "onboarding_completed_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false

@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V150**, 25 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
+Phiên bản **V151**, 25 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
 **Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
 
@@ -443,7 +443,7 @@ Cột:
 Ràng buộc và index:
 
 - khoá chính (`platform`, `external_category_id`)
-- khoá ngoại viết tay (`platform`) → `channel.marketplaces` (`code`), ở `db/migrations/20261124110642_dong-bo-category-du-lieu.sql`
+- khoá ngoại viết tay (`platform`) → `channel.marketplaces` (`code`), ở `db/migrations/20261124111242_dong-bo-category-du-lieu.sql`
 
 ## `channel.price_calculations`
 
@@ -748,6 +748,10 @@ Cột:
   Lỗi đã chuẩn hoá của lượt hỏng (không chứa token).
 - `category_permissions_checked_at` timestamptz · null
   Lần đọc quyền xong gần nhất.
+- `setup_draft` jsonb · null
+  Bản nháp thiết lập (#569, Documents/21 §18.7.5): lựa chọn từng SKU sàn, danh mục theo sản phẩm sàn, cách đẩy tồn, mốc xác nhận từng bước. Xoá khi hoàn tất thiết lập hoặc ngắt gian hàng. `POST /setup` chỉ đọc từ đây.
+- `setup_draft_version` integer · not null · mặc định `0`
+  Bộ đếm của nháp (`draftVersion`), dùng chung cho `PUT /setup/draft` và `POST sku-links`; tách khỏi `version` của gian hàng.
 - `created_at` timestamptz · not null · mặc định `now()`
 - `updated_at` timestamptz · not null · mặc định `now()`
 - `version` integer · not null · mặc định `1`

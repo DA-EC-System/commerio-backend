@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { getDb } from '../../../../shared/db/client.ts';
 import type { ModuleCode } from '../domain/modules.ts';
 import { companies, companyModules } from './schema.ts';
@@ -107,4 +107,23 @@ export async function updateCompanyProfile(
     .where(and(eq(companies.id, id), eq(companies.version, version)))
     .returning(profileColumns);
   return row;
+}
+
+/** Mốc hoàn tất onboarding của công ty (#569); `undefined` khi không có công ty. */
+export async function findOnboardingCompletedAt(id: string): Promise<Date | null | undefined> {
+  const [row] = await getDb().select({ at: companies.onboardingCompletedAt }).from(companies).where(eq(companies.id, id));
+  return row?.at;
+}
+
+/**
+ * Đặt mốc hoàn tất onboarding một lần (`WHERE onboarding_completed_at IS NULL`); `undefined` khi đã có mốc (không đổi
+ * dòng nào). Chạy bằng role chủ bảng (`commerio_app` không có UPDATE).
+ */
+export async function setOnboardingCompletedAt(id: string, at: Date): Promise<{ at: Date; name: string } | undefined> {
+  const [row] = await getDb()
+    .update(companies)
+    .set({ onboardingCompletedAt: at })
+    .where(and(eq(companies.id, id), isNull(companies.onboardingCompletedAt)))
+    .returning({ at: companies.onboardingCompletedAt, name: companies.name });
+  return row ? { at: row.at!, name: row.name } : undefined;
 }

@@ -123,7 +123,8 @@ export function missingOf(lines: readonly InspectionCounts[]): number {
 
 /** Số giảm ở ngăn nguồn của một dòng phiếu giảm: kiểm kê lấy phần đếm thiếu, phiếu khác lấy số lượng. */
 export function decreaseOf(type: ManualDocType, line: { quantity: number | null; bookQty: number | null; countedQty: number | null }): number {
-  if (type === 'stocktake') return Math.max(0, (line.bookQty ?? 0) - (line.countedQty ?? 0));
+  // Dòng chưa đếm (`countedQty` null) chưa có chênh lệch nên không giảm gì (#569)
+  if (type === 'stocktake') return line.countedQty === null ? 0 : Math.max(0, (line.bookQty ?? 0) - line.countedQty);
   return line.quantity ?? 0;
 }
 

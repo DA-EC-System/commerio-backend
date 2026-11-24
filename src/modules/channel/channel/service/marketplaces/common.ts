@@ -462,7 +462,7 @@ export interface RemoteSku {
    * Sàn đang khoá tồn, giá của SKU do khuyến mãi (25 §6.5 bước 3, E32, #223): đồng bộ không ghi đè phần bị khoá, chỉ báo
    * (`promotion_locked`). Thiếu là không khoá. Lazada, TikTok không điền: không có API đọc trước được SKU nào đang bị khoá
    * (TikTok Promotion API `activities/search` không lọc theo sản phẩm, không gồm chiến dịch của sàn; chốt 12/11/2026 không
-   * đọc trước). Khoá do khuyến mãi về qua mã lỗi khi đẩy, adapter đổi thành `PROMOTION_LOCKED`.
+   * đọc trước). Khoá do khuyến mãi về qua mã lỗi khi đẩy, `errorMap` của adapter dịch thành `PROMOTION_LOCKED` (#571).
    */
   stockLocked?: boolean;
   priceLocked?: boolean;
@@ -702,7 +702,8 @@ export const INVALID_AMOUNT = 'invalid_amount';
  */
 export const PRECHECK_CODES: ReadonlySet<string> = new Set(['shop_not_eligible', 'listing_check_failed']);
 
-export type PartResult = { ok: true } | { ok: false; code: string; message: string };
+/** Lỗi theo SKU giữ mã, câu gốc của sàn (dịch ở `errorMap`, #571); `requestId` của lời gọi khi client đọc được. */
+export type PartResult = { ok: true } | { ok: false; code: string; message: string; requestId?: string | null };
 
 /**
  * Kết quả đẩy một SKU. `ok`/`code`/`message` gộp cả lời gọi (lỗi đầu tiên). Sàn đổi tồn và giá bằng hai lời gọi riêng
@@ -714,10 +715,11 @@ export type PerSkuResult = PartResult & { externalSkuId: string; stock?: PartRes
 /** Dựng `PerSkuResult` từ lỗi theo SKU của phần tồn và phần giá (adapter gọi hai lời gọi riêng). */
 export function partResults(
   items: readonly PriceQuantity[],
-  stockErrors: ReadonlyMap<string, { code: string; message: string }>,
-  priceErrors: ReadonlyMap<string, { code: string; message: string }>,
+  stockErrors: ReadonlyMap<string, { code: string; message: string; requestId?: string | null }>,
+  priceErrors: ReadonlyMap<string, { code: string; message: string; requestId?: string | null }>,
 ): PerSkuResult[] {
-  const part = (e: { code: string; message: string } | undefined): PartResult => (e ? { ok: false, code: e.code, message: e.message } : { ok: true });
+  const part = (e: { code: string; message: string; requestId?: string | null } | undefined): PartResult =>
+    e ? { ok: false, code: e.code, message: e.message, ...(e.requestId !== undefined && { requestId: e.requestId }) } : { ok: true };
   return items.map((i) => {
     const stock = i.quantity === undefined ? undefined : part(stockErrors.get(i.externalSkuId));
     const price = i.price === undefined ? undefined : part(priceErrors.get(i.externalSkuId));
