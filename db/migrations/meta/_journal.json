@@ -1090,15 +1090,8 @@
     {
       "idx": 155,
       "version": "7",
-      "when": 1795536200418,
-      "tag": "20261124160320_can-nang-kich-thuoc-du-lieu",
-      "breakpoints": true
-    },
-    {
-      "idx": 156,
-      "version": "7",
-      "when": 1795536202373,
-      "tag": "20261124160322_can-nang-kich-thuoc-tran",
+      "when": 1795536176595,
+      "tag": "20261124160256_cau-hinh-tai-khoan-ke-toan",
       "breakpoints": true
     }
   ]

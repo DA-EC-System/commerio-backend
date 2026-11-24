@@ -1,6 +1,6 @@
 import type { OpenAPIRegistry } from '@asteasolutions/zod-to-openapi';
 import { problemResponse } from '../../../../shared/http/openapi.ts';
-import { LedgerListQuery, LedgerPage, OrderIdParams, OrderProfit, OrderProfitPage, OrderProfitsQuery, SkuProfitPage, SkuProfitsQuery, TaxWarnings } from './ledger-schemas.ts';
+import { LedgerExportQuery, LedgerListQuery, LedgerPage, OrderIdParams, OrderProfit, OrderProfitPage, OrderProfitsQuery, SkuProfitPage, SkuProfitsQuery, TaxWarnings } from './ledger-schemas.ts';
 
 const json = <T>(schema: T) => ({ content: { 'application/json': { schema } } });
 const bearer = [{ bearerAuth: [] }];
@@ -23,6 +23,28 @@ export function registerLedgerOpenApi(registry: OpenAPIRegistry): void {
       200: { description: 'Trang sổ', ...json(LedgerPage) },
       ...auth,
       422: problemResponse('`validation_failed` kèm `errors` theo ô'),
+    },
+  });
+  registry.registerPath({
+    method: 'get',
+    path: '/ledger/export',
+    summary: 'Xuất sổ tiền cho MISA AMIS Kế toán (.xlsx, chứng từ nghiệp vụ khác)',
+    description:
+      `${VIEW} Cần thêm \`report.dashboard.export\`. Chỉ dòng thực tế và giá vốn có \`occurredOn\` trong kỳ (dòng ước tính sẽ bị ` +
+      'số quyết toán thay nên không xuất). Mỗi dòng sổ một chứng từ, số chứng từ cố định theo id dòng (xuất lại ra cùng số, MISA ' +
+      'từ chối số trùng); doanh thu, hoàn tiền người mua tách dòng thuế GTGT đầu ra. TK Nợ, TK Có theo bản `account_map` đang áp ' +
+      'ngày `to`. Sheet thứ hai "Danh mục đối tượng": mã, tên của gian hàng có trong tệp, kế toán nhập trước. Thiếu ' +
+      '`inventory.cost.view` thì không có dòng giá vốn.',
+    security: bearer,
+    request: { query: LedgerExportQuery },
+    responses: {
+      200: {
+        description: 'Tệp .xlsx, `Content-Disposition: attachment; filename="so-misa-<from>-<to>.xlsx"`',
+        content: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': { schema: { type: 'string', format: 'binary' } } },
+      },
+      ...auth,
+      409: problemResponse('`export_not_supported` (loại hình không phải doanh nghiệp), `account_map_missing` (chưa có bản Tài khoản kế toán đang áp)'),
+      422: problemResponse('`validation_failed` kèm `errors` theo ô; `export_too_large` (hơn 50.000 dòng sổ trong kỳ)'),
     },
   });
   registry.registerPath({
