@@ -543,15 +543,12 @@ async function finishSetupWith(
           ? { ...base, mappingRequestedBy: actor.accountId, approvedBy: actor.accountId, mappingSelfApproved: true }
           : { ...base, pendingMode: 'unmanaged', pendingRequestedBy: actor.accountId, pendingRequestedAt: new Date() },
       );
-      await recordTransition({
-        entityType: 'listings',
-        entityId: row.id,
-        from: null,
-        to: 'live',
-        action: selfOk ? 'match' : 'request_mapping',
-        actorId: actor.accountId,
-        ...(selfOk ? { selfApproved: true, audit: { entityType: 'channel.listings', label: s.sellerSku || s.externalSkuId } } : {}),
-      });
+      const step = { entityType: 'listings', entityId: row.id, from: null, to: 'live', actorId: actor.accountId };
+      if (selfOk) {
+        await recordTransition({ ...step, action: 'match', selfApproved: true, audit: { entityType: 'channel.listings', label: s.sellerSku || s.externalSkuId } });
+      } else {
+        await recordTransition({ ...step, action: 'request_mapping' });
+      }
     }
     // Bản tạm của cổng (chưa có #245) ném 501: cả giao dịch rollback, gian hàng vẫn `connecting` (Documents/21 §18.7.9).
     const doc =
