@@ -245,4 +245,10 @@ describe('hoa hồng theo category sàn (Documents/21 §21.4)', () => {
     expect(feePctOf(p, ['100', '120'])).toBe(14.5);
     expect(feePctOf(p)).toBe(20);
   });
+
+  it('feePctOf cộng bằng Decimal: payload đã lưu có số dạng chuỗi không bị nối chuỗi', () => {
+    const stored = { ...base, fixedPct: 4, transactionPct: '5.2', servicePct: 3, optionalPct: 2 } as unknown as typeof base;
+    expect(feePctOf(stored)).toBe(14.2);
+    expect(feePctOf({ ...base, fixedPct: 0.1, transactionPct: 0.2 })).toBe(0.3);
+  });
 });

@@ -1,5 +1,6 @@
 // Phiên bản cấu hình tiền (D4.4; Documents/21 §21.4, 25 §10 T5): phí sàn theo gian hàng, loại hình thuế, quy tắc thuế,
 // ngưỡng lệch quyết toán, biên tối thiểu. Không cứng hoá mức phí, thuế suất: đổi bằng phiên bản có người thứ hai duyệt.
+import { Decimal } from 'decimal.js';
 import { z } from 'zod';
 import { vnDateText } from '../../../../shared/vn-format.ts';
 import { defineMachine } from '../../../core/index.ts';
@@ -172,9 +173,12 @@ export function fixedPctFor(p: ConfigPayload<'fee'>, pathIds?: readonly string[]
   return p.fixedPct;
 }
 
-/** Tổng phần trăm phí sàn trừ trên doanh thu. `pathIds` của SKU (hoa hồng theo category); bỏ trống là tỷ lệ mặc định (chạy thử). */
+/**
+ * Tổng phần trăm phí sàn trừ trên doanh thu. `pathIds` của SKU (hoa hồng theo category); bỏ trống là tỷ lệ mặc định (chạy
+ * thử). Cộng bằng `Decimal`: số đọc từ `payload` đã lưu có thể là chuỗi (`'5.2'`), cộng số JS sẽ thành nối chuỗi.
+ */
 export const feePctOf = (p: ConfigPayload<'fee'>, pathIds?: readonly string[] | null) =>
-  fixedPctFor(p, pathIds) + p.transactionPct + p.servicePct + p.optionalPct;
+  new Decimal(fixedPctFor(p, pathIds)).plus(p.transactionPct).plus(p.servicePct).plus(p.optionalPct).toNumber();
 /** Phần trăm thuế sàn khấu trừ (hộ kinh doanh, cá nhân). */
 export const taxPctOf = (p: ConfigPayload<'tax_rules'>) => p.vatPct + p.pitPct;
 
