@@ -1,5 +1,5 @@
 // Bản sao danh sách SKU của gian hàng trên sàn (#220 đợt 2, bảng `remote_skus`). Chạy trong `withCompany` của bên gọi.
-import { and, asc, count, eq, gte, inArray, isNotNull, lt, ne, sql, type SQL } from 'drizzle-orm';
+import { and, asc, count, eq, gte, inArray, isNotNull, lt, ne, notInArray, sql, type SQL } from 'drizzle-orm';
 import { getDb, requireCompanyId } from '../../../../shared/db/client.ts';
 import { FOLD_FROM, FOLD_TO, foldVi } from '../domain/fold-vi.ts';
 import type { RemoteSkusFullError } from '../domain/remote-skus-refresh.ts';
@@ -270,8 +270,19 @@ const linkStatus = sql<RemoteLinkStatus>`case
 /** Chuỗi tìm: escape `%`, `_`, `\` của LIKE sau khi bỏ dấu. */
 const likePattern = (search: string) => `%${foldVi(search.trim()).replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
 
-function pageFilter(shopId: string, status: RemoteLinkStatus | 'all', search: string | undefined): SQL {
+/** Lọc theo lựa chọn trong nháp (§18.12 `decision`): chỉ các SKU này (`in`), hoặc trừ các SKU này (`notIn`). */
+export type SkuIdFilter = { in: readonly string[] } | { notIn: readonly string[] };
+
+export interface RemoteFilter {
+  status: RemoteLinkStatus | 'all';
+  search?: string | undefined;
+  skuIds?: SkuIdFilter | undefined;
+}
+
+function pageFilter(shopId: string, { status, search, skuIds }: RemoteFilter): SQL {
   const parts: SQL[] = [sql`${remoteSkus.shopId} = ${shopId}`];
+  if (skuIds && 'in' in skuIds) parts.push(skuIds.in.length ? inArray(remoteSkus.externalSkuId, [...skuIds.in]) : sql`false`);
+  if (skuIds && 'notIn' in skuIds && skuIds.notIn.length) parts.push(notInArray(remoteSkus.externalSkuId, [...skuIds.notIn]));
   if (status !== 'all') parts.push(sql`(${linkStatus}) = ${status}`);
   if (search?.trim()) {
     const hay = sql`concat_ws(' ', ${remoteSkus.title}, ${remoteSkus.titleEn}, ${remoteSkus.sellerSku}, ${remoteSkus.externalSkuId}, ${remoteSkus.externalProductId})`;
@@ -293,9 +304,9 @@ export interface RemoteProductsPage {
  */
 export async function remoteProductsPage(
   shopId: string,
-  opts: { status: RemoteLinkStatus | 'all'; search?: string | undefined; page: number; pageSize: number },
+  opts: RemoteFilter & { page: number; pageSize: number },
 ): Promise<RemoteProductsPage> {
-  const where = pageFilter(shopId, opts.status, opts.search);
+  const where = pageFilter(shopId, opts);
   const { rows: ids } = await getDb().execute<{ id: string; total: number }>(sql`
     select p.external_product_id as id, count(*) over ()::int as total
       from (select ${remoteSkus.externalProductId} as external_product_id, min(${foldSql(sql`${remoteSkus.title}`)}) as t
@@ -322,6 +333,23 @@ export async function remoteProductsPage(
       .sort((a, b) => order.get(a.externalProductId)! - order.get(b.externalProductId)!),
     total,
   };
+}
+
+const rsMappedVariant = sql<string | null>`(select l.variant_id from ${listings} l where l.shop_id = ${rsShopId}
+  and l.external_sku_id = ${rsSkuId} and l.status <> 'delisted' and l.mode = 'mapped' limit 1)`;
+
+/**
+ * Mọi SKU khớp lọc của gian hàng, không phân trang (§18.12 `totals`): tồn trên sàn và biến thể đang liên kết (`mapped`,
+ * cùng `matchedVariantId` của dòng).
+ */
+export async function remoteFilterStock(
+  shopId: string,
+  filter: RemoteFilter,
+): Promise<{ externalSkuId: string; platformStock: number; mappedVariantId: string | null }[]> {
+  return getDb()
+    .select({ externalSkuId: remoteSkus.externalSkuId, platformStock: remoteSkus.quantity, mappedVariantId: rsMappedVariant })
+    .from(remoteSkus)
+    .where(pageFilter(shopId, filter));
 }
 
 /** Số SKU theo trạng thái liên kết của mỗi gian hàng (§18.12 `counts`, `Shop.unlinkedSkuCount`); thiếu gian hàng là 0. */

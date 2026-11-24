@@ -3,9 +3,18 @@
 import { withCompany } from '../../../../shared/db/client.ts';
 import { type MatchConfidence, confidenceOf } from '../domain/match-confidence.ts';
 import { type RefreshState } from '../domain/remote-skus-refresh.ts';
+import { type DraftDecisionAction, type SetupDecision, draftDecisionsOf } from '../domain/setup-draft.ts';
 import { type RemoteTitleChanged, remoteTitleChanged } from '../domain/remote-title.ts';
 import { type ListingRow, liveListingRows } from '../repository/listings.ts';
-import { type RemoteLinkStatus, remoteLinkCounts, remoteProductSkuTotals, remoteProductsPage } from '../repository/remote-skus.ts';
+import { syncedPathsOf } from '../repository/platform-categories.ts';
+import {
+  type RemoteLinkStatus,
+  type SkuIdFilter,
+  remoteFilterStock,
+  remoteLinkCounts,
+  remoteProductSkuTotals,
+  remoteProductsPage,
+} from '../repository/remote-skus.ts';
 import { type ChannelListing, requesterNames, toListing } from './listings.ts';
 import { snapshotRefresh } from './mapping.ts';
 import type { ProductPort } from './product-port.ts';
@@ -28,6 +37,8 @@ export interface RemoteSkuRowOut {
   titleEn: string | null;
   variantLabel: string | null;
   platformStock: number;
+  /** Số có thể bán của biến thể dòng đang trỏ tới (`matchedVariantId`, hoặc biến thể nháp chọn `link`); không có thì null. */
+  available: number | null;
   matchedVariantId: string | null;
   mode: 'mapped' | 'unmanaged' | null;
   listingId: string | null;
@@ -37,8 +48,8 @@ export interface RemoteSkuRowOut {
   suggestion: RemoteSkuSuggestion | null;
   canCreate: boolean;
   cannotCreateReason: CannotCreateReason | 'already_matched' | null;
-  /** Lựa chọn trong nháp thiết lập; chỉ gian hàng `connecting` (be#569 điền), ở đây luôn null. */
-  decision: null;
+  /** Lựa chọn trong nháp thiết lập; chỉ gian hàng `connecting` và người gọi có `channel.shop.connect`. */
+  decision: { action: DraftDecisionAction; variantId: string | null; groupId: string | null } | null;
 }
 
 export interface RemoteProductOut {
@@ -47,6 +58,8 @@ export interface RemoteProductOut {
   titleEn: string | null;
   imageUrl: string | null;
   externalCategoryId: string | null;
+  /** Đường dẫn category trong cây đã đồng bộ; null khi chưa có category hoặc category chưa có trong cây. */
+  externalCategoryPath: string | null;
   /** Danh mục gợi ý qua `platform_category_group_maps` (be#569); null tới khi bảng đó có trong code. */
   suggestedGroupId: string | null;
   skus: RemoteSkuRowOut[];
@@ -55,6 +68,7 @@ export interface RemoteProductOut {
 export interface RemoteProductsQuery {
   status: RemoteLinkStatus | 'all';
   search?: string | undefined;
+  decision?: DecisionFilter | undefined;
   page: number;
   pageSize: number;
 }
@@ -65,9 +79,39 @@ export interface RemoteProductsResult {
   page: number;
   pageSize: number;
   counts: Record<RemoteLinkStatus, number>;
+  totals: RemoteProductsTotals;
   syncedAt: Date | null;
   refresh: RefreshState;
   nameMatchSkipped: boolean;
+}
+
+export type DecisionFilter = DraftDecisionAction | 'none';
+
+export interface RemoteProductsTotals {
+  create: number | null;
+  link: number | null;
+  skip: number | null;
+  unmanaged: number | null;
+  none: number | null;
+  drifted: number;
+  matched: number;
+}
+
+/** `availableOf` theo lô để số tham số của câu SQL không vượt giới hạn của PostgreSQL. */
+const AVAILABLE_CHUNK = 5000;
+
+async function availableMap(port: ProductPort, ids: readonly string[]): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  for (let i = 0; i < ids.length; i += AVAILABLE_CHUNK) {
+    for (const [k, v] of await port.availableOf(ids.slice(i, i + AVAILABLE_CHUNK))) out.set(k, v);
+  }
+  return out;
+}
+
+/** Lọc `decision` thành tập SKU: `none` là SKU chưa có lựa chọn trong nháp. */
+function decisionSkuFilter(decisions: Map<string, SetupDecision>, decision: DecisionFilter): SkuIdFilter {
+  if (decision === 'none') return { notIn: [...decisions.keys()] };
+  return { in: [...decisions.values()].filter((d) => d.action === decision).map((d) => d.externalSkuId) };
 }
 
 /** Ghép đang có hiệu lực: dòng chỉ để chờ duyệt "không quản tồn" (chưa ai duyệt) là chưa ghép. */
@@ -87,13 +131,46 @@ export async function remoteProducts(
   return withCompany(actor.companyId, async () => {
     const shop = await ownShop(shopId);
     const { refresh } = await snapshotRefresh(shop, false);
-    const page = await remoteProductsPage(shop.id, q);
+    // Nháp thiết lập chỉ đọc cho gian hàng `connecting` và người có quyền kết nối gian hàng (§18.12); còn lại bỏ qua `decision`.
+    const draft = shop.status === 'connecting' && actor.permissions.includes('channel.shop.connect') ? draftDecisionsOf(shop.setupDraft) : null;
+    const filter = {
+      status: q.status,
+      search: q.search,
+      skuIds: draft && q.decision ? decisionSkuFilter(draft.decisions, q.decision) : undefined,
+    };
+    const page = await remoteProductsPage(shop.id, { ...filter, page: q.page, pageSize: q.pageSize });
     const counts = (await remoteLinkCounts([shop.id])).get(shop.id)!;
+
+    // `totals` và `available` (§18.12): mọi SKU khớp cả bộ lọc, một lần `availableOf` cho các biến thể dòng đang trỏ tới.
+    const stock = await remoteFilterStock(shop.id, filter);
+    const variantOf = new Map(
+      stock.map((r) => {
+        const d = draft?.decisions.get(r.externalSkuId);
+        return [r.externalSkuId, r.mappedVariantId ?? (d?.action === 'link' ? d.variantId : null)] as const;
+      }),
+    );
+    const available = await availableMap(port, [...new Set([...variantOf.values()].filter((v): v is string => v !== null))]);
+    const availableOfSku = (externalSkuId: string): number | null => {
+      const v = variantOf.get(externalSkuId);
+      return v ? (available.get(v) ?? null) : null;
+    };
+    const totals: RemoteProductsTotals = draft
+      ? { create: 0, link: 0, skip: 0, unmanaged: 0, none: 0, drifted: 0, matched: 0 }
+      : { create: null, link: null, skip: null, unmanaged: null, none: null, drifted: 0, matched: 0 };
+    for (const r of stock) {
+      const action = draft?.decisions.get(r.externalSkuId)?.action;
+      if (draft) totals[action ?? 'none'] = (totals[action ?? 'none'] ?? 0) + 1;
+      // Dòng `create` chưa có SKU kho: tính có thể bán 0 như FE.
+      const n = availableOfSku(r.externalSkuId) ?? (action === 'create' && !variantOf.get(r.externalSkuId) ? 0 : null);
+      if (n !== null) totals[n === r.platformStock ? 'matched' : 'drifted'] += 1;
+    }
+
     const base = {
       total: page.total,
       page: q.page,
       pageSize: q.pageSize,
       counts,
+      totals,
       syncedAt: shop.remoteSkusSyncedAt,
       refresh,
     };
@@ -114,6 +191,7 @@ export async function remoteProducts(
     );
     const suggested = new Map([...chosen].map(([i, c]) => [free[i]!.externalSkuId, c] as const));
     const cannotCreate = createBlocker(variants, actor);
+    const categoryPaths = await syncedPathsOf(shop.platform, page.rows.flatMap((r) => (r.externalCategoryId ? [r.externalCategoryId] : [])));
 
     const items: RemoteProductOut[] = [];
     for (const r of page.rows) {
@@ -126,6 +204,7 @@ export async function remoteProducts(
           titleEn: r.titleEn,
           imageUrl: r.imageUrl,
           externalCategoryId: r.externalCategoryId,
+          externalCategoryPath: r.externalCategoryId ? (categoryPaths.get(r.externalCategoryId) ?? null) : null,
           suggestedGroupId: null,
           skus: [],
         };
@@ -142,6 +221,7 @@ export async function remoteProducts(
         titleEn: r.titleEn,
         variantLabel: r.variantLabel,
         platformStock: r.quantity,
+        available: availableOfSku(r.externalSkuId),
         matchedVariantId: mode === 'mapped' ? listing!.variantId : null,
         mode,
         listingId: listing?.id ?? null,
@@ -160,9 +240,20 @@ export async function remoteProducts(
           : null,
         canCreate: reason === null,
         cannotCreateReason: reason,
-        decision: null,
+        decision: decisionOut(draft, r.externalSkuId, r.externalProductId),
       });
     }
     return { ...base, items, nameMatchSkipped };
   });
+}
+
+/** `decision` của dòng: `groupId` là danh mục nháp chọn cho sản phẩm sàn, chỉ có nghĩa với dòng `create`. */
+function decisionOut(
+  draft: ReturnType<typeof draftDecisionsOf> | null,
+  externalSkuId: string,
+  externalProductId: string,
+): RemoteSkuRowOut['decision'] {
+  const d = draft?.decisions.get(externalSkuId);
+  if (!d) return null;
+  return { action: d.action, variantId: d.variantId, groupId: d.action === 'create' ? (draft!.groups.get(externalProductId) ?? null) : null };
 }
