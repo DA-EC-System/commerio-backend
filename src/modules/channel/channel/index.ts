@@ -113,6 +113,8 @@ export { shopSetupState } from './repository/shops.ts';
 export { awaitingStocktakeShops } from './repository/shops.ts';
 // Lý do chặn lưu trữ SKU phần sàn cho catalog (#204), tiêm qua `ctx.listingArchiveBlockers` ở `src/wiring.ts`.
 export { listingArchiveBlockers, listingInUse, listingPresenceOf, type VariantPresence } from './service/catalog-boundary.ts';
+// Độ phủ sàn ở danh sách sản phẩm (FE#464), tiêm qua `ctx.channelCoverageOf` ở `src/wiring.ts`.
+export { channelCoverageOf, type ChannelCoverage } from './service/catalog-boundary.ts';
 // Thao tác đơn trên sàn cho `order` (#105 PR 2), tiêm qua `ctx.marketplaceOrders` ở `src/wiring.ts`.
 export { marketplaceCancelOrder, marketplaceCancelReasons, marketplaceCancelRejectReasons, marketplaceDecideCancel } from './service/order-actions.ts';
 // Thao tác yêu cầu trả trên sàn cho `order` (#202), tiêm qua `ctx.marketplaceReturns`.

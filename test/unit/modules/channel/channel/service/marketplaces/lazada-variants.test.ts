@@ -1,9 +1,11 @@
 // Adapter Lazada: sản phẩm nhiều SKU, addVariants, removeVariants (#295). Dạng body theo lần gọi thật 21/11/2026
 // (Documents/tich-hop-san/goi-thu-bien-the-thong-so.md mục 2c.2); sàn giả bằng fetch giả.
+// BẪY (#572): khoá khai báo phải viết thường `variation`/`variationN`. Viết hoa thì sàn bỏ qua khai báo, tên tự đặt bị từ chối
+// `BIZ_CHECK_SALEPROP_ATTRIBUTE_INVALID` (request_id 0bb4a6bf17955171474545020); viết thường thì nhận (21412a8b17955171484212824).
 import { describe, expect, it, vi } from 'vitest';
 import type { NewProduct, NewVariants, SalesAttribute } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { createLazadaAdapter } from '#src/modules/channel/channel/service/marketplaces/lazada.ts';
-import { lazadaSkuIdentity, lazadaVariation } from '#src/modules/channel/channel/service/marketplaces/lazada-variants.ts';
+import { existingVariation, lazadaAddVariation, lazadaSkuIdentity, lazadaVariation } from '#src/modules/channel/channel/service/marketplaces/lazada-variants.ts';
 
 const config = { appKey: '143465', appSecret: 'secret', redirectUrl: undefined, apiUrl: 'https://api.test/rest', authUrl: 'https://auth.test' };
 const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
@@ -62,7 +64,7 @@ const row = (item: string, status: string, skus: { id: number; sku: string }[]) 
 });
 
 describe('Lazada createProduct nhiều SKU', () => {
-  it('gửi Variation, saleProp, Images theo trục; ghép kết quả theo seller_sku dù sàn trả ngược thứ tự', async () => {
+  it('gửi variation (khoá chữ thường), saleProp, Images theo trục; ghép kết quả theo seller_sku dù sàn trả ngược thứ tự', async () => {
     const fn = fakeFetch(none, {
       code: '0',
       data: {
@@ -87,9 +89,10 @@ describe('Lazada createProduct nhiều SKU', () => {
     // Tra cả hai seller sku trước khi tạo.
     expect(sent(fn, 0).query.sku_seller_list).toBe('["CM-DEN-S","CM-TRANG-S"]');
     const product = payloadOf(fn, 1).Request.Product;
-    expect(product.Variation).toEqual({
-      Variation1: { name: 'color_family', hasImage: true, customize: false, options: { option: ['Đen', 'Trắng'] } },
-      Variation2: { name: 'size', hasImage: false, customize: false, options: { option: ['Int:S'] } },
+    expect(product).not.toHaveProperty('Variation');
+    expect(product.variation).toEqual({
+      variation1: { name: 'color_family', hasImage: true, customize: false, options: { option: ['Đen', 'Trắng'] } },
+      variation2: { name: 'size', hasImage: false, customize: false, options: { option: ['Int:S'] } },
     });
     expect(product.Skus).toEqual({
       Sku: [
@@ -131,18 +134,19 @@ describe('Lazada createProduct nhiều SKU', () => {
     };
     const created = await createLazadaAdapter(config, fn).createProduct('t', p);
     expect(created.live).toBe(false);
-    const product = payloadOf(fn, 1).Request.Product as { Variation: unknown; Skus: { Sku: { saleProp: unknown; Images?: unknown }[] } };
-    expect(product.Variation).toEqual({ Variation1: { name: 'Mùi', hasImage: false, customize: true, options: { option: ['Hồng', 'Cam'] } } });
+    const product = payloadOf(fn, 1).Request.Product as { variation: unknown; Skus: { Sku: { saleProp: unknown; Images?: unknown }[] } };
+    expect(product.variation).toEqual({ variation1: { name: 'Mùi', hasImage: false, customize: true, options: { option: ['Hồng', 'Cam'] } } });
     expect(product.Skus.Sku[0]).toMatchObject({ saleProp: { Mùi: 'Hồng' } });
     expect(product.Skus.Sku[0]).not.toHaveProperty('Images');
   });
 
-  it('một SKU không gửi Variation, saleProp (body như cũ) và không trả skus', async () => {
+  it('một SKU không gửi variation, saleProp (body như cũ) và không trả skus', async () => {
     const fn = fakeFetch(none, { code: '0', data: { item_id: '5', item_status: 'Active', sku_list: [{ sku_id: '50' }] } });
     const created = await createLazadaAdapter(config, fn).createProduct('t', base);
     expect(created).toEqual({ externalProductId: '5', externalSkuId: '50', live: true });
     const product = payloadOf(fn, 1).Request.Product as { Skus: { Sku: object[] } };
     expect(product).not.toHaveProperty('Variation');
+    expect(product).not.toHaveProperty('variation');
     expect(product.Skus.Sku[0]).toEqual({ SellerSku: 'CM-DEN-S', price: '199000', package_weight: '0.2', package_length: '20', package_width: '15', package_height: '3' });
   });
 
@@ -192,7 +196,7 @@ describe('Lazada addVariants', () => {
   ] };
   const itemGet = { code: '0', data: { status: 'Active', skus: [{ SkuId: 117597811498, SellerSku: 'CM-DEN-S' }, { SkuId: 117597811499, SellerSku: 'CM-TRANG-S' }] } };
 
-  it('AssociatedSku là sku_id đọc từ item (không phải item_id), không gửi Variation, chỉ gửi SKU mới; ghép theo seller_sku', async () => {
+  it('AssociatedSku là sku_id đọc từ item (không phải item_id), khai báo variation chỉ giá trị mới, chỉ gửi SKU mới; ghép theo seller_sku', async () => {
     const fn = fakeFetch(itemGet, {
       code: '0',
       data: {
@@ -207,12 +211,46 @@ describe('Lazada addVariants', () => {
     const result = await createLazadaAdapter(config, fn).addVariants!('t', '13517941999', input);
     expect(result).toEqual({ skus: [{ sellerSku: 'CM-DO-S', externalSkuId: '117617144674' }], live: true });
     expect(sent(fn, 0)).toMatchObject({ path: '/rest/product/item/get', query: { item_id: '13517941999' } });
-    const product = payloadOf(fn, 1).Request.Product as { AssociatedSku: string; Skus: { Sku: { SellerSku: string; Images?: unknown }[] } };
+    const product = payloadOf(fn, 1).Request.Product as { AssociatedSku: string; variation: unknown; Skus: { Sku: { SellerSku: string; Images?: unknown }[] } };
     expect(product.AssociatedSku).toBe('117597811498');
     expect(product.AssociatedSku).not.toBe('13517941999');
-    expect(product).not.toHaveProperty('Variation');
+    // Không khai báo thì sản phẩm có tên tự đặt bị từ chối (#572, request_id d742e42a17955177348851472)
+    expect(product.variation).toEqual({
+      variation1: { name: 'color_family', hasImage: true, customize: false, options: { option: ['Đỏ'] } },
+      variation2: { name: 'size', hasImage: false, customize: false, options: { option: ['Int:S'] } },
+    });
     expect(product.Skus.Sku).toHaveLength(1);
     expect(product.Skus.Sku[0]).toMatchObject({ SellerSku: 'CM-DO-S', saleProp: { color_family: 'Đỏ', size: 'Int:S' }, Images: { Image: ['https://img.test/do.jpg'] } });
+  });
+
+  it('thứ tự và hasImage của khai báo lấy từ sản phẩm trên sàn, không từ lượt này (#572): thêm giá trị không ảnh vào sản phẩm có thuộc tính ảnh đứng sau', async () => {
+    const onPlatform = {
+      code: '0',
+      data: {
+        status: 'Active',
+        skus: [{ SkuId: 117597811498, SellerSku: 'CM-DEN-S' }],
+        variation: {
+          Variation2: { name: 'size', hasImage: false },
+          Variation1: { name: 'color_family', hasImage: true },
+        },
+      },
+    };
+    const fn = fakeFetch(onPlatform, { code: '0', data: { item_id: 13517941999, item_status: 'Active', sku_list: [{ seller_sku: 'CM-DEN-M', sku_id: 117617144675 }] } });
+    // Thứ tự catalog [size, color]; SKU mới dùng giá trị màu "Đen" không có ảnh nên lượt này không gắn ảnh nào
+    const noImage: NewVariants = {
+      ...multi,
+      skus: [{ sellerSku: 'CM-DEN-M', price: '199000', quantity: 3, values: ['M', 'Đen'], ...dims }],
+      salesAttributes: [
+        { code: 'size', name: 'Cỡ', values: [{ optionId: null, label: 'M' }] },
+        { code: 'color_family', name: 'Màu', values: [{ optionId: null, label: 'Đen' }] },
+      ],
+    };
+    await createLazadaAdapter(config, fn).addVariants!('t', '13517941999', noImage);
+    const product = payloadOf(fn, 1).Request.Product as { variation: unknown };
+    expect(product.variation).toEqual({
+      variation1: { name: 'color_family', hasImage: true, customize: false, options: { option: ['Đen'] } },
+      variation2: { name: 'size', hasImage: false, customize: false, options: { option: ['M'] } },
+    });
   });
 
   it('BẪY: sàn trả item_id khác (tạo item mới) thì xoá SKU của item lạ rồi ném associated_item_mismatch', async () => {
@@ -274,14 +312,87 @@ describe('Lazada: sale prop chuẩn size không mang ảnh (#568, VARIATION_CATE
 
   it('thuộc tính biến thể ghép đích size: hasImage false, SKU không gửi Images', () => {
     expect(lazadaVariation([sizeAxis])).toEqual({
-      Variation1: { name: 'size', hasImage: false, customize: false, options: { option: ['Đen - S', 'Trắng - S'] } },
+      variation1: { name: 'size', hasImage: false, customize: false, options: { option: ['Đen - S', 'Trắng - S'] } },
     });
     expect(lazadaSkuIdentity(sku, [sizeAxis])).toEqual({ SellerSku: 'SKU-1', saleProp: { size: 'Đen - S' } });
   });
 
   it('đích khác size vẫn gửi ảnh', () => {
     const color = { ...sizeAxis, code: 'color_family' };
-    expect(lazadaVariation([color])['Variation1']).toMatchObject({ hasImage: true });
+    expect(lazadaVariation([color])['variation1']).toMatchObject({ hasImage: true });
     expect(lazadaSkuIdentity(sku, [color])).toMatchObject({ Images: { Image: ['img-den'] } });
+  });
+});
+
+describe('Lazada: thứ tự khai báo và thêm phân loại (#572)', () => {
+  const size: SalesAttribute = { code: 'smartwear_size', name: 'Cỡ', values: [{ optionId: null, label: 'M' }, { optionId: null, label: 'L' }] };
+  const color: SalesAttribute = {
+    code: 'color_family',
+    name: 'Màu',
+    values: [
+      { optionId: null, label: 'Đen', imageUri: 'img-den' },
+      { optionId: null, label: 'Trắng', imageUri: 'img-trang' },
+    ],
+  };
+  const custom: SalesAttribute = { code: null, name: 'Phần', values: [{ optionId: null, label: 'Đùi' }, { optionId: null, label: 'Ức' }] };
+  const sku = (values: string[]) => ({ sellerSku: values.join('-'), price: '100000', values, weightG: 300, lengthMm: 100, widthMm: 100, heightMm: 100 });
+
+  it('thuộc tính gắn ảnh đứng sau thì đưa lên variation1 (VARIATION_IMAGE_MUST_SET_VARIATION1); saleProp vẫn theo tên', () => {
+    expect(lazadaVariation([size, color])).toEqual({
+      variation1: { name: 'color_family', hasImage: true, customize: false, options: { option: ['Đen', 'Trắng'] } },
+      variation2: { name: 'smartwear_size', hasImage: false, customize: false, options: { option: ['M', 'L'] } },
+    });
+    expect(lazadaSkuIdentity(sku(['L', 'Trắng']), [size, color])).toEqual({
+      SellerSku: 'L-Trắng',
+      saleProp: { smartwear_size: 'L', color_family: 'Trắng' },
+      Images: { Image: ['img-trang'] },
+    });
+  });
+
+  it('sale prop chuẩn luôn customize false kể cả giá trị ngoài lựa chọn; tên tự đặt customize true', () => {
+    expect(lazadaVariation([{ ...color, values: [{ optionId: null, label: 'Đỏ - S' }] }, custom])).toEqual({
+      variation1: { name: 'color_family', hasImage: false, customize: false, options: { option: ['Đỏ - S'] } },
+      variation2: { name: 'Phần', hasImage: false, customize: true, options: { option: ['Đùi', 'Ức'] } },
+    });
+  });
+
+  it('thêm phân loại: thứ tự, hasImage theo cả sản phẩm, lựa chọn chỉ giá trị các SKU mới dùng', () => {
+    // SKU mới chỉ dùng "M" và "Trắng": thuộc tính ảnh vẫn đứng đầu, hasImage giữ như lúc tạo
+    expect(lazadaAddVariation([size, color], [sku(['M', 'Trắng'])])).toEqual({
+      variation1: { name: 'color_family', hasImage: true, customize: false, options: { option: ['Trắng'] } },
+      variation2: { name: 'smartwear_size', hasImage: false, customize: false, options: { option: ['M'] } },
+    });
+    expect(lazadaAddVariation([custom], [sku(['Ức'])])).toEqual({
+      variation1: { name: 'Phần', hasImage: false, customize: true, options: { option: ['Ức'] } },
+    });
+  });
+
+  it('thêm phân loại: thứ tự, hasImage theo sản phẩm trên sàn; thuộc tính chưa có trên sàn nối sau', () => {
+    const existing = [{ name: 'color_family', hasImage: true }, { name: 'smartwear_size', hasImage: false }];
+    // Lượt này không có ảnh (tính theo lượt thì hasImage false, thứ tự [size, color])
+    const noImage = { ...color, values: [{ optionId: null, label: 'Đen' }] };
+    expect(lazadaAddVariation([size, noImage], [sku(['M', 'Đen'])], existing)).toEqual({
+      variation1: { name: 'color_family', hasImage: true, customize: false, options: { option: ['Đen'] } },
+      variation2: { name: 'smartwear_size', hasImage: false, customize: false, options: { option: ['M'] } },
+    });
+    // Sàn có [A, B], lượt này có [B, C]: khoá của C không đè khoá của B
+    expect(lazadaAddVariation([color, custom], [sku(['Đen', 'Ức'])], [{ name: 'smartwear_size', hasImage: false }, { name: 'color_family', hasImage: true }])).toEqual({
+      variation2: { name: 'color_family', hasImage: true, customize: false, options: { option: ['Đen'] } },
+      variation3: { name: 'Phần', hasImage: false, customize: true, options: { option: ['Ức'] } },
+    });
+    expect(lazadaAddVariation([size, custom], [sku(['M', 'Ức'])], [{ name: 'smartwear_size', hasImage: false }])).toEqual({
+      variation1: { name: 'smartwear_size', hasImage: false, customize: false, options: { option: ['M'] } },
+      variation2: { name: 'Phần', hasImage: false, customize: true, options: { option: ['Ức'] } },
+    });
+  });
+
+  it('đọc khai báo của sản phẩm trên sàn theo thứ tự Variation1, Variation2…; thiếu thì rỗng', () => {
+    expect(existingVariation({ variation: { Variation2: { name: 'size', hasImage: false }, Variation1: { name: 'color_family', hasImage: true } } })).toEqual([
+      { name: 'color_family', hasImage: true },
+      { name: 'size', hasImage: false },
+    ]);
+    expect(existingVariation({ variation: {} })).toEqual([]);
+    expect(existingVariation({})).toEqual([]);
+    expect(existingVariation(undefined)).toEqual([]);
   });
 });

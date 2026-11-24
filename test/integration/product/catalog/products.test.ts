@@ -343,6 +343,7 @@ describe('GET /catalog/products', () => {
       thumbnailUrl: null,
       status: 'active',
       updatedAt: expect.any(String),
+      channelCoverage: [],
       version: 1,
     });
 

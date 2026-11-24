@@ -222,7 +222,11 @@ export function catalogRouter(ctx: CatalogContext): Router {
   });
 
   router.get('/products', view, validate({ query: ProductListQuery }), async (_req, res) => {
-    res.json(await products.listProducts(ctx, caller(res).companyId, validated<typeof ProductListQuery>(res, 'query')));
+    res.json(
+      await products.listProducts(ctx, caller(res).companyId, validated<typeof ProductListQuery>(res, 'query'), {
+        channel: can(res, 'channel.shop.view'),
+      }),
+    );
   });
 
   router.get('/products/:id', view, validate({ params: IdParams }), async (_req, res) => {

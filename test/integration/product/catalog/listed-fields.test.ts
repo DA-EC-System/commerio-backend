@@ -124,7 +124,7 @@ describe('PATCH /variants/bulk: dòng xoá trống trường của SKU còn list
     });
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(BulkSaveResult.parse(res.body)).toEqual(res.body);
-    expect(res.body.saved).toEqual([{ variantId: free!.id, version: 3 }]);
+    expect(res.body.saved).toEqual([{ variantId: free!.id, version: 3, reorderVersion: null }]);
     expect(res.body.failed).toEqual([
       { variantId: listed!.id, code: 'listing_field_required', message: expect.any(String), errors: { widthMm: expect.any(String) } },
     ]);

@@ -1076,15 +1076,8 @@
     {
       "idx": 153,
       "version": "7",
-      "when": 1795525990168,
-      "tag": "20261124131310_bieu-phi-mau",
-      "breakpoints": true
-    },
-    {
-      "idx": 154,
-      "version": "7",
-      "when": 1795525992993,
-      "tag": "20261124131312_bieu-phi-mau-quyen-du-lieu",
+      "when": 1795525991106,
+      "tag": "20261124131311_ten-thuoc-tinh-20",
       "breakpoints": true
     }
   ]
