@@ -1048,15 +1048,8 @@
     {
       "idx": 149,
       "version": "7",
-      "when": 1795518368882,
-      "tag": "20261124110608_can-nang-kich-thuoc-du-lieu",
-      "breakpoints": true
-    },
-    {
-      "idx": 150,
-      "version": "7",
-      "when": 1795518370847,
-      "tag": "20261124110610_can-nang-kich-thuoc-tran",
+      "when": 1795518376499,
+      "tag": "20261124110616_lien-ket-sku-565",
       "breakpoints": true
     }
   ]

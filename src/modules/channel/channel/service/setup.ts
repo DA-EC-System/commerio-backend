@@ -23,6 +23,7 @@ import { recordShopTransition } from './shop-transition.ts';
 import { sendSpecFromMatch } from './spec-from-match.ts';
 import { PLATFORM_SKU_MAX, type PlatformProductInput } from '../../../product/index.ts';
 import { targetForPrice } from '../domain/price-filter.ts';
+import { foldVi } from '../domain/fold-vi.ts';
 import { shopPriceConfig } from './price-inputs.ts';
 import type { ListingVariant, ProductPort } from './product-port.ts';
 import { type Actor, onMarketplace, ownShop, type Shop, shopSession, shopView } from './shops.ts';
@@ -100,18 +101,32 @@ const NAME_MATCH_TIMEOUT_MS = 10_000;
 // Trần số cặp qua ngưỡng trả về Node: tên gần giống hàng loạt thì 1e6 cặp đều qua, giữ hết sẽ tốn hàng trăm MB (review).
 const NAME_ROWS_MAX = 50_000;
 
-const variantName = (v: ListingVariant) => [v.productName, v.attributesLabel].filter(Boolean).join(' ');
+/** Tên biến thể kho để so: tên sản phẩm cộng nhãn thuộc tính, bỏ dấu, chữ thường (#565, Documents/21 §18.12). */
+const variantName = (v: ListingVariant) => foldVi([v.productName, v.attributesLabel].filter(Boolean).join(' '));
 
-/** Các giá trị của một nhãn biến thể: thường hoá, bỏ dấu câu, tách theo chữ và số ("Trắng, M" và "trắng / m" như nhau). */
+/**
+ * Tên SKU sàn để so (#565): tên sản phẩm (bỏ đuôi " - nhãn" TikTok đã ghép) cộng `variantLabel`, bỏ dấu, chữ thường; không
+ * có nhãn thì tiêu đề. Lazada trả cùng tên sản phẩm cho mọi SKU, nhãn (`saleProp`) mới phân biệt được.
+ */
+const remoteName = (r: MatchCandidate) => {
+  const label = r.variantLabel?.trim();
+  if (!label) return foldVi(r.title.trim());
+  const base = r.title.endsWith(` - ${label}`) ? r.title.slice(0, -(label.length + 3)) : r.title;
+  return foldVi(`${base.trim()} ${label}`);
+};
+
+/**
+ * Các giá trị của một nhãn biến thể: bỏ dấu, chữ thường, bỏ dấu câu, tách theo chữ và số ("Trắng, M", "trang / m" như nhau).
+ */
 const labelTokens = (label: string | null | undefined) =>
-  [...new Set((label ?? '').normalize('NFC').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean))].sort().join(' ');
+  [...new Set(foldVi(label ?? '').split(/[^\p{L}\p{N}]+/u).filter(Boolean))].sort().join(' ');
 
 /** Phần SKU sàn mà lõi ghép cần (`RemoteSku` khi gọi sàn, dòng `remote_skus` khi đọc bản sao). */
 export interface MatchCandidate {
   title: string;
   sellerSku: string;
   externalProductId: string;
-  /** Bản sao không lưu nhãn: SKU của sản phẩm sàn nhiều SKU khi đó không ghép theo tên. */
+  /** Nhãn biến thể sàn trả (bản sao lưu từ #565); thiếu thì SKU của sản phẩm sàn nhiều SKU không ghép theo tên. */
   variantLabel?: string | null | undefined;
 }
 
@@ -119,7 +134,15 @@ export interface MatchCandidate {
  * Lõi gợi ý ghép (#198, Documents/21 §18.7.5), dùng chung cho thiết lập và trang Liên kết SKU (§18.9 R2): `remote[i]` →
  * biến thể trong `open`, theo SKU trước rồi theo tên (`score` null là ghép theo SKU). Gọi trong `withCompany`.
  */
-export async function suggestMatches(remote: readonly MatchCandidate[], open: readonly ListingVariant[]) {
+export async function suggestMatches(
+  remote: readonly MatchCandidate[],
+  open: readonly ListingVariant[],
+  /**
+   * Số SKU mỗi sản phẩm sàn trên cả gian hàng, khi `remote` chỉ là một phần (SKU chưa liên kết của một trang, #565): sản
+   * phẩm 3 SKU đã liên kết 2 thì SKU còn lại vẫn là SKU của sản phẩm nhiều SKU. Không truyền thì đếm trong `remote`.
+   */
+  productSkuTotals?: ReadonlyMap<string, number>,
+) {
   const chosen = new Map<number, { variant: ListingVariant; score: number | null }>();
   const taken = new Set<string>();
   const bySku = new Map(open.map((v) => [v.sku, v]));
@@ -135,20 +158,23 @@ export async function suggestMatches(remote: readonly MatchCandidate[], open: re
   // tiêu đề chỉ khác nhau ở SKU người bán, không nói màu, cỡ nào: cũng không ghép theo tên (#282 diff-review).
   const titleCount = new Map<string, number>();
   const productSkuCount = new Map<string, number>();
-  for (const r of remote) {
-    titleCount.set(r.title.trim().toLowerCase(), (titleCount.get(r.title.trim().toLowerCase()) ?? 0) + 1);
+  // Đếm trên tên kèm nhãn đã bỏ dấu: SKU Lazada cùng sản phẩm trùng tiêu đề nhưng khác nhãn thì vẫn ghép được (#565).
+  const names = remote.map(remoteName);
+  for (const [i, r] of remote.entries()) {
+    titleCount.set(names[i]!, (titleCount.get(names[i]!) ?? 0) + 1);
     productSkuCount.set(r.externalProductId, (productSkuCount.get(r.externalProductId) ?? 0) + 1);
   }
-  const unlabeledVariant = (r: MatchCandidate) => productSkuCount.get(r.externalProductId)! > 1 && !r.variantLabel;
+  const unlabeledVariant = (r: MatchCandidate) =>
+    (productSkuTotals?.get(r.externalProductId) ?? productSkuCount.get(r.externalProductId)!) > 1 && !r.variantLabel?.trim();
   const restRemote = remote.flatMap((r, i) =>
-    chosen.has(i) || !r.sellerSku || titleCount.get(r.title.trim().toLowerCase())! > 1 || unlabeledVariant(r) ? [] : [i],
+    chosen.has(i) || !r.sellerSku || titleCount.get(names[i]!)! > 1 || unlabeledVariant(r) ? [] : [i],
   );
   const restVariants = open.filter((v) => !taken.has(v.id));
   let nameMatchSkipped = restRemote.length * restVariants.length > NAME_PAIRS_MAX;
   const pairs =
     restRemote.length && restVariants.length && !nameMatchSkipped
       ? await nameSimilarities(
-          restRemote.map((i) => remote[i]!.title),
+          restRemote.map((i) => names[i]!),
           restVariants.map(variantName),
           NAME_MATCH_MIN,
           NAME_MATCH_TIMEOUT_MS,

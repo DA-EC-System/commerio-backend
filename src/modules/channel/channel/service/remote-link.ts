@@ -78,7 +78,7 @@ export function labelFromTitle(title: string, siblingTitles: readonly string[]):
  * một sản phẩm app và sản phẩm đó có đúng một thuộc tính biến thể (thêm biến thể giữ bộ trục). Không thì null: tạo sản phẩm
  * riêng như trước.
  */
-function parentOfSiblings(variants: readonly ListingVariant[], linked: readonly string[]): string | null {
+export function parentOfSiblings(variants: readonly ListingVariant[], linked: readonly string[]): string | null {
   const products = new Set(variants.filter((v) => linked.includes(v.id)).map((v) => v.productId));
   if (products.size !== 1) return null;
   const [productId] = [...products];

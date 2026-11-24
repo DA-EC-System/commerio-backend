@@ -3,6 +3,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { NewProduct, NewVariants, SalesAttribute } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { createLazadaAdapter } from '#src/modules/channel/channel/service/marketplaces/lazada.ts';
+import { lazadaSkuIdentity, lazadaVariation } from '#src/modules/channel/channel/service/marketplaces/lazada-variants.ts';
 
 const config = { appKey: '143465', appSecret: 'secret', redirectUrl: undefined, apiUrl: 'https://api.test/rest', authUrl: 'https://auth.test' };
 const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
@@ -257,5 +258,30 @@ describe('Lazada removeVariants', () => {
       platformCode: 'last_variant',
     });
     expect(fn).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Lazada: sale prop chuẩn size không mang ảnh (#568, VARIATION_CATEGORY_SIZE_IMAGE)', () => {
+  const sizeAxis: SalesAttribute = {
+    code: 'size',
+    name: 'Kích cỡ',
+    values: [
+      { optionId: null, label: 'Đen - S', imageUri: 'img-den' },
+      { optionId: null, label: 'Trắng - S', imageUri: 'img-trang' },
+    ],
+  };
+  const sku = { sellerSku: 'SKU-1', price: '100000', values: ['Đen - S'], weightG: 300, lengthMm: 100, widthMm: 100, heightMm: 100 };
+
+  it('thuộc tính biến thể ghép đích size: hasImage false, SKU không gửi Images', () => {
+    expect(lazadaVariation([sizeAxis])).toEqual({
+      Variation1: { name: 'size', hasImage: false, customize: false, options: { option: ['Đen - S', 'Trắng - S'] } },
+    });
+    expect(lazadaSkuIdentity(sku, [sizeAxis])).toEqual({ SellerSku: 'SKU-1', saleProp: { size: 'Đen - S' } });
+  });
+
+  it('đích khác size vẫn gửi ảnh', () => {
+    const color = { ...sizeAxis, code: 'color_family' };
+    expect(lazadaVariation([color])['Variation1']).toMatchObject({ hasImage: true });
+    expect(lazadaSkuIdentity(sku, [color])).toMatchObject({ Images: { Image: ['img-den'] } });
   });
 });

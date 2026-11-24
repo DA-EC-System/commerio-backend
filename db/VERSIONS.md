@@ -3,20 +3,14 @@
 <!-- Sinh tự động bởi `npm run db:docs` từ db/migrations. Không sửa tay. -->
 
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
-Mới nhất: **V151**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+Mới nhất: **V150**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
 
-## V151 · 24/11/2026 · can-nang-kich-thuoc-tran
+## V150 · 24/11/2026 · lien-ket-sku-565
 
-`db/migrations/20261124110610_can-nang-kich-thuoc-tran.sql` · sinh từ schema
+`db/migrations/20261124110616_lien-ket-sku-565.sql` · sinh từ schema
 
-- `product.product_variants`: đổi check `product_variants_dimensions`
-
-## V150 · 24/11/2026 · can-nang-kich-thuoc-du-lieu
-
-`db/migrations/20261124110608_can-nang-kich-thuoc-du-lieu.sql` · viết tay
-
-- viết tay: dữ liệu
-- #434 (viết tay, chỉ dữ liệu, chạy lại được): cân nặng trên 50.000 g, cạnh trên 2.000 mm (Documents/21 §17.5) chỉ có trong dữ liệu thử trên staging (PATCH SKU trước #434 không chặn).
+- `channel.remote_skus`: + cột `variant_label`, `image_url`, `external_category_id`
+- `channel.shops`: + cột `display_name`; + check `shops_display_name`
 
 ## V149 · 24/11/2026 · onboarding-trang-thai
 
