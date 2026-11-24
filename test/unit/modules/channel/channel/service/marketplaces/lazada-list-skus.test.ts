@@ -147,6 +147,30 @@ describe('Lazada: đọc hết SKU của gian hàng (#198 §18.7.5)', () => {
     ]);
   });
 
+  it('#565: `variantLabel` là giá trị `skus[].saleProp` theo thứ tự khoá, nối ", "; không có hoặc rỗng thì null', async () => {
+    // Gọi thật 24/11/2026 (request_id 2101420d17955141664017514): GetProducts trả `saleProp { color_family: "Đen" }` ở mọi SKU.
+    const products = [
+      {
+        item_id: 1,
+        status: 'Active',
+        attributes: { name: 'Áo thun' },
+        skus: [
+          { SkuId: 11, SellerSku: 'A-DEN-M', saleProp: { color_family: 'Đen', size: 'Int:M' } },
+          { SkuId: 12, SellerSku: 'A-TRANG', saleProp: { color_family: ' Trắng ', size: '' } },
+        ],
+      },
+      { item_id: 2, status: 'Active', attributes: { name: 'Mũ' }, skus: [{ SkuId: 21, SellerSku: 'M' }, { SkuId: 22, SellerSku: 'N', saleProp: {} }] },
+    ];
+    const fetchFn = async () => new Response(JSON.stringify({ code: '0', data: { total_products: 2, products } }), { status: 200 });
+    const skus = await createLazadaAdapter(config, fetchFn).listSkus!('t');
+    expect(skus.map((s) => [s.externalSkuId, s.variantLabel, s.title])).toEqual([
+      ['11', 'Đen, Int:M', 'Áo thun'],
+      ['12', 'Trắng', 'Áo thun'],
+      ['21', null, 'Mũ'],
+      ['22', null, 'Mũ'],
+    ]);
+  });
+
   it('#396: `title` là `attributes.name` (tên người mua VN thấy), `titleEn` là `attributes.name_en`; rỗng hoặc vắng thì null', async () => {
     // Gọi thật 18/11/2026 (request_id 212e3a4217950102938992867): sản phẩm có cả hai tên, Seller Center tiếng Anh hiện `name_en`.
     const products = [

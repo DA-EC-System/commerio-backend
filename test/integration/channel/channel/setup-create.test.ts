@@ -294,7 +294,7 @@ describe('lỗi theo dòng (AC-4, AC-5, AC-6) và quyền', () => {
     const { setup } = await connectingShop(c);
     const res = await setup({ decisions: [create('f1')], createGroupId: await privateGroupOf(other.companyId) });
     expect(res.status).toBe(422);
-    expect(res.body.errors).toEqual({ createGroupId: 'Nhóm hàng không thuộc công ty' });
+    expect(res.body.errors).toEqual({ createGroupId: 'Danh mục sản phẩm không thuộc công ty' });
     expect(await variantsOf(c.companyId, [`GRP-${t}`])).toEqual([]);
   });
 

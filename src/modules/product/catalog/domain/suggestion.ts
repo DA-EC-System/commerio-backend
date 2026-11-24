@@ -32,7 +32,7 @@ export type Sourced = { value: number; source: string } | null;
  */
 export function productSuggestConfig(group: SuggestNumbers & { name: string }, company: SuggestNumbers): Record<keyof SuggestNumbers, Sourced> {
   const pick = (field: keyof SuggestNumbers): Sourced => {
-    if (group[field] !== null) return { value: group[field], source: `theo nhóm ${group.name}` };
+    if (group[field] !== null) return { value: group[field], source: `theo danh mục ${group.name}` };
     if (company[field] !== null) return { value: company[field], source: 'theo công ty' };
     return null;
   };
