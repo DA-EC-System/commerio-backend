@@ -199,7 +199,10 @@ export async function applyReturnStep(
   patch: ReturnPatch = {},
 ): Promise<boolean> {
   const closeResult = CLOSE_RESULT[step.action];
-  const refunds = REFUNDING_ACTIONS.includes(step.action) && !row.refunded;
+  // Đóng sau kiểm hàng mà sàn có bước đồng ý hoàn tiền (`refundApproval`, #392): chưa hoàn cho khách, chờ sàn xác nhận
+  // (`refundConfirmed` ở lượt kéo, `recordPlatformRefund`), Thành chốt 24/11/2026 (#437).
+  const deferred = step.action === 'close' && patch.refundApproval != null;
+  const refunds = REFUNDING_ACTIONS.includes(step.action) && !row.refunded && !deferred;
   const now = new Date();
   const full: ReturnPatch = {
     status: step.to,
@@ -235,24 +238,23 @@ export async function applyReturnStep(
       after: { code: row.code, status: step.to, action: step.action, ...(step.reason && { reason: step.reason }), ...step.audit },
     });
   }
-  if (refunds) {
-    // `return_refunded.shopId` không null (Documents/21 §11.2, #308): yêu cầu trả chỉ tạo từ sàn (`ingestMarketplaceReturn`,
-    // CHECK `return_requests_marketplace_ref`), sổ tiền ghi hoàn tiền khách theo gian hàng.
-    if (!row.shopId) throw new Error(`Yêu cầu trả ${row.code} thiếu gian hàng`);
-    await publishEvent({
-      type: 'sales.return_refunded',
-      aggregateId: row.orderId,
-      payload: {
-        returnRequestId: row.id,
-        orderId: row.orderId,
-        shopId: row.shopId,
-        refundAmount: patch.refundAmount ?? row.refundAmount,
-        refundedAt: now.toISOString(),
-      },
-    });
-  }
+  if (refunds) await publishReturnRefunded(row, patch.refundAmount ?? row.refundAmount, now);
   Object.assign(row, full, { version: row.version + 1 });
   return true;
+}
+
+/**
+ * `sales.return_refunded` (§11.2): finance ghi hoàn tiền khách. Gọi trong giao dịch đã ghi `refunded`. `shopId` không null
+ * (Documents/21 §11.2, #308): yêu cầu trả chỉ tạo từ sàn (`ingestMarketplaceReturn`, CHECK `return_requests_marketplace_ref`),
+ * sổ tiền ghi hoàn tiền khách theo gian hàng.
+ */
+export async function publishReturnRefunded(row: ReturnRow, refundAmount: string, at: Date): Promise<void> {
+  if (!row.shopId) throw new Error(`Yêu cầu trả ${row.code} thiếu gian hàng`);
+  await publishEvent({
+    type: 'sales.return_refunded',
+    aggregateId: row.orderId,
+    payload: { returnRequestId: row.id, orderId: row.orderId, shopId: row.shopId, refundAmount, refundedAt: at.toISOString() },
+  });
 }
 
 /** Thao tác người dùng ở `POST /returns/:id/:action`. */
