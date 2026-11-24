@@ -295,7 +295,7 @@ async function shopListingRows(port: ProductPort, shop: ShopRow, catalog: readon
  * Cột "Tồn sẽ đẩy" (21 §18.9 R3). Listing "không quản tồn", hoặc sàn đổi ngoài app chờ CEO quyết (trừ ẩn bằng tồn 0)
  * thì không đẩy tồn và không có lý do giữ của hợp đồng: `null`, `null`. Chưa có listing: số lần đăng đầu sẽ đẩy.
  */
-function stockToPushView(
+export function stockToPushView(
   listing: ListingRow | undefined,
   input: { holdStock: boolean; counted: boolean; available: number | undefined },
 ): { stockToPush: number | null; stockHeldReason: StockHeldReason | null } {
@@ -527,7 +527,7 @@ const WAITING_MESSAGE = {
  * `shop_awaiting_stocktake` (§18.6.2); lượt kéo đơn còn mở chưa xong hoặc chờ phân hàng 409 `shop_awaiting_allocation`
  * kèm `waitingFor` (§18.6.11). `shopSession` chung không đổi (ghép danh mục vẫn gọi được khi `connecting`).
  */
-function assertPushable(shop: ShopRow): void {
+export function assertPushable(shop: ShopRow): void {
   if (shop.status !== 'active') {
     throw new AppError(409, 'shop_not_active', 'Hoàn tất thiết lập gian hàng trước khi đăng bán', { current: shop.status });
   }
