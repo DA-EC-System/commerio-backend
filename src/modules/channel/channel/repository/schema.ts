@@ -573,7 +573,8 @@ export type SpecSource = 'push' | 'match';
  * bảng spec cũ của catalog và ghép danh mục Commerio (xoá ở BE3, migration `*_bo-ghep-danh-muc`). `product_id` là uuid
  * thường (không khoá ngoại chéo schema).
  * `attributes` chỉ giữ attribute `tier = 'category'` (xuất xứ, thương hiệu ở catalog). `axis_map`: attributeId của trục
- * Commerio → mã sales attribute của sàn hoặc `__custom`; `value_map`: attributeValueId → mã lựa chọn của sàn.
+ * Commerio → mã sales attribute của sàn hoặc `__custom`; nhiều trục cùng mã là thuộc tính biến thể ghép, giá trị nối " - "
+ * (#568; `__custom` không ghép); `value_map`: attributeValueId → mã lựa chọn của sàn, không có trên trục ghép.
  * `version = 0` là bản chép từ ghép danh mục cũ chưa ai lưu lại (#400 A18, migration `*_chep-spec-lan-cuoi`); `PUT` spec luôn
  * ra `version ≥ 1`. RLS.
  */
