@@ -9,20 +9,20 @@ export type SyncRunRow = typeof listingSyncRuns.$inferSelect;
 export const SYNC_RUN_ERRORS_MAX = 200;
 
 /** Số lần thử chèn lượt mới khi lượt `queued` vướng unique vừa bị nhận hay vừa thành `failed` trước khi đọc lại. */
-const OPEN_RUN_ATTEMPTS = 5;
+export const OPEN_RUN_ATTEMPTS = 5;
 
 /**
  * Lượt `queued` của gian hàng, hoặc tạo mới (unique một phần `listing_sync_runs_one_queued_uq` chặn hai lượt chờ khi đua).
  * Lượt `queued` xếp trước `staleBefore` (việc mất, worker chết) thành `failed` `run_stale` rồi tạo lượt mới, không dùng lại
  * lượt mà GET đã đọc ra `failed`. Chèn vướng unique mà đọc lại không thấy lượt chờ (việc đồng bộ vừa nhận nó sang
- * `running` giữa hai câu) thì chèn lại.
+ * `running` giữa hai câu) thì chèn lại. Thử đủ `OPEN_RUN_ATTEMPTS` lần vẫn không được thì trả `undefined`, bên gọi báo lỗi.
  */
 export async function queuedRunOrInsert(
   companyId: string,
   shopId: string,
   requestedBy: string,
   stale: { before: Date; error: { code: string; message: string } },
-): Promise<SyncRunRow> {
+): Promise<SyncRunRow | undefined> {
   for (let attempt = 0; attempt < OPEN_RUN_ATTEMPTS; attempt++) {
     const [created] = await getDb()
       .insert(listingSyncRuns)
@@ -42,7 +42,7 @@ export async function queuedRunOrInsert(
       .set({ status: 'failed', startedAt: now, finishedAt: now, error: stale.error })
       .where(and(eq(listingSyncRuns.id, queued.id), eq(listingSyncRuns.status, 'queued')));
   }
-  throw new Error(`Không tạo được lượt đồng bộ cho gian hàng ${shopId} sau ${OPEN_RUN_ATTEMPTS} lần thử`);
+  return undefined;
 }
 
 export async function findSyncRun(shopId: string, id: string): Promise<SyncRunRow | undefined> {

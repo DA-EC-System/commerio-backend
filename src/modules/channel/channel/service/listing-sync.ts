@@ -339,7 +339,8 @@ async function moveAfterMarketplace(
  * Nút "Đồng bộ" (Documents/21 §18.5): chỉ xếp một lượt `channel.listing_sync` cho gian hàng, không gọi sàn trong request.
  * Gian hàng không `active` hoặc mất token: 409 `shop_not_connected`. `queued = false` khi đã có việc chờ (bấm hai lần).
  * `runId`: lượt người bấm (§18 "Kết quả lượt đồng bộ"), dùng lại lượt `queued` đang có; lượt `queued` quá 30 phút thành
- * `failed` `run_stale` và tạo lượt mới. Việc đồng bộ nhận lượt lúc bắt đầu.
+ * `failed` `run_stale` và tạo lượt mới. Đua với việc đồng bộ mà chèn mãi không được: 503 `sync_run_busy`. Việc đồng bộ
+ * nhận lượt lúc bắt đầu.
  */
 export async function requestListingSync(actor: Actor, shopId: string): Promise<{ queued: boolean; runId: string }> {
   return withCompany(actor.companyId, async () => {
@@ -348,6 +349,8 @@ export async function requestListingSync(actor: Actor, shopId: string): Promise<
       throw new AppError(409, 'shop_not_connected', 'Gian hàng chưa kết nối hoặc cần kết nối lại', { current: shop.status });
     }
     const run = await queuedRunOrInsert(actor.companyId, shop.id, actor.accountId, staleRunCutoff());
+    // Đua liên tục với việc đồng bộ đang nhận lượt (hiếm): báo người bấm lại, không 500.
+    if (!run) throw new AppError(503, 'sync_run_busy', 'Đang có lượt đồng bộ khác, bấm lại sau ít giây');
     return { queued: await sendListingSync(actor.companyId, shop.id), runId: run.id };
   });
 }
