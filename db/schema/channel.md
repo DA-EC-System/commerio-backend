@@ -470,7 +470,7 @@ Trỏ vào bảng này:
 
 ## `channel.product_specs`
 
-Thông tin sàn của một sản phẩm cha, một bộ mỗi sàn, mọi gian hàng của sàn dùng chung (#400, Documents/19 mục 3.3). Thay bảng spec cũ của catalog và ghép danh mục Commerio (xoá ở BE3, migration `*_bo-ghep-danh-muc`). `product_id` là uuid thường (không khoá ngoại chéo schema). `attributes` chỉ giữ attribute `tier = 'category'` (xuất xứ, thương hiệu ở catalog). `axis_map`: attributeId của trục Commerio → mã sales attribute của sàn hoặc `__custom`; `value_map`: attributeValueId → mã lựa chọn của sàn. `version = 0` là bản chép từ ghép danh mục cũ chưa ai lưu lại (#400 A18, migration `*_chep-spec-lan-cuoi`); `PUT` spec luôn ra `version ≥ 1`. RLS.
+Thông tin sàn của một sản phẩm cha, một bộ mỗi sàn, mọi gian hàng của sàn dùng chung (#400, Documents/19 mục 3.3). Thay bảng spec cũ của catalog và ghép danh mục Commerio (xoá ở BE3, migration `*_bo-ghep-danh-muc`). `product_id` là uuid thường (không khoá ngoại chéo schema). `attributes` chỉ giữ attribute `tier = 'category'` (xuất xứ, thương hiệu ở catalog). `axis_map`: attributeId của trục Commerio → mã sales attribute của sàn hoặc `__custom`; nhiều trục cùng mã là thuộc tính biến thể ghép, giá trị nối " - " (#568; `__custom` không ghép); `value_map`: attributeValueId → mã lựa chọn của sàn, không có trên trục ghép. `version = 0` là bản chép từ ghép danh mục cũ chưa ai lưu lại (#400 A18, migration `*_chep-spec-lan-cuoi`); `PUT` spec luôn ra `version ≥ 1`. RLS.
 
 Khai ở `src/modules/channel/channel/repository/schema.ts` · module con `channel` · theo công ty (`company_id`)
 
@@ -551,6 +551,12 @@ Cột:
 - `title` text · not null
 - `title_en` text · null
   Tên tiếng Anh trên sàn (Lazada `name_en`, #396); null khi sàn không có.
+- `variant_label` text · null
+  Nhãn biến thể sàn trả (giá trị thuộc tính bán, vd "Đỏ, M"; TikTok `sales_attributes[].value_name`, Lazada `saleProp`), null khi sàn không có (#565, Documents/21 §18.12): lõi gợi ý ghép theo tên cần nhãn để phân biệt SKU anh em.
+- `image_url` text · null
+  Ảnh đầu tiên của sản phẩm trên sàn (#565, `RemoteProduct.imageUrl`); null khi sàn chưa trả.
+- `external_category_id` text · null: mã bên ngoài (sàn, cổng thanh toán)
+  Category lá của sản phẩm trên sàn (#565, `RemoteProduct.externalCategoryId`); null khi sàn chưa trả.
 - `state` text · not null
 - `quantity` integer · not null
 - `price` numeric(18,2) · null
@@ -670,6 +676,8 @@ Cột:
 - `platform` text · not null → `channel.marketplaces.code` (khoá ngoại viết tay)
 - `external_shop_id` text · not null: mã bên ngoài (sàn, cổng thanh toán)
 - `shop_name` text · not null
+- `display_name` text · null
+  Tên người dùng đặt ở trang Gian hàng (#565, Documents/21 §18.7.1), 1–60 ký tự; null thì hiện `shop_name` (tên sàn trả, ghi đè mỗi lần nối lại).
 - `region` text · null
 - `access_token_enc` bytea · null
 - `refresh_token_enc` bytea · null
@@ -730,6 +738,7 @@ Ràng buộc và index:
 - unique index (`company_id`) `shops_one_opening_stocktake_uq` where `opening_stocktake_id is not null`
 - check `shops_active_cutoff`: `status <> 'active' or order_cutoff_at is not null`
 - check `shops_return_window_days`: `return_window_days between 1 and 60`
+- check `shops_display_name`: `char_length(display_name) between 1 and 60`
 - check `shops_opening_stocktake`: `(opening_stocktake_id is null) = (opening_stocktake_number is null) and (opening_stocktake_id is null or order_cutoff_at is not null)`
 - check `shops_setup_mode`: `opening_stock_mode is null or opening_stock_mode in ('push', 'stocktake')`
 - check `shops_open_orders_skipped`: `open_orders_skipped >= 0`

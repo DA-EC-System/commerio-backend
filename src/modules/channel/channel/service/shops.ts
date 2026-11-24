@@ -31,7 +31,7 @@ import {
 } from '../domain/shop.ts';
 import { DELISTED_REASON, type ListingStatus, NO_REASON, type RemoteState } from '../domain/listing.ts';
 import { currentListingRows, currentUnmanagedRows } from '../repository/listings.ts';
-import { unmatchedRemoteCounts } from '../repository/remote-skus.ts';
+import { remoteLinkCounts } from '../repository/remote-skus.ts';
 import {
   countCategoryChangeIssues,
   countListingsOnPlatform,
@@ -89,6 +89,8 @@ export interface Shop {
   platform: ShopRow['platform'];
   externalShopId: string;
   shopName: string;
+  /** Tên người dùng đặt (#565, 21 §18.7.1), 1–60 ký tự; null thì FE hiện `shopName`. */
+  displayName: string | null;
   region: string | null;
   status: ShopStatus;
   accessExpiresAt: Date | null;
@@ -101,6 +103,10 @@ export interface Shop {
   orderCutoffAt: Date | null;
   /** Giờ bắt đầu lượt lấy đơn gần nhất chạy xong trọn (#223, 19 `orders_pulled_ok_at`). */
   ordersPulledOkAt: Date | null;
+  /** Lượt kéo đơn còn mở sau thiết lập đã xong (#198, cột `open_orders_pulled_at`); null khi chưa xong. */
+  openOrdersPulledAt: Date | null;
+  /** Số SKU sàn chưa liên kết, không tính SKU đang chờ CEO duyệt (#565, cùng số `counts.unlinked` của `remote-products`). */
+  unlinkedSkuCount: number;
   /** Đơn chưa cập nhật (21 §18.6.6): tồn của SKU bán ở đây tạm không đẩy tăng trên mọi gian hàng của công ty. */
   ordersStale: boolean;
   /** Lỗi của lượt kéo đơn định kỳ gần nhất (`Kéo đơn lỗi: …`), null khi lượt sau chạy trọn. */
@@ -183,8 +189,8 @@ interface ShopExtras {
   statusChanged: Map<string, Date>;
   /** Lệch ví của lần đối soát `done` gần nhất có số, đọc qua cổng của `finance` (§21.3, #251). */
   walletDiff: Map<string, string>;
-  /** Số SKU sàn chưa ghép, đếm từ bản sao `remote_skus` (#220 đợt 2). */
-  unmatched: Map<string, number>;
+  /** Số SKU sàn theo trạng thái liên kết, đếm từ bản sao `remote_skus` (#220 đợt 2, #565). */
+  links: Awaited<ReturnType<typeof remoteLinkCounts>>;
   /** Số listing có lượt đổi category lỗi hay lệch (#467). */
   categoryIssues: Map<string, number>;
 }
@@ -198,7 +204,7 @@ const settingUp = (r: ShopRow) => r.openingStockMode !== null && r.status !== 'd
 async function shopExtras(rows: readonly ShopRow[]): Promise<ShopExtras> {
   const ids = rows.map((r) => r.id);
   const docs = rows.flatMap((r) => (r.openingStocktakeId ? [r.openingStocktakeId] : []));
-  const [listings, held, stocktakeStatus, dead, orders, statusChanged, walletDiff, unmatched, categoryIssues] = await Promise.all([
+  const [listings, held, stocktakeStatus, dead, orders, statusChanged, walletDiff, links, categoryIssues] = await Promise.all([
     countListingsOnPlatform(ids),
     countHeld(ids),
     docs.length ? stocktakePort().openingStocktakeStatusOf(docs) : new Map<string, OpeningStocktakeStatus>(),
@@ -206,22 +212,24 @@ async function shopExtras(rows: readonly ShopRow[]): Promise<ShopExtras> {
     orderCountsByShop(ids, new Date(Date.now() - ORDERS_WINDOW_MS)),
     lastTransitionsAt(ENTITY, ids),
     walletDiffOf(ids),
-    unmatchedRemoteCounts(ids),
+    remoteLinkCounts(ids),
     countCategoryChangeIssues(ids),
   ]);
-  return { listings, held, stocktakeStatus, dead, orders, statusChanged, walletDiff, unmatched, categoryIssues };
+  return { listings, held, stocktakeStatus, dead, orders, statusChanged, walletDiff, links, categoryIssues };
 }
 
 function toShop(row: ShopRow, extras: ShopExtras): Shop {
   const listingCount = extras.listings.get(row.id) ?? 0;
   const pendingJobs = extras.held.get(row.id) ?? 0;
   const walletDiff = extras.walletDiff.get(row.id) ?? null;
+  const links = extras.links.get(row.id) ?? { unlinked: 0, linked: 0, pending: 0 };
   return {
     id: row.id,
     companyId: row.companyId,
     platform: row.platform,
     externalShopId: row.externalShopId,
     shopName: row.shopName,
+    displayName: row.displayName,
     region: row.region,
     status: row.status,
     accessExpiresAt: row.accessExpiresAt,
@@ -231,6 +239,8 @@ function toShop(row: ShopRow, extras: ShopExtras): Shop {
     lastOrderSyncAt: row.lastOrderSyncAt,
     orderCutoffAt: row.orderCutoffAt,
     ordersPulledOkAt: row.ordersPulledOkAt,
+    openOrdersPulledAt: row.openOrdersPulledAt,
+    unlinkedSkuCount: links.unlinked,
     ordersStale: shopOrdersStale(row),
     orderPullError: row.lastError?.startsWith(ORDER_PULL_ERROR) ? row.lastError : null,
     capabilities: capabilitiesOf(row.platform),
@@ -249,7 +259,8 @@ function toShop(row: ShopRow, extras: ShopExtras): Shop {
         ...row,
         openOrderPullFailedAt: extras.dead.get(`${row.id} ${openOrderPullQueue.name}`) ?? null,
         listingSyncFailedAt: extras.dead.get(`${row.id} ${listingSyncQueue.name}`) ?? null,
-        unmatchedCount: extras.unmatched.get(row.id) ?? 0,
+        // Chưa có liên kết hiệu lực: chưa liên kết cộng đang chờ CEO duyệt (như trước #565).
+        unmatchedCount: links.unlinked + links.pending,
       },
       new Date(),
     ),
