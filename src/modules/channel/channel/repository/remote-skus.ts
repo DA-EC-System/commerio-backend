@@ -255,12 +255,16 @@ export const foldSql = (value: SQL) => sql`translate(normalize(${value}, NFC), $
  * `linked`: có listing chưa gỡ hiệu lực (`mapped`, hoặc `unmanaged` đã duyệt); `pending`: chưa có mà có listing chưa gỡ
  * đang chờ CEO duyệt (dòng "không quản tồn" chưa duyệt, hoặc listing lỗi đẩy chờ ghép vào SKU này, #346); còn lại `unlinked`.
  */
+// Cột `remote_skus` ghi kèm tên bảng: Drizzle in `${remoteSkus.shopId}` không kèm bảng, trong subquery tên cột trần sẽ
+// trỏ vào `l` (listings) và điều kiện luôn đúng.
+const rsShopId = sql`${sql.identifier('remote_skus')}.${sql.identifier('shop_id')}`;
+const rsSkuId = sql`${sql.identifier('remote_skus')}.${sql.identifier('external_sku_id')}`;
 const linkStatus = sql<RemoteLinkStatus>`case
-  when exists (select 1 from ${listings} l where l.shop_id = ${remoteSkus.shopId}
-    and l.external_sku_id = ${remoteSkus.externalSkuId} and l.status <> 'delisted'
+  when exists (select 1 from ${listings} l where l.shop_id = ${rsShopId}
+    and l.external_sku_id = ${rsSkuId} and l.status <> 'delisted'
     and (l.mode = 'mapped' or l.approved_by is not null)) then 'linked'
-  when exists (select 1 from ${listings} l where l.shop_id = ${remoteSkus.shopId} and l.status <> 'delisted'
-    and (l.external_sku_id = ${remoteSkus.externalSkuId} or l.pending_external_sku_id = ${remoteSkus.externalSkuId})) then 'pending'
+  when exists (select 1 from ${listings} l where l.shop_id = ${rsShopId} and l.status <> 'delisted'
+    and (l.external_sku_id = ${rsSkuId} or l.pending_external_sku_id = ${rsSkuId})) then 'pending'
   else 'unlinked' end`;
 
 /** Chuỗi tìm: escape `%`, `_`, `\` của LIKE sau khi bỏ dấu. */
