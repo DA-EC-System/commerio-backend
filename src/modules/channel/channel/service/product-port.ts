@@ -9,6 +9,7 @@ import {
   createProductsFromPlatform,
   fillProductFacts,
   productMediaGaps,
+  visibleGroupIds,
   type FactsSource,
   getProductSpecs,
   getSpecFields,
@@ -124,6 +125,11 @@ export interface ProductPort {
   specFields?(opts?: { companyId?: string }): Promise<SpecFieldInfo[]>;
   /** Sản phẩm thiếu ảnh, thiếu bảng size (#498); thiếu (bản giả của test) thì ghép không tải ảnh sàn. */
   productMediaGaps?(productIds: readonly string[]): Promise<Map<string, { images: boolean; sizeChart: boolean }>>;
+  /**
+   * Danh mục còn và không bị công ty ẩn trong số `ids` (#569, gợi ý danh mục chuẩn theo category sàn). Gọi trong `withCompany`.
+   * Cổng giả của test không có thì coi mọi id đều dùng được.
+   */
+  visibleGroupIds?(ids: readonly string[]): Promise<Set<string>>;
 }
 
 // Trường #110 sẽ thêm; đọc tuỳ chọn để code không đổi khi Khang merge.
@@ -189,6 +195,7 @@ export function productPort(ctx: ModuleContext): ProductPort {
       ...catalogSpecPort(),
       createFromPlatform: createProductsFromPlatform,
       productMediaGaps,
+      visibleGroupIds,
     }
   );
 }

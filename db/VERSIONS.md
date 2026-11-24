@@ -3,14 +3,22 @@
 <!-- Sinh tự động bởi `npm run db:docs` từ db/migrations. Không sửa tay. -->
 
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
-Mới nhất: **V152**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+Mới nhất: **V153**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
 
-## V152 · 24/11/2026 · doi-ghep-da-dung
+## V153 · 24/11/2026 · dong-bo-category-du-lieu
 
-`db/migrations/20261124125629_doi-ghep-da-dung.sql` · sinh từ schema
+`db/migrations/20261124125551_dong-bo-category-du-lieu.sql` · viết tay
 
-- `order.package_lines`: + cột `remap_pending`; + check `package_lines_remap_pending`
-- enum `order.open_purpose`: + `remap`
+- viết tay: quyền, khoá ngoại, dữ liệu
+- #569 (Documents/21 §18.5): bảng ánh xạ category sàn → danh mục chuẩn là dữ liệu của nền tảng.
+
+## V152 · 24/11/2026 · dong-bo-category
+
+`db/migrations/20261124125548_dong-bo-category.sql` · sinh từ schema
+
+- + bảng `channel.platform_category_group_maps`
+- `channel.marketplaces`: + cột `category_sync_state`, `category_sync_error`, `category_sync_at`; + check `marketplaces_category_sync_state`
+- `channel.shops`: + cột `category_permissions_state`, `category_permissions_error`, `category_permissions_checked_at`; + check `shops_category_permissions_state`
 
 ## V151 · 24/11/2026 · phi-moi-mon
 
