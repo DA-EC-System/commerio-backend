@@ -20,6 +20,16 @@ export const NO_SUGGEST: SuggestConfig = {
   reorderDefaultQty: null,
 };
 
+/** Cấu hình gửi lên: trường vắng là giữ, `null` là xoá. */
+export type SuggestPatch = Partial<SuggestConfig>;
+
+/** Gộp phần gửi lên vào cấu hình đang có: chỉ trường có mặt (kể cả `null`) mới đổi. */
+export function mergeSuggest(current: SuggestConfig, patch: SuggestPatch | undefined): SuggestConfig {
+  if (!patch) return current;
+  const set = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined));
+  return { ...current, ...set };
+}
+
 /** Cột của DB sang cấu hình, hệ số ra số thực. */
 export function suggestOf(c: SuggestColumns): SuggestConfig {
   return {

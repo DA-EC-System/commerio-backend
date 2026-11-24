@@ -242,7 +242,7 @@ async function computeDryRun(ctx: FinanceContext, row: ConfigRow, now: Date): Pr
   /** GTGT đầu ra trong một nhóm dòng (doanh nghiệp) và thuế sàn khấu trừ trên doanh thu (hộ, cá nhân). */
   const taxOf = (g: { kind: LedgerKind; amount: string }, t: { regime?: ConfigPayload<'tax_regime'>; rules?: ConfigPayload<'tax_rules'> }) => ({
     vat: outputVatOf({ kind: g.kind, amount: g.amount, outputVatPct: outputVatPctOf(t.regime, t.rules) }),
-    withheld: g.kind === 'revenue' ? sumDrafts(configDraftsOfDelivered(g.amount, { regime: version(t.regime), rules: version(t.rules) })).negated() : new Decimal(0),
+    withheld: g.kind === 'revenue' ? sumDrafts(configDraftsOfDelivered(g.amount, { regime: version(t.regime), rules: version(t.rules) }, 0)).negated() : new Decimal(0),
   });
   // `now` giữ số của sổ (thuế khấu trừ đã là dòng, kể cả số thật sau quyết toán), chỉ bỏ GTGT đầu ra. `next` thêm phần
   // thuế khấu trừ đổi đi nếu áp bản này.
@@ -481,6 +481,7 @@ const KIND_LABEL: Record<ConfigKind, string> = {
   tax_rules: 'biểu thuế',
   mismatch_threshold: 'ngưỡng chênh lệch đối soát',
   min_margin: 'lãi tối thiểu trên giá vốn',
+  account_map: 'tài khoản kế toán',
 };
 const SOURCE_LABEL = { fee: { package: 'phí sàn', package_return: 'phí khi hàng hoàn' }, tax: { package: 'thuế sàn khấu trừ', package_return: '' } };
 const vnd = (d: Decimal.Value) => new Decimal(d).toFixed(0);
@@ -559,11 +560,11 @@ async function expectedCharges(
 ): Promise<Draft[]> {
   if (group === 'fee') {
     const fee = await configAt('fee', src.shopId, src.day);
-    return type === 'package' ? configDraftsOfDelivered(src.revenue, { fee }) : postReturned(fee);
+    return type === 'package' ? configDraftsOfDelivered(src.revenue, { fee }, src.quantity) : postReturned(fee);
   }
   const regime = await configAt('tax_regime', null, src.day);
   const rules = await configAt('tax_rules', null, src.day);
-  return configDraftsOfDelivered(src.revenue, { regime, rules });
+  return configDraftsOfDelivered(src.revenue, { regime, rules }, src.quantity);
 }
 
 /** Áp dụng các bản đã tới ngày của mọi công ty; mỗi bản một giao dịch, lỗi của một bản không chặn bản khác. */

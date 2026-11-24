@@ -83,7 +83,7 @@ describe('lập và sửa đề nghị', () => {
       'lines.0.variantId': 'SKU đã ngừng nhập',
       'lines.2.variantId': 'Sản phẩm bị lặp',
       'lines.3.newProduct.parentName': 'Đã có sản phẩm cùng tên',
-      'lines.4.newProduct.groupId': 'Chọn nhóm hàng',
+      'lines.4.newProduct.groupId': 'Chọn danh mục sản phẩm',
     });
   });
 
@@ -244,8 +244,14 @@ describe('gửi duyệt và duyệt', () => {
       'select p.name, p.description, p.code from product.products p join product.product_variants v on v.product_id = p.id where v.id = $1',
       [line.variantId],
     );
-    // Mã cha (#204 D5): sản phẩm một SKU không thuộc tính có mã bằng SKU.
-    expect(product.rows[0]).toEqual({ name, description: `Tạo khi nhập kho phiếu ${draft.number}`, code: line.sku });
+    // Mã cha (#204 D5): sản phẩm một SKU không thuộc tính có mã bằng SKU. Mô tả để trống (lên sàn), số phiếu chỉ ở nhật ký.
+    expect(product.rows[0]).toEqual({ name, description: '', code: line.sku });
+    const audit = await testPool().query(
+      `select a.after->>'fromReceipt' as "fromReceipt" from core.audit_logs a join product.product_variants v on v.product_id = a.entity_id
+       where v.id = $1 and a.entity_type = 'product.products' and a.action = 'create'`,
+      [line.variantId],
+    );
+    expect(audit.rows).toEqual([{ fromReceipt: draft.number }]);
   });
 
   it('tên sản phẩm mới bị dùng trước lúc duyệt: 422 và không đổi trạng thái', async () => {

@@ -204,7 +204,7 @@ export const EVENT_SCHEMAS = {
   // trên sàn; sổ tiền chọn phiên bản theo ngày kiện giao nên không cần nghe. `supersededId`: bản vừa hết hiệu lực.
   'finance.fee_config_activated': z.object({
     configVersionId: id,
-    kind: z.enum(['fee', 'tax_regime', 'tax_rules', 'mismatch_threshold', 'min_margin']),
+    kind: z.enum(['fee', 'tax_regime', 'tax_rules', 'mismatch_threshold', 'min_margin', 'account_map']),
     shopId: id.nullable(),
     effectiveFrom: z.iso.date(),
     supersededId: id.nullable(),

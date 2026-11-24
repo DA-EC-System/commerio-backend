@@ -12,7 +12,15 @@ export interface Viewer {
   readonly accountId: string;
   /** `inventory.cost.view`: thấy giá vốn, giá trị tồn. */
   readonly canCost: boolean;
+  /**
+   * Tồn trên sàn theo biến thể ở một gian hàng (channel, #569), cho `platformStock` của phiếu kiểm kê đầu kỳ. Route luôn tiêm
+   * qua `ctx`; thiếu (test gọi thẳng service) thì `platformStock` là null.
+   */
+  readonly platformStockOf?: PlatformStockLookup | undefined;
 }
+
+/** Channel cộng tồn bản sao SKU sàn của các SKU sàn liên kết biến thể ở gian hàng; biến thể không liên kết thì vắng. */
+export type PlatformStockLookup = (shopId: string, variantIds: readonly string[]) => Promise<Map<string, number>>;
 
 export const notFound = (what: string) => new AppError(404, 'not_found', `Không tìm thấy ${what}`);
 
@@ -42,6 +50,8 @@ export type PurchaseNumberLookup = (ids: {
 export interface InventoryContext extends ModuleContext {
   readonly incomingOf?: IncomingLookup;
   readonly purchaseDocumentNumbers?: PurchaseNumberLookup;
+  /** `src/wiring.ts` tiêm `remoteStockByVariant` của channel (lớp trên, #569). */
+  readonly platformStockOf?: PlatformStockLookup;
 }
 
 /** Hàm đã tiêm; chưa tiêm là lỗi lắp ráp, báo 500 rõ ràng thay vì trả đang về 0. */

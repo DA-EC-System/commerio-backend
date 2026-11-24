@@ -50,7 +50,8 @@ const kindOf = (row: DocRow) => (row.kind === 'return_inspection' || row.sourceT
 
 /** Số trên dòng theo loại phiếu: kiểm kê là Δ = đếm − sổ, kiểm hàng về là số quét. */
 export function lineQuantity(row: DocRow, l: DocLineRow): number {
-  if (row.kind === 'stocktake') return (l.countedQty ?? 0) - (l.bookQty ?? 0);
+  // Chưa đếm (`counted` null) thì chưa có chênh lệch: 0, không phải −sổ (#569)
+  if (row.kind === 'stocktake') return l.countedQty === null ? 0 : l.countedQty - (l.bookQty ?? 0);
   if (row.kind === 'return_inspection') return l.scannedQty ?? 0;
   return l.quantity ?? 0;
 }
@@ -94,10 +95,24 @@ export async function summaries(rows: readonly DocRow[]) {
   });
 }
 
+/**
+ * Tồn trên sàn theo biến thể của phiếu kiểm kê đầu kỳ, ở gian hàng nguồn của phiếu (#569, Documents/21 §18.6.2). Phiếu khác,
+ * hoặc chưa tiêm cổng channel (test gọi thẳng service): null.
+ */
+export async function platformStockOf(
+  row: Pick<DocRow, 'isOpening' | 'sourceType' | 'sourceId'>,
+  variantIds: readonly string[],
+  viewer: Pick<Viewer, 'platformStockOf'>,
+): Promise<Map<string, number> | null> {
+  if (!row.isOpening || row.sourceType !== 'shop_setup' || !row.sourceId || !viewer.platformStockOf) return null;
+  return viewer.platformStockOf(row.sourceId, variantIds);
+}
+
 /** Chi tiết phiếu: dòng kèm nhãn biến thể, lịch sử, phiếu sinh tiếp. Giá vốn chỉ khi có `inventory.cost.view`. */
-export async function detail(row: DocRow, viewer: Pick<Viewer, 'canCost'>) {
+export async function detail(row: DocRow, viewer: Pick<Viewer, 'canCost' | 'platformStockOf'>) {
   const [summary] = await summaries([row]);
   const lines = (await linesOfDocs([row.id])).get(row.id) ?? [];
+  const remote = row.kind === 'stocktake' ? await platformStockOf(row, lines.map((l) => l.variantId), viewer) : null;
   const variants = new Map((await getVariants(lines.map((l) => l.variantId))).map((v) => [v.id, v]));
   const pending = row.status === 'pending' && row.area === 'on_hand' && row.kind !== 'return_inspection';
   const followUps: DocRef[] = [
@@ -114,7 +129,13 @@ export async function detail(row: DocRow, viewer: Pick<Viewer, 'canCost'>) {
         productName: v?.productName ?? '',
         attributesLabel: v ? v.attributes.map((a) => a.value).join(' / ') : '',
         quantity: lineQuantity(row, l),
-        ...(row.kind === 'stocktake' && { bookQty: l.bookQty ?? 0, counted: l.countedQty ?? 0 }),
+        ...(row.kind === 'stocktake' && {
+          bookQty: l.bookQty ?? 0,
+          counted: l.countedQty,
+          // Chỉ để tham khảo khi đếm, không vào chênh lệch; phiếu không phải đầu kỳ luôn null (#569)
+          platformStock: remote?.get(l.variantId) ?? null,
+          countSource: l.countSource,
+        }),
         ...(row.kind === 'return_inspection' && {
           expected: l.expectedQty ?? 0,
           resell: l.resellQty ?? 0,

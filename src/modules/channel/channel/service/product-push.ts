@@ -24,7 +24,7 @@ import { currentPrices } from './listing-prices.ts';
 import { CLOCK_SKEW_MS, errorOf, finish, PUSH_ATTEMPTS, refreshPermission, sizeChartRuleOf, uploadAll, uploadAxisImages } from './listing-push.ts';
 import { countedOf } from './listing-sync.ts';
 import { updateListing } from './listing-writes.ts';
-import { type CreatedSku, MarketplaceError, type NewProduct, PRECHECK_CODES, type ProductSku } from './marketplaces/index.ts';
+import { type CreatedSku, MarketplaceError, type NewProduct, type ProductSku } from './marketplaces/index.ts';
 import { evaluatePrices } from './price-inputs.ts';
 import type { ListingVariant, ProductPort } from './product-port.ts';
 import { ensureLeaf } from './platform-categories.ts';
@@ -33,6 +33,7 @@ import { pushBlock, variantImageGaps } from './push-block.ts';
 import type { ProductPushJob } from './shop-jobs.ts';
 import { loseShopAuth, shopSession } from './shops.ts';
 import { untrustedVariants } from './stock-trust.ts';
+import { marketplacePushError } from './push-error.ts';
 
 interface Ready {
   row: ListingRow;
@@ -192,12 +193,14 @@ export async function runProductPush(port: ProductPort, job: ProductPushJob): Pr
       throw new HoldJob('gian hàng mất uỷ quyền');
     }
     const attempts = Math.max(...ready.map((r) => r.row.pushAttempts)) + 1;
+    // Dịch lỗi sàn (#567). Sàn không nói SKU nào lỗi: mọi SKU của lượt cùng lỗi, `finish` ghi biến thể của từng listing.
+    const subject = { companyId: job.companyId, platform: shop.platform, productId, externalCategoryId: first?.externalCategoryId ?? null };
     if (err.kind === 'unavailable') {
-      const pushError = errorOf('marketplace_unavailable', err.platformMessage ?? 'Sàn lỗi tạm, đang thử lại');
+      const pushError = await marketplacePushError(adapter, err, subject, attempts >= PUSH_ATTEMPTS);
       if (attempts < PUSH_ATTEMPTS) {
         await inCompany(async () => {
           await setShopProductError(sp.id, pushError);
-          for (const r of ready) await updateListing(r.row.id, { version: r.row.version, status: 'pushing' }, { pushError, pushAttempts: attempts });
+          for (const r of ready) await updateListing(r.row.id, { version: r.row.version, status: 'pushing' }, { pushError: { ...pushError, variantId: r.row.variantId }, pushAttempts: attempts });
         });
         throw err;
       }
@@ -205,9 +208,7 @@ export async function runProductPush(port: ProductPort, job: ProductPushJob): Pr
       await Promise.all(ready.map((r) => finish(job, r.row, 'fail', { pushError, pushAttempts: attempts }, err.platformCode)));
       return;
     }
-    const message = err.platformMessage ?? (err.kind === 'unsupported' ? 'Sàn chưa hỗ trợ đăng bán sản phẩm' : 'Sàn từ chối sản phẩm');
-    const code = err.platformCode && PRECHECK_CODES.has(err.platformCode) ? err.platformCode : 'marketplace_rejected';
-    const pushError = errorOf(code, message);
+    const pushError = await marketplacePushError(adapter, err, subject);
     await inCompany(() => setShopProductError(sp.id, pushError));
     await Promise.all(ready.map((r) => finish(job, r.row, 'fail', { pushError, pushAttempts: attempts }, err.platformCode)));
   }

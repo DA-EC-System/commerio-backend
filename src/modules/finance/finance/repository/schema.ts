@@ -319,6 +319,8 @@ export const ledgerKind = financeSchema.enum('ledger_kind', [
   'fee_transaction',
   'fee_service',
   'fee_optional',
+  // Phí cố định mỗi món (#381): `perItemFee` của cấu hình phí × số món của kiện.
+  'fee_per_item',
   'withholding_tax',
   'customer_refund',
   'return_fee',
@@ -518,7 +520,7 @@ export const orderSettlements = financeSchema.table(
 );
 
 /** Loại cấu hình tiền có phiên bản (25 §10, T5): không cứng hoá mức phí, thuế suất, ngưỡng. */
-export const configKind = financeSchema.enum('config_kind', ['fee', 'tax_regime', 'tax_rules', 'mismatch_threshold', 'min_margin']);
+export const configKind = financeSchema.enum('config_kind', ['fee', 'tax_regime', 'tax_rules', 'mismatch_threshold', 'min_margin', 'account_map']);
 /** Vòng đời phiên bản (Hình 15 báo cáo 28/10). */
 export const configStatus = financeSchema.enum('config_status', [
   'draft',

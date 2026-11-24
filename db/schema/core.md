@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V146**, 17 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
+Phiên bản **V156**, 17 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
 **Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
 
@@ -39,7 +39,7 @@ Trỏ vào bảng này:
 - `core.invitations.decided_by` (khoá ngoại)
 - `core.memberships.account_id` (khoá ngoại)
 - `core.refresh_tokens.account_id` (tham chiếu, không có khoá ngoại)
-- người thao tác, 51 cột: `core.attachments.created_by`, `core.audit_logs.actor_id`, `core.company_modules.enabled_by`, `core.company_modules.ai_consent_by`, `core.files.uploaded_by`, `core.state_transitions.actor_id`, `product.goods_receipts.resolved_by`, `product.goods_receipts.created_by`, `product.goods_receipts.posted_by`, `product.purchase_product_drafts.updated_by`, `product.purchase_requests.created_by`, `product.purchase_requests.approved_by`, `product.purchase_requests.ordered_by`, `product.purchase_requests.closed_by`, `product.stock_documents.created_by`, `product.stock_documents.approved_by`, `product.stock_documents.posted_by`, `product.stock_moves.done_by`, `product.supplier_returns.created_by`, `product.supplier_returns.approved_by`, `product.supplier_returns.sent_by`, `product.supplier_returns.result_by`, `order.packages.packed_by`, `order.packages.handed_over_by`, `order.packages.handover_reverted_by`, `order.packages.delivered_by`, `order.packages.cod_confirmed_by`, `order.packages.lost_reported_by`, `order.packages.lost_confirmed_by`, `order.return_requests.received_by`, `order.return_requests.created_by`, `order.unmatched_return_parcels.received_by`, `order.unmatched_return_parcels.resolved_by`, `finance.bank_matches.matched_by`, `finance.config_versions.created_by`, `finance.config_versions.approved_by`, `finance.gateway_configs.updated_by`, `finance.ledger_entries.created_by`, `finance.order_settlements.resolved_by`, `finance.order_settlements.approved_by`, `finance.payment_links.created_by`, `finance.payment_vouchers.created_by`, `finance.payment_vouchers.posted_by`, `finance.settlement_batches.created_by`, `channel.conversation_notes.author_id`, `channel.conversations.assignee_id`, `channel.listings.approved_by`, `channel.listings.pending_requested_by`, `channel.listings.mapping_requested_by`, `channel.price_calculations.confirmed_by`, `insight.documents.uploaded_by`
+- người thao tác, 52 cột: `core.attachments.created_by`, `core.audit_logs.actor_id`, `core.company_modules.enabled_by`, `core.company_modules.ai_consent_by`, `core.files.uploaded_by`, `core.state_transitions.actor_id`, `product.goods_receipts.resolved_by`, `product.goods_receipts.created_by`, `product.goods_receipts.posted_by`, `product.purchase_product_drafts.updated_by`, `product.purchase_requests.created_by`, `product.purchase_requests.approved_by`, `product.purchase_requests.ordered_by`, `product.purchase_requests.closed_by`, `product.stock_documents.created_by`, `product.stock_documents.approved_by`, `product.stock_documents.posted_by`, `product.stock_moves.done_by`, `product.supplier_returns.created_by`, `product.supplier_returns.approved_by`, `product.supplier_returns.sent_by`, `product.supplier_returns.result_by`, `order.packages.packed_by`, `order.packages.handed_over_by`, `order.packages.handover_reverted_by`, `order.packages.delivered_by`, `order.packages.cod_confirmed_by`, `order.packages.lost_reported_by`, `order.packages.lost_confirmed_by`, `order.return_requests.received_by`, `order.return_requests.created_by`, `order.unmatched_return_parcels.received_by`, `order.unmatched_return_parcels.resolved_by`, `finance.bank_matches.matched_by`, `finance.config_versions.created_by`, `finance.config_versions.approved_by`, `finance.gateway_configs.updated_by`, `finance.ledger_entries.created_by`, `finance.order_settlements.resolved_by`, `finance.order_settlements.approved_by`, `finance.payment_links.created_by`, `finance.payment_vouchers.created_by`, `finance.payment_vouchers.posted_by`, `finance.settlement_batches.created_by`, `channel.conversation_notes.author_id`, `channel.conversations.assignee_id`, `channel.listing_sync_runs.requested_by`, `channel.listings.approved_by`, `channel.listings.pending_requested_by`, `channel.listings.mapping_requested_by`, `channel.price_calculations.confirmed_by`, `insight.documents.uploaded_by`
 
 ## `core.attachments`
 
@@ -110,6 +110,8 @@ Cột:
 - `status` enum `core.company_status` · not null · mặc định `'active'`: `active` | `locked`
 - `lock_reason` text · null
 - `locked_at` timestamptz · null
+- `onboarding_completed_at` timestamptz · null
+  Lần đầu mọi mục bắt buộc của onboarding cùng xong, đặt một lần qua `POST /onboarding/complete`, không xoá (#569, Documents/21 mục 23). Chỉ quyết định có ép vào wizard hay không; `done` của từng mục vẫn suy từ dữ liệu.
 - `created_at` timestamptz · not null · mặc định `now()`
 - `updated_at` timestamptz · not null · mặc định `now()`
 - `version` integer · not null · mặc định `1`
@@ -120,7 +122,7 @@ Ràng buộc và index:
 
 Trỏ vào bảng này:
 
-- 94 bảng có `company_id`
+- 95 bảng có `company_id`
 
 ## `core.company_modules`
 

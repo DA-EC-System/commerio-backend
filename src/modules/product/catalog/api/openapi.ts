@@ -67,51 +67,51 @@ export function registerCatalogOpenApi(registry: OpenAPIRegistry): void {
   path({
     method: 'get',
     path: '/groups',
-    summary: 'Nhóm nền tảng và nhóm của công ty (`scope`); mặc định bỏ nhóm nền tảng công ty đã ẩn',
+    summary: 'Danh mục mặc định và danh mục của công ty (`scope`); mặc định bỏ danh mục mặc định công ty đã ẩn',
     request: { query: GroupListQuery },
-    responses: { 200: json('Nhóm hàng, sắp theo tên', z.object({ items: z.array(ProductGroup) })) },
+    responses: { 200: json('Danh mục sản phẩm, sắp theo tên', z.object({ items: z.array(ProductGroup) })) },
   });
   path({
     method: 'post',
     path: '/groups',
-    summary: 'Tạo nhóm hàng; chỉ gửi tên thì `catalog.product.manage` hoặc `purchasing.request.manage` cũng được',
+    summary: 'Tạo danh mục sản phẩm; chỉ gửi tên thì `catalog.product.manage` hoặc `purchasing.request.manage` cũng được',
     request: { body: body(GroupBody) },
     responses: { 201: json('Nhóm vừa tạo', ProductGroup), 409: problemResponse('Tên đã dùng (`name_taken`)'), ...invalid },
   });
   path({
     method: 'put',
     path: '/groups/:id',
-    summary: 'Sửa nhóm hàng. Nhóm nền tảng: chỉ `{ suggest, version }` (cài đặt của công ty)',
+    summary: 'Sửa danh mục sản phẩm. Danh mục mặc định: chỉ `{ suggest, version }` (cài đặt của công ty)',
     request: { params: IdParams, body: body(UpdateGroupBody) },
     responses: {
-      200: json('Nhóm sau khi sửa', ProductGroup),
+      200: json('Danh mục sau khi sửa', ProductGroup),
       409: problemResponse('`version_conflict` (kèm `current`) hoặc `name_taken`'),
-      ...missing('nhóm hàng'),
+      ...missing('danh mục sản phẩm'),
       ...invalid,
     },
   });
   path({
     method: 'delete',
     path: '/groups/:id',
-    summary: 'Xoá nhóm hàng của công ty chưa có sản phẩm nào (kể cả đã lưu trữ)',
+    summary: 'Xoá danh mục sản phẩm của công ty chưa có sản phẩm nào (kể cả đã lưu trữ)',
     request: { params: IdParams, query: VersionQuery },
-    responses: { 204: noContent, ...platform, 409: problemResponse('`in_use` hoặc `version_conflict`'), ...missing('nhóm hàng'), ...invalid },
+    responses: { 204: noContent, ...platform, 409: problemResponse('`in_use` hoặc `version_conflict`'), ...missing('danh mục sản phẩm'), ...invalid },
   });
   path({
     method: 'put',
     path: '/groups/:id/hidden',
-    summary: 'Ẩn hoặc hiện nhóm nền tảng cho công ty; không đụng sản phẩm đang ở nhóm. Gọi lại cùng giá trị là 200',
+    summary: 'Ẩn hoặc hiện danh mục mặc định cho công ty; không đụng sản phẩm đang ở danh mục. Gọi lại cùng giá trị là 200',
     request: { params: IdParams, body: body(GroupHiddenBody) },
-    responses: { 200: json('Nhóm sau khi đổi', ProductGroup), ...missing('nhóm hàng'), 422: problemResponse('Nhóm của công ty (`errors.hidden`)') },
+    responses: { 200: json('Danh mục sau khi đổi', ProductGroup), ...missing('danh mục sản phẩm'), 422: problemResponse('Danh mục của công ty (`errors.hidden`)') },
   });
   path({
     method: 'post',
     path: '/groups/:id/move-products',
-    summary: 'Chuyển sản phẩm (kể cả đã lưu trữ) sang nhóm khác; quyền `catalog.product.manage`',
+    summary: 'Chuyển sản phẩm (kể cả đã lưu trữ) sang danh mục khác; quyền `catalog.product.manage`',
     request: { params: IdParams, body: body(MoveProductsBody) },
     responses: {
       200: json('Số sản phẩm đã chuyển', z.object({ moved: z.number().int() })),
-      ...missing('nhóm hàng nguồn'),
+      ...missing('danh mục sản phẩm nguồn'),
       422: problemResponse('`errors.targetGroupId` (trùng nguồn, không có) hoặc `errors.productIds` (không thuộc nhóm)'),
     },
   });
@@ -121,18 +121,18 @@ export function registerCatalogOpenApi(registry: OpenAPIRegistry): void {
     path: '/groups/:id/template',
     summary: 'Mẫu thông số và trục chuẩn của nhóm (form tạo sản phẩm gọi khi chọn nhóm)',
     request: { params: IdParams },
-    responses: { 200: json('Mẫu nhóm', GroupTemplate), ...missing('nhóm hàng') },
+    responses: { 200: json('Mẫu danh mục', GroupTemplate), ...missing('danh mục sản phẩm') },
   });
   path({
     method: 'put',
     path: '/groups/:id/template',
-    summary: 'Đặt mẫu thông số và trục chuẩn của nhóm; tăng `version`. Nhóm nền tảng: chỉ phần của công ty, sau dòng chuẩn. Không chạm sản phẩm',
+    summary: 'Đặt mẫu thông số và thuộc tính biến thể chuẩn của danh mục; tăng `version`. Danh mục mặc định: chỉ phần của công ty, sau dòng chuẩn. Không chạm sản phẩm',
     request: { params: IdParams, body: body(GroupTemplateBody) },
     responses: {
       200: json('Mẫu sau khi sửa', GroupTemplate),
       409: problemResponse('`version_conflict` (kèm `current` là mẫu mới nhất)'),
-      ...missing('nhóm hàng'),
-      422: problemResponse('`errors.axisAttributeIds` (gửi cho nhóm nền tảng), `errors["fields.<i>.fieldId"]` (không có, đã có trong mẫu chuẩn)'),
+      ...missing('danh mục sản phẩm'),
+      422: problemResponse('`errors.axisAttributeIds` (gửi cho danh mục mặc định), `errors["fields.<i>.fieldId"]` (không có, đã có trong mẫu chuẩn)'),
     },
   });
   path({
@@ -143,7 +143,7 @@ export function registerCatalogOpenApi(registry: OpenAPIRegistry): void {
     responses: {
       200: json('Mẫu sau khi thêm', GroupTemplate),
       409: problemResponse('`version_conflict` (kèm `current`), `name_taken` (thông số mới trùng tên)'),
-      ...missing('nhóm hàng'),
+      ...missing('danh mục sản phẩm'),
       422: problemResponse('`errors["field.fieldId"]` (không có, đã có trong mẫu), `errors["field.<ô>"]` theo luật của `POST /spec-fields`'),
     },
   });
@@ -304,6 +304,9 @@ export function registerCatalogOpenApi(registry: OpenAPIRegistry): void {
     method: 'get',
     path: '/products',
     summary: 'Danh sách sản phẩm; `search` khớp tên hoặc SKU',
+    description:
+      '`channelCoverage` (FE#464): mỗi gian hàng chưa ngắt một phần tử, `listed` là số SKU chưa lưu trữ đã lên sàn hoặc đang đẩy ở gian hàng đó, `missing` là số còn thiếu (0 là đủ). ' +
+      'Cần thêm `channel.shop.view`; không có thì mảng rỗng. Tính bằng hai câu cho cả trang.',
     request: { query: ProductListQuery },
     responses: { 200: json('Một trang sản phẩm', ProductPage), ...invalid },
   });
@@ -324,7 +327,7 @@ export function registerCatalogOpenApi(registry: OpenAPIRegistry): void {
   path({
     method: 'put',
     path: '/products/:id',
-    summary: 'Sửa tên, mô tả, ảnh, thuộc tính gắn ảnh, xuất xứ, thương hiệu, nhóm hàng (SKU giữ nguyên); không đổi biến thể',
+    summary: 'Sửa tên, mô tả, ảnh, thuộc tính gắn ảnh, xuất xứ, thương hiệu, danh mục sản phẩm (SKU giữ nguyên); không đổi biến thể',
     description:
       '`imageAttributeId` phải là một trục phân loại của sản phẩm; đổi sang thuộc tính khác hoặc `null` thì gỡ mọi ảnh phân loại ' +
       'cũ (không xoá tệp). `originCountry` cắt khoảng trắng, viết hoa; `originCountry`, `brand` rỗng lưu null.',
@@ -427,7 +430,7 @@ export function registerCatalogOpenApi(registry: OpenAPIRegistry): void {
     summary: 'Lấy SKU để sửa hàng loạt, kèm giá trị gợi ý (không tự lưu)',
     description:
       'Chỉ SKU chưa lưu trữ của sản phẩm chưa lưu trữ. `incomplete=true`: còn ít nhất một ô giá muốn bán, cân nặng, dài, rộng, cao bỏ trống. ' +
-      '`suggestions` chỉ có cho ô đang trống: giá muốn bán = giá nhập × hệ số lãi (nhóm hàng, trống thì cài đặt công ty) (làm tròn lên theo bước của danh mục), ' +
+      '`suggestions` chỉ có cho ô đang trống: giá muốn bán = giá nhập × hệ số lãi (danh mục sản phẩm, trống thì cài đặt công ty) (làm tròn lên theo bước của danh mục), ' +
       'không có thì chép từ SKU anh em; ngưỡng tồn theo tốc độ bán 30 ngày hoặc ngưỡng mặc định (nhóm, trống thì công ty); cân nặng, kích thước, giá chuẩn chép từ SKU anh em. ' +
       '`source.lastCost` là null khi thiếu quyền `inventory.cost.view`.',
     request: { query: BulkEditQuery },
@@ -440,7 +443,8 @@ export function registerCatalogOpenApi(registry: OpenAPIRegistry): void {
     description:
       'Tối đa 200 dòng (vượt thì 400 `too_many_rows`). Luôn 200 với `{ saved, failed }`. Mỗi dòng ghi trong giao dịch riêng: dòng lỗi không ghi gì, các dòng khác vẫn ghi. ' +
       'Chỉ gửi ô người dùng đã sửa hoặc đã nhận gợi ý; null là xoá giá trị. Đổi `targetNetPrice` phát `catalog.variant_price_changed` cho từng SKU. ' +
-      '`minQty` cần `inventory.reorder.manage` và `reorderVersion`. Dòng xoá trống giá muốn bán, cân nặng, kích thước của SKU còn ' +
+      '`minQty` cần `inventory.reorder.manage` và `reorderVersion`. Mỗi phần tử `saved` kèm `version` mới của SKU và `reorderVersion` mới của dòng tồn ' +
+      '(null khi chưa có dòng tồn) để gửi lần lưu sau mà không đọc lại. Dòng xoá trống giá muốn bán, cân nặng, kích thước của SKU còn ' +
       'listing chưa gỡ lỗi `listing_field_required` kèm `errors`.',
     request: { body: body(BulkSaveDocBody) },
     responses: { 200: json('Kết quả theo dòng', BulkSaveResult), 400: problemResponse('`too_many_rows`'), ...invalid },

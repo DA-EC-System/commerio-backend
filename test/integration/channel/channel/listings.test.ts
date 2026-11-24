@@ -15,7 +15,7 @@ import { withCompany } from '#src/shared/db/client.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
-import { activateShop, fakeAdapter, seedSpecs } from './helpers.ts';
+import { activateShop, fakeAdapter, seedFeeConfig, seedSpecs } from './helpers.ts';
 
 const productId = randomUUID();
 const variant = (sku: string, extra: Partial<ListingVariant> = {}): ListingVariant => ({
@@ -157,6 +157,7 @@ beforeAll(async () => {
   const res = await auth(app().post('/api/v1/channel/shops/lazada/token')).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
   shopId = res.body.shop.id;
   await activateShop(shopId);
+  await seedFeeConfig(company.companyId, shopId);
 });
 
 describe('đẩy listing: request chỉ kiểm và xếp việc', () => {
@@ -229,7 +230,13 @@ describe('đẩy listing: request chỉ kiểm và xếp việc', () => {
 
   it('hai biến thể cùng sản phẩm trong một request: đọc ảnh một lần, một việc theo cha (#303, #295)', async () => {
     const a = ownProduct('CMR-PAIR-A', ['https://files.commerio.test/pair.jpg']);
-    const b = variant(`CMR-PAIR-B-${randomUUID().slice(0, 6)}`, { productId: a.productId });
+    // Sản phẩm nhiều SKU phải có thuộc tính phân loại (gom biến thể kiểm ngay lúc bấm, 21 §18.11).
+    const axis = randomUUID();
+    a.attributes = [{ attributeId: axis, attributeName: 'Màu', platformKind: null, valueId: randomUUID(), value: 'Đen' }];
+    const b = variant(`CMR-PAIR-B-${randomUUID().slice(0, 6)}`, {
+      productId: a.productId,
+      attributes: [{ attributeId: axis, attributeName: 'Màu', platformKind: null, valueId: randomUUID(), value: 'Trắng' }],
+    });
     all.push(b);
     productImageUrls.mockClear();
     const res = await results([a.id, b.id]);
@@ -576,5 +583,51 @@ describe('AC-11: lỗi cả request theo thứ tự 21 §18.6.11, không dòng n
     expect(res.status).toBe(409);
     expect(res.body).toMatchObject({ code: 'shop_awaiting_allocation', waitingFor });
     await expectNothingWritten(id);
+  });
+});
+
+describe('21 §18.9 R5: gian hàng chưa có cấu hình phí không đăng được', () => {
+  it('lần đăng đầu: dòng fee_not_configured, không ghi listing, không xếp việc; có phí rồi thì đăng được', async () => {
+    const res0 = await auth(app().post('/api/v1/channel/shops/lazada/token')).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
+    const id = res0.body.shop.id as string;
+    await activateShop(id);
+    await seedAll();
+    const res = await auth(app().post(`/api/v1/channel/shops/${id}/listings/push`)).send({ variantIds: [ok.id], listPrices: { [ok.id]: 500000 } });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(PushResults.parse(res.body).results).toEqual([
+      { variantId: ok.id, listingId: null, status: null, code: 'fee_not_configured', message: expect.stringContaining('chưa có cấu hình phí'), blockers: [expect.objectContaining({ code: 'fee_not_configured', scope: 'shop' })] },
+    ]);
+    expect((await testPool().query('select 1 from channel.listings where shop_id = $1', [id])).rows).toEqual([]);
+    expect((await testPool().query("select 1 from pgboss.job where name = 'channel.product_push' and data->>'shopId' = $1", [id])).rows).toEqual([]);
+
+    await seedFeeConfig(company.companyId, id);
+    const again = await auth(app().post(`/api/v1/channel/shops/${id}/listings/push`)).send({ variantIds: [ok.id] });
+    expect(PushResults.parse(again.body).results).toEqual([expect.objectContaining({ variantId: ok.id, status: 'pushing', code: null })]);
+  });
+
+  // Ranh giới của R5 (review be#559): "lần đăng đầu, đăng lại sau gỡ hay sau lỗi"; bật lại SKU người bán
+  // (`content_source = platform`, còn mã sàn) là liên kết sẵn có; `rejected` đã có trên sàn nên không phải lần đăng đầu.
+  it.each([
+    ['delisted', 'app', true],
+    ['push_failed', 'app', true],
+    ['push_failed', 'platform', false],
+    ['rejected', 'app', false],
+  ] as const)('listing %s, content_source %s, gian hàng chưa có phí: chặn fee_not_configured = %s', async (status, source, blockedByFee) => {
+    const res0 = await auth(app().post('/api/v1/channel/shops/lazada/token')).send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
+    const id = res0.body.shop.id as string;
+    await activateShop(id);
+    const v = fresh(`CMR-R5-${status}-${source}`);
+    await seedAll();
+    await testPool().query(
+      `insert into channel.listings (company_id, shop_id, variant_id, seller_sku, status, external_product_id, external_sku_id,
+         external_image_urls, content_source, reject_reason)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [company.companyId, id, v.id, v.sku, status, `P-${v.sku}`, `S-${v.sku}`, ['https://slatic.test/cu.png'], source, status === 'rejected' ? 'Ảnh mờ' : null],
+    );
+    const res = await auth(app().post(`/api/v1/channel/shops/${id}/listings/push`)).send({ variantIds: [v.id], listPrices: { [v.id]: 500000 } });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const [row] = PushResults.parse(res.body).results;
+    if (blockedByFee) expect(row).toMatchObject({ code: 'fee_not_configured', status });
+    else expect(row).toMatchObject({ code: null, status: 'pushing' });
   });
 });

@@ -1,5 +1,6 @@
 // API công khai của module `channel`: gian hàng sàn, token, ghép SKU, dữ liệu gốc sàn. Không đổi tồn.
 // Module khác chỉ được import từ file này.
+import { onShopConnecting, permissionsSyncQueue, runPermissionsSync } from './service/category-permissions-sync.ts';
 import type { ModuleDefinition } from '../../../shared/module.ts';
 import { registerChannelOpenApi } from './api/openapi.ts';
 import { channelRouter } from './api/routes.ts';
@@ -80,7 +81,10 @@ export const channelModule: ModuleDefinition = {
     // Ghép SKU dựng spec từ category trên sàn (#400 lát 12).
     await workChannelQueue(specFromMatchQueue, (job) => runSpecFromMatch(port, job));
     // Cây category của sàn (#400): mỗi sàn một lượt đêm, lời gọi sàn chỉ tính trần chung.
-    await workChannelQueue(categorySyncQueue, (job) => runCategorySync(job));
+    await workChannelQueue(categorySyncQueue, (job, attempt) => runCategorySync(job, attempt));
+    // Nối gian hàng (#569, 21 §18.5): bảo đảm có cây category, đọc quyền category của gian hàng (sàn có quyền theo gian hàng).
+    registerChannelConsumer('channel.shop_status_changed', (e) => onShopConnecting(e.payload), { consumer: 'channel-category-on-connect' });
+    await workChannelQueue(permissionsSyncQueue, (job, attempt) => runPermissionsSync(job, attempt));
     await scheduleCategorySync();
     await reconcileShopJobs();
     // Thư báo CEO, Admin khi gian hàng sắp hết hoặc đã mất uỷ quyền (#312): xếp mốc mỗi 15 phút, consumer gửi thư.
@@ -103,10 +107,14 @@ export type { Payout, SettlementTxn } from './service/marketplaces/index.ts';
 
 // Gian hàng của công ty cho checklist onboarding (#461).
 export { shopSetupState } from './repository/shops.ts';
+// Tồn trên sàn theo biến thể của phiếu kiểm kê đầu kỳ cho inventory (#569), tiêm qua `ctx.platformStockOf` ở `src/wiring.ts`.
+export { remoteStockByVariant } from './repository/remote-skus.ts';
 // Trạng thái chờ kiểm kê đầu kỳ của gian hàng cho fulfillment (#199 phần b), tiêm qua `ctx.stockHoldOf` ở `src/wiring.ts`.
 export { awaitingStocktakeShops } from './repository/shops.ts';
 // Lý do chặn lưu trữ SKU phần sàn cho catalog (#204), tiêm qua `ctx.listingArchiveBlockers` ở `src/wiring.ts`.
 export { listingArchiveBlockers, listingInUse, listingPresenceOf, type VariantPresence } from './service/catalog-boundary.ts';
+// Độ phủ sàn ở danh sách sản phẩm (FE#464), tiêm qua `ctx.channelCoverageOf` ở `src/wiring.ts`.
+export { channelCoverageOf, type ChannelCoverage } from './service/catalog-boundary.ts';
 // Thao tác đơn trên sàn cho `order` (#105 PR 2), tiêm qua `ctx.marketplaceOrders` ở `src/wiring.ts`.
 export { marketplaceCancelOrder, marketplaceCancelReasons, marketplaceCancelRejectReasons, marketplaceDecideCancel } from './service/order-actions.ts';
 // Thao tác yêu cầu trả trên sàn cho `order` (#202), tiêm qua `ctx.marketplaceReturns`.

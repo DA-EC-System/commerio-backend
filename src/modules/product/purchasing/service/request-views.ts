@@ -117,6 +117,19 @@ function newProductView(
 }
 
 /** Bản chi tiết (R7): dòng, phiếu nhận, lịch sử trạng thái. */
+/**
+ * Bản soạn theo vị trí dòng đầu tiên của mỗi cha trong đề nghị (Documents/21 mục 16.3). Các bản tạo cùng giao dịch có cùng
+ * `created_at`, xếp theo id (uuid ngẫu nhiên) thì đảo chỗ giữa hai lần tải; bản không còn dòng nào trỏ tới đứng cuối.
+ */
+function byFirstLine<D extends { id: string }>(drafts: readonly D[], lines: readonly LineRow[], draftIdOf: (l: LineRow) => string | null): D[] {
+  const first = new Map<string, number>();
+  lines.forEach((l, i) => {
+    const id = draftIdOf(l);
+    if (id && !first.has(id)) first.set(id, i);
+  });
+  return [...drafts].sort((a, b) => (first.get(a.id) ?? lines.length) - (first.get(b.id) ?? lines.length));
+}
+
 export async function toDetail(row: RequestRow, actor: Actor) {
   const look = await lookupsOf([row], actor);
   const supplier = row.supplierId ? await findSupplier(row.supplierId) : undefined;
@@ -156,7 +169,7 @@ export async function toDetail(row: RequestRow, actor: Actor) {
       };
     }),
     receipts: receipts.map((r) => ({ type: 'goods_receipt' as const, id: r.id, number: r.number, status: r.status })),
-    productDrafts: await draftSummaries(drafts, lines),
+    productDrafts: await draftSummaries(byFirstLine(drafts, lines, draftIdOf), lines),
     sourceReturn: row.sourceReturnId ? await sourceReturnRef(row.sourceReturnId) : null,
     countingReceipts: receipts.filter((r) => r.status === 'counting').length,
     statusHistory: history.map((h) => ({ ...h, at: h.at.toISOString() })),

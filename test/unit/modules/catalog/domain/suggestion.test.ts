@@ -29,8 +29,8 @@ describe('suggestTargetPrice', () => {
   });
 
   it('câu giải thích kết thúc bằng nguồn hệ số: theo nhóm hoặc theo công ty', () => {
-    const byGroup = suggestTargetPrice(100_000, { marginCoefficient: 1.2, priceRounding: null, source: 'theo nhóm Điện tử' }, true).basis;
-    expect(byGroup).toBe('100.000 đ giá nhập × hệ số lãi 1,2 theo nhóm Điện tử');
+    const byGroup = suggestTargetPrice(100_000, { marginCoefficient: 1.2, priceRounding: null, source: 'theo danh mục Điện tử' }, true).basis;
+    expect(byGroup).toBe('100.000 đ giá nhập × hệ số lãi 1,2 theo danh mục Điện tử');
     expect(suggestTargetPrice(100_000, { marginCoefficient: 2, priceRounding: null, source: org }, true).basis).toMatch(/theo công ty$/);
   });
 });
@@ -57,20 +57,20 @@ describe('suggestMinQty', () => {
 
 describe('suggestMinQty: nguồn trong câu giải thích', () => {
   it('có lịch sử bán: nêu nguồn của số ngày chờ; chưa bán: nêu nguồn của ngưỡng mặc định', () => {
-    const sold = suggestMinQty({ soldQty: 30, leadDays: co(7, 'theo nhóm Điện tử'), safetyQty: co(2), defaultQty: null });
-    expect(sold?.basis).toMatch(/theo nhóm Điện tử$/);
+    const sold = suggestMinQty({ soldQty: 30, leadDays: co(7, 'theo danh mục Điện tử'), safetyQty: co(2), defaultQty: null });
+    expect(sold?.basis).toMatch(/theo danh mục Điện tử$/);
     const fresh = suggestMinQty({ soldQty: 0, leadDays: null, safetyQty: null, defaultQty: co(5) });
     expect(fresh?.basis).toBe('chưa có lịch sử bán, lấy ngưỡng mặc định theo công ty');
-    const noLead = suggestMinQty({ soldQty: 10, leadDays: null, safetyQty: null, defaultQty: co(4, 'theo nhóm Giày dép') });
-    expect(noLead?.basis).toBe('ngưỡng mặc định theo nhóm Giày dép (chưa đặt số ngày chờ hàng)');
+    const noLead = suggestMinQty({ soldQty: 10, leadDays: null, safetyQty: null, defaultQty: co(4, 'theo danh mục Giày dép') });
+    expect(noLead?.basis).toBe('ngưỡng mặc định theo danh mục Giày dép (chưa đặt số ngày chờ hàng)');
   });
 });
 
 describe('productSuggestConfig', () => {
   it('nhóm có số thì lấy của nhóm, kèm nguồn "theo nhóm <tên>"', () => {
     const config = productSuggestConfig({ ...NONE, name: 'Điện tử', marginCoefficient: 1.2, priceRounding: 1000 }, { ...NONE, marginCoefficient: 2 });
-    expect(config.marginCoefficient).toEqual({ value: 1.2, source: 'theo nhóm Điện tử' });
-    expect(config.priceRounding).toEqual({ value: 1000, source: 'theo nhóm Điện tử' });
+    expect(config.marginCoefficient).toEqual({ value: 1.2, source: 'theo danh mục Điện tử' });
+    expect(config.priceRounding).toEqual({ value: 1000, source: 'theo danh mục Điện tử' });
   });
 
   it('nhóm để trống (null) mà công ty có thì lấy của công ty, nguồn "theo công ty"; từng số tính riêng', () => {
@@ -79,14 +79,14 @@ describe('productSuggestConfig', () => {
       { ...NONE, marginCoefficient: 2, reorderLeadDays: 9, reorderDefaultQty: 5 },
     );
     expect(config.marginCoefficient).toEqual({ value: 2, source: 'theo công ty' });
-    expect(config.reorderLeadDays).toEqual({ value: 3, source: 'theo nhóm Giày dép' });
+    expect(config.reorderLeadDays).toEqual({ value: 3, source: 'theo danh mục Giày dép' });
     expect(config.reorderDefaultQty).toEqual({ value: 5, source: 'theo công ty' });
   });
 
   it('cả nhóm lẫn công ty trống thì null; số 0 của nhóm vẫn là số, không rơi xuống công ty', () => {
     const config = productSuggestConfig({ ...NONE, name: 'Khác', reorderSafetyQty: 0 }, { ...NONE, reorderSafetyQty: 4 });
     expect(config.marginCoefficient).toBeNull();
-    expect(config.reorderSafetyQty).toEqual({ value: 0, source: 'theo nhóm Khác' });
+    expect(config.reorderSafetyQty).toEqual({ value: 0, source: 'theo danh mục Khác' });
   });
 });
 

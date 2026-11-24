@@ -156,3 +156,13 @@ export const TaxWarnings = z
     items: z.array(z.object({ milestone: z.number(), ytdRevenue: z.number(), over: z.boolean() })),
   })
   .meta({ id: 'TaxWarnings' });
+
+/** `GET /ledger/export` (#232): kỳ theo `occurredOn`, gồm cả hai ngày, tối đa 366 ngày; `format` chừa chỗ cho phần mềm khác. */
+export const LedgerExportQuery = z
+  .object({
+    from: day('Từ ngày'),
+    to: day('Đến ngày'),
+    format: z.enum(['misa'], 'Định dạng chỉ nhận misa').default('misa'),
+  })
+  .refine((q) => q.from <= q.to, { path: ['to'], message: 'Đến ngày không được trước Từ ngày' })
+  .refine((q) => Date.parse(q.to) - Date.parse(q.from) <= 365 * 86_400_000, { path: ['to'], message: 'Kỳ xuất tối đa 366 ngày' });

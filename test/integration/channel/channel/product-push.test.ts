@@ -17,7 +17,7 @@ import { type ListingVariant, setProductPort } from '#src/modules/channel/channe
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
-import { activateShop, fakeAdapter, seedSpecs } from './helpers.ts';
+import { activateShop, fakeAdapter, seedFeeConfig, seedSpecs } from './helpers.ts';
 
 const variants: ListingVariant[] = [];
 const noPrice = new Set<string>();
@@ -65,6 +65,7 @@ beforeAll(async () => {
     .set('Authorization', `Bearer ${company.ceo.token}`)
     .send({ accessToken: `tok-${randomUUID().slice(0, 12)}` });
   shopId = res.body.shop.id;
+  await seedFeeConfig(company.companyId, shopId);
 
 });
 
@@ -174,6 +175,37 @@ describe('việc nền channel.product_push', () => {
     expect(addVariants.mock.calls[0]![1]).toBe('item-cu');
     expect(addVariants.mock.calls[0]![2].skus.map((s) => s.sellerSku)).toEqual([vs[0]!.sku]);
     expect(await listings(ids)).toMatchObject([{ status: 'under_review', external_product_id: 'item-cu', shop_product_id: spId }]);
+  });
+
+  it('biến thể anh em nằm ở hai sản phẩm trên sàn: chặn platform_product_ambiguous theo dòng, không tạo sản phẩm sàn mới (21 §18.5)', async () => {
+    await activateShop(shopId);
+    const { productId, vs } = await product(['Đỏ', 'Trắng', 'Hồng']);
+    const [red, white, pink] = vs as [ListingVariant, ListingVariant, ListingVariant];
+    const exts = [`item-a-${randomUUID().slice(0, 8)}`, `item-b-${randomUUID().slice(0, 8)}`];
+    for (const [v, ext] of [[red, exts[0]], [white, exts[1]]] as const) {
+      await testPool().query(
+        `insert into channel.listings (company_id, shop_id, variant_id, external_product_id, external_sku_id, seller_sku, status, stock_sync, price_sync)
+         values ($1, $2, $3, $4, $5, $6, 'live', 'synced', 'synced')`,
+        [company.companyId, shopId, v.id, ext, `sku-${v.sku}`, v.sku],
+      );
+    }
+    const images = port.productImageUrls;
+    port.productImageUrls = async () => new Map([[productId, ['https://img.test/a.png']]]);
+    try {
+      const res = await request(testApp())
+        .post(`/api/v1/channel/shops/${shopId}/listings/push`)
+        .set('Authorization', `Bearer ${company.ceo.token}`)
+        .send({ variantIds: [pink.id] });
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+      const [row] = res.body.results as { code: string; message: string; listingId: string | null }[];
+      expect(row).toMatchObject({ code: 'platform_product_ambiguous', listingId: null });
+      expect(row!.message).toContain('Biến thể anh em đang nằm ở 2 sản phẩm trên sàn; chọn sản phẩm cần thêm vào');
+      for (const ext of exts) expect(row!.message).toContain(ext);
+    } finally {
+      port.productImageUrls = images;
+    }
+    expect((await testPool().query('select 1 from channel.listings where shop_id = $1 and variant_id = $2', [shopId, pink.id])).rowCount).toBe(0);
+    expect((await testPool().query("select 1 from channel.shop_products where shop_id = $1 and product_id = $2 and origin = 'app'", [shopId, productId])).rowCount).toBe(0);
   });
 
   it('KB3: biến thể mới của sản phẩm đã ghép từ sàn (dòng match) thì thêm phân loại vào sản phẩm sàn đó, không tạo sản phẩm mới', async () => {

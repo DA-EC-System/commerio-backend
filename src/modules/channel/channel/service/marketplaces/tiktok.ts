@@ -25,6 +25,7 @@ import { TIKTOK_ATTRIBUTE_LABELS, TIKTOK_SPEC_MAPPINGS } from './tiktok-spec-map
 import { logger } from '../../../../../shared/logger.ts';
 import { RESPONSIBLE_ATTRS } from './tiktok-categories.ts';
 import { tiktokListingMethods } from './tiktok-listing.ts';
+import { TIKTOK_PUSH_ERRORS } from './tiktok-push-errors.ts';
 import {
   createTiktokClient,
   packTiktokToken,
@@ -552,6 +553,7 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
   return {
     name: 'TikTok Shop',
     capabilities: TIKTOK_CAPABILITIES,
+    errorMap: TIKTOK_PUSH_ERRORS,
     // Cây, attribute của category theo gian hàng (`shop_cipher` bắt buộc, G2.6; #400 A4).
     categoriesNeedToken: true,
     // Recommend Category: tiêu đề VN 25–255 ký tự, ngắn hơn sàn từ chối (12052051), app kiểm trước khi gọi (#400 lát 9).
@@ -559,7 +561,17 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
     // Sales attribute chuẩn của TikTok: 100000 Màu sắc, 100007 / 100001 Kích cỡ, 100089 Dung tích, 100092 Hương vị; sản phẩm tối
     // đa 3 trục, tên trục tự đặt được (Documents#214 mục 3).
     standardSalesAttributes: TIKTOK_SALES_ATTRIBUTES,
-    variantCapabilities: () => ({ maxAxes: 3, customAxisName: true, salesRequired: [], addVariant: true }),
+    // `sales_attributes[].value_name` tối đa 50 ký tự, không công bố trần số giá trị (OAS Create Product 202309; #568).
+    // Tên tự đặt tối đa 20 ký tự: OAS Create Product 202309 `sales_attributes[].name` "Max length: 20 characters" (#572).
+    variantCapabilities: () => ({
+      maxAxes: 3,
+      customAxisName: true,
+      maxAxisNameLength: 20,
+      salesRequired: [],
+      addVariant: true,
+      maxValueLength: 50,
+      maxAxisValues: null,
+    }),
     // Get Categories trả `permission_statuses` theo gian hàng mang token: việc đẩy ghi `shop_category_permissions` (#400 A17).
     categoryPermissionsPerShop: true,
     responsibleFields: RESPONSIBLE_ATTRS,

@@ -145,7 +145,7 @@ export async function deleteAttribute(caller: Caller, id: string, version: numbe
     // Trục chuẩn của nhóm (#510, Documents/21 mục 5.5): khoá ngoại RESTRICT cũng chặn, kiểm trước để báo có nghĩa.
     const groupCount = await groupsUsingAxis(id);
     if (groupCount > 0) {
-      throw new AppError(409, 'in_use', `Không xoá được thuộc tính ${attribute.name} vì là trục chuẩn của ${groupCount} nhóm hàng`, {
+      throw new AppError(409, 'in_use', `Không xoá được thuộc tính ${attribute.name} vì là thuộc tính biến thể chuẩn của ${groupCount} danh mục sản phẩm`, {
         groupCount,
       });
     }

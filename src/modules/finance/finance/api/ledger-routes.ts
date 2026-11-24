@@ -6,7 +6,8 @@ import type { FinanceContext } from '../service/settlement-views.ts';
 import { listOrderProfits } from '../service/order-profits.ts';
 import { listSkuProfits } from '../service/sku-profits.ts';
 import { canSeeCost, financeView } from './access.ts';
-import { LedgerListQuery, OrderIdParams, OrderProfitsQuery, SkuProfitsQuery } from './ledger-schemas.ts';
+import { exportLedgerForMisa } from '../service/ledger-export.ts';
+import { LedgerExportQuery, LedgerListQuery, OrderIdParams, OrderProfitsQuery, SkuProfitsQuery } from './ledger-schemas.ts';
 
 const companyOf = (res: Response) => getAuth(res).companyId!;
 
@@ -16,6 +17,15 @@ export function mountLedgerRoutes(router: Router, ctx: FinanceContext): void {
 
   router.get('/ledger', view, validate({ query: LedgerListQuery }), async (_req, res) => {
     res.json(await listLedger(companyOf(res), input<typeof LedgerListQuery>(res, 'query'), canSeeCost(res)));
+  });
+  // Xuất sổ cho MISA (#232, §21.1): tệp tải về; lỗi vẫn là Problem Details JSON (R10).
+  router.get('/ledger/export', view, ctx.authorize('report.dashboard.export'), validate({ query: LedgerExportQuery }), async (_req, res) => {
+    const q = input<typeof LedgerExportQuery>(res, 'query');
+    const file = await exportLedgerForMisa(ctx, companyOf(res), q, canSeeCost(res));
+    res
+      .type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+      .set('Content-Disposition', `attachment; filename="so-misa-${q.from}-${q.to}.xlsx"`)
+      .send(file);
   });
   // Đặt trước `/orders/:orderId/profit` cho dễ đọc; hai đường không trùng (`profits` khác `:orderId/profit`).
   router.get('/orders/profits', view, validate({ query: OrderProfitsQuery }), async (_req, res) => {

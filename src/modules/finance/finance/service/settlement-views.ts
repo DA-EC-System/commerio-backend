@@ -22,6 +22,8 @@ import { isUuid, money, notFound, orderRef, ordersOf } from './views.ts';
 export interface ShopInfo {
   shopName: string;
   platform: string;
+  /** Mã gian hàng trên sàn: mã đối tượng mặc định khi xuất sổ (#232). */
+  externalShopId?: string;
 }
 
 /**
