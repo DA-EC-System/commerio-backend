@@ -712,6 +712,8 @@ Cột:
 - `quantity` integer · null
 - `book_qty` integer · null
 - `counted_qty` integer · null
+- `count_source` text · null
+  Nguồn số đếm của phiếu kiểm kê đầu kỳ (#569, Documents/19): `platform` khi điền theo tồn sàn và số khớp tồn sàn lúc lưu, `manual` khi gõ tay; null khi chưa đếm hoặc phiếu không phải đầu kỳ.
 - `expected_qty` integer · null
 - `scanned_qty` integer · null
 - `resell_qty` integer · null
@@ -732,6 +734,7 @@ Ràng buộc và index:
 - index (`variant_id`) `stock_document_lines_variant_id_index`
 - check `stock_document_lines_quantity`: `quantity > 0`
 - check `stock_document_lines_counted`: `counted_qty >= 0`
+- check `stock_document_lines_count_source`: `count_source is null or (count_source in ('manual', 'platform') and counted_qty is not null)`
 - check `stock_document_lines_inspection`: `expected_qty >= 0 and scanned_qty >= 0 and resell_qty >= 0 and damaged_qty >= 0
         and to_supplier_qty >= 0`
 - check `stock_document_lines_inspection_sum`: `scanned_qty is null or resell_qty + damaged_qty + to_supplier_qty = scanned_qty`
