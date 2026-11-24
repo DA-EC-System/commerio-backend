@@ -1037,6 +1037,20 @@
       "when": 1795267680008,
       "tag": "20261121132759_luot-dong-bo-rls",
       "breakpoints": true
+    },
+    {
+      "idx": 148,
+      "version": "7",
+      "when": 1795511306476,
+      "tag": "20261124090826_can-nang-kich-thuoc-du-lieu",
+      "breakpoints": true
+    },
+    {
+      "idx": 149,
+      "version": "7",
+      "when": 1795511309361,
+      "tag": "20261124090829_can-nang-kich-thuoc-tran",
+      "breakpoints": true
     }
   ]
 }
