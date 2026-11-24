@@ -12,6 +12,9 @@ import { testApp } from '../../helpers/http.ts';
 import { activateShop, fakeAdapter, seedFeeConfig, seedSpecs } from './helpers.ts';
 
 const productId = randomUUID();
+const sizeAxis = randomUUID();
+// Một trục chung (seedSpecs ánh xạ `__custom`): sản phẩm nhiều SKU không trục thì `axis_shape` (gom biến thể, 21 §18.10).
+const size = (value: string) => [{ attributeId: sizeAxis, attributeName: 'Cỡ', platformKind: null, valueId: randomUUID(), value }];
 const variant = (sku: string, extra: Partial<ListingVariant> = {}): ListingVariant => ({
   id: randomUUID(),
   productId,
@@ -30,10 +33,10 @@ const variant = (sku: string, extra: Partial<ListingVariant> = {}): ListingVaria
   heightMm: 15,
   ...extra,
 });
-const ok = variant('RD-OK');
-const noPrice = variant('RD-NOPRICE');
-const noWeight = variant('RD-NOWEIGHT', { weightG: null });
-const archived = variant('RD-ARCH', { archived: true });
+const ok = variant('RD-OK', { attributes: size('S') });
+const noPrice = variant('RD-NOPRICE', { attributes: size('M') });
+const noWeight = variant('RD-NOWEIGHT', { weightG: null, attributes: size('L') });
+const archived = variant('RD-ARCH', { archived: true, attributes: size('XL') });
 const all = [ok, noPrice, noWeight, archived];
 
 setProductPort({

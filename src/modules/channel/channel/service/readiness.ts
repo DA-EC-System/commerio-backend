@@ -49,6 +49,13 @@ export async function productReadiness(port: ProductPort, productId: string, sho
   if (shopId && !shops.length) throw new AppError(404, 'not_found', 'Không tìm thấy gian hàng');
 
   const items: ShopReadiness[] = [];
+  // Sản phẩm cùng nhóm hàng cho gợi ý `group`: đọc một lần, chỉ khi cần (gian hàng nào đó chưa có spec).
+  let sameGroup: Set<string> | undefined;
+  const sameGroupOf = async () => {
+    const groupId = live[0]?.groupId;
+    sameGroup ??= groupId ? new Set((await port.variants()).filter((v) => v.groupId === groupId).map((v) => v.productId)) : new Set();
+    return sameGroup;
+  };
   // Cùng một kết nối của giao dịch: đọc tuần tự từng gian hàng.
   for (const shop of shops) {
     const ctx = await loadPushContext(port, shop, ids);
@@ -64,7 +71,7 @@ export async function productReadiness(port: ProductPort, productId: string, sho
       rows.push({ variantId: id, items: found });
       variants.push({ variantId: id, status: found.length ? 'blocked' : 'ready', blockerCodes: found.map((b) => b.code) });
     }
-    const category = await categoryState(port, shop.platform, productId, live[0]?.groupId ?? null, ctx.specs.get(productId));
+    const category = await categoryState(shop.platform, productId, sameGroupOf, ctx.specs.get(productId));
     const blockers = groupBlockers(rows)
       .map((b) => (b.code === 'axis_limit' ? { ...b, label: axisLimitLabel(category, live) ?? b.label } : b))
       .sort((a, b) => SCOPE_ORDER[a.scope] - SCOPE_ORDER[b.scope]);
@@ -95,10 +102,9 @@ function axisLimitLabel(category: CategoryState, variants: readonly { attributes
 }
 
 async function categoryState(
-  port: ProductPort,
   platform: Marketplace,
   productId: string,
-  groupId: string | null,
+  sameGroupOf: () => Promise<ReadonlySet<string>>,
   spec: Awaited<ReturnType<typeof loadPushContext>>['specs'] extends ReadonlyMap<string, infer S> ? S | undefined : never,
 ): Promise<CategoryState> {
   const { adapter } = platformOf(platform);
@@ -116,7 +122,7 @@ async function categoryState(
   }
   // Gợi ý không gọi sàn: `group` rồi `recent`, như hai nguồn cùng tên của `category-suggestions`.
   const specs = await specUsesOf(platform);
-  const sameGroup = groupId === null ? new Set<string>() : new Set((await port.variants()).filter((v) => v.groupId === groupId).map((v) => v.productId));
+  const sameGroup = await sameGroupOf();
   const infos = await categoryInfoOf(platform, specs.map((s) => s.externalCategoryId));
   const removedIds = new Set([...infos].filter(([, i]) => i.status === 'removed').map(([id]) => id));
   const { group, recent } = pickSources({ specs, productId, sameGroupProductIds: sameGroup, itemIds: new Set(), removedIds });

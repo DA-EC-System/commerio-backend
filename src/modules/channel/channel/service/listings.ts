@@ -51,7 +51,6 @@ import { type Actor, onMarketplace, ownShop, platformOf, shopSession } from './s
 export const ENTITY = 'listings';
 /** Mỗi lần đẩy tối đa 20 biến thể (`PushBody`). */
 export const PUSH_LIMIT = 20;
-/** Trạng thái đã có trên sàn: đẩy nữa là `already_listed` (sửa nội dung listing đang bán là #293). */
 
 export interface ChannelListing {
   id: string;

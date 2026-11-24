@@ -40,7 +40,10 @@ export interface PushContext {
   manualChecks: ReadonlyMap<string, PriceFilterResult>;
   /** Giá bộ lọc của lần đẩy đầu (#225 phần 2). */
   calcs: ReadonlyMap<string, NewPriceCalculation>;
-  /** Biến thể của lô chưa có sản phẩm trên sàn, theo sản phẩm: sẽ gom thành một sản phẩm sàn (§18.8.4). */
+  /**
+   * Biến thể của lô chưa có sản phẩm trên sàn và không có mục chặn nào khác, theo sản phẩm: sẽ gom thành một sản phẩm sàn
+   * (§18.8.4). Chỉ biến thể có trong đây mới được kiểm gom biến thể.
+   */
   newByProduct: ReadonlyMap<string, readonly ListingVariant[]>;
   /** Sản phẩm sàn người bán đã ghép, khi biến thể anh em nằm ở nhiều hơn một (`platform_product_ambiguous`). */
   ambiguous: ReadonlyMap<string, readonly string[]>;
@@ -95,7 +98,7 @@ export async function loadPushContext(
     const matched = await matchShopProductsOf(shop.id, siblingIds);
     if (matched.length > 1) ambiguous.set(productId, matched.map((m) => m.externalProductId!));
   }
-  return {
+  const ctx: PushContext = {
     shop,
     variants,
     siblings,
@@ -110,9 +113,24 @@ export async function loadPushContext(
     manual,
     manualChecks,
     calcs,
-    newByProduct,
+    newByProduct: new Map(),
     ambiguous,
   };
+  return { ...ctx, newByProduct: groupable(ctx, newByProduct) };
+}
+
+/**
+ * Như việc nền `product_push` (chỉ gom dòng sẽ đẩy): giữ các biến thể không có mục chặn nào khác, để một SKU anh em thiếu
+ * giá không chặn SKU đủ dữ liệu (review be#564). `ctx.newByProduct` rỗng nên `checkVariant` ở đây không xét gom.
+ */
+export function groupable(ctx: PushContext, candidates: ReadonlyMap<string, readonly ListingVariant[]>): Map<string, ListingVariant[]> {
+  const base = { ...ctx, newByProduct: new Map() };
+  const out = new Map<string, ListingVariant[]>();
+  for (const [productId, rows] of candidates) {
+    const ok = rows.filter((v) => !checkVariant(base, v.id).items.length);
+    if (ok.length) out.set(productId, ok);
+  }
+  return out;
 }
 
 const listingItem = (code: BlockItem['code'], label: string, existing: ListingRow | undefined): BlockItem => ({
@@ -163,10 +181,10 @@ export function checkVariant(ctx: PushContext, variantId: string): VariantCheck 
     ),
   );
   if (!keep && !existing?.externalProductId) {
-    const group = groupBlock(
-      (ctx.newByProduct.get(v.productId) ?? []).map((s) => ({ id: s.id, attributes: s.attributes, image: s.image ?? null })),
-      spec,
-    );
+    const siblings = ctx.newByProduct.get(v.productId) ?? [];
+    const group = siblings.some((s) => s.id === v.id)
+      ? groupBlock(siblings.map((s) => ({ id: s.id, attributes: s.attributes, image: s.image ?? null })), spec)
+      : null;
     if (group) items.push(group);
     const products = ctx.ambiguous.get(v.productId);
     if (products) {

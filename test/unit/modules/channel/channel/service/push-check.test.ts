@@ -2,7 +2,7 @@ import { Decimal } from 'decimal.js';
 import { describe, expect, it } from 'vitest';
 import type { ListingRow } from '#src/modules/channel/channel/repository/listings.ts';
 import type { ListingVariant } from '#src/modules/channel/channel/service/product-port.ts';
-import { checkVariant, type PushContext } from '#src/modules/channel/channel/service/push-check.ts';
+import { checkVariant, groupable, type PushContext } from '#src/modules/channel/channel/service/push-check.ts';
 
 // Hàm kiểm chung của push, push-preview, readiness (be#564, Documents/21 §18.10, §18.6.4).
 const variant: ListingVariant = {
@@ -94,5 +94,19 @@ describe('checkVariant', () => {
   it('SKU tạm ngừng: mục cụ thể trước sku_not_ready', () => {
     const paused = { ...variant, businessStatus: 'paused' as const, weightG: null };
     expect(checkVariant(ctx({ variants: new Map([['v1', paused]]) }), 'v1').items.map((b) => b.code)).toEqual(['dimensions_missing', 'sku_not_ready']);
+  });
+
+  it('gom biến thể chỉ trên SKU không có mục chặn khác: SKU anh em thiếu giá không làm SKU đủ dữ liệu bị axis_shape', () => {
+    const v2 = { ...variant, id: 'v2', sku: 'A-2' };
+    const base = ctx({ variants: new Map([['v1', variant], ['v2', v2]]), siblings: [variant, v2], standard: new Map([['v1', new Decimal(1000)], ['v2', null]]), selling: new Map([['v1', 1000], ['v2', null]]) });
+    const ready = groupable(base, new Map([['p', [variant, v2]]]));
+    expect(ready.get('p')!.map((v) => v.id)).toEqual(['v1']);
+    const full = { ...base, newByProduct: ready };
+    expect(checkVariant(full, 'v1').items).toEqual([]);
+    expect(checkVariant(full, 'v2').items.map((b) => b.code)).toEqual(['price_missing']);
+    // Cả hai đủ dữ liệu mà không có trục: gom thì axis_shape cho cả hai.
+    const both = ctx({ variants: new Map([['v1', variant], ['v2', v2]]), siblings: [variant, v2], standard: new Map([['v1', new Decimal(1)], ['v2', new Decimal(1)]]), selling: new Map([['v1', 1], ['v2', 1]]) });
+    const grouped = { ...both, newByProduct: groupable(both, new Map([['p', [variant, v2]]])) };
+    expect(checkVariant(grouped, 'v1').items.map((b) => b.code)).toEqual(['axis_shape']);
   });
 });

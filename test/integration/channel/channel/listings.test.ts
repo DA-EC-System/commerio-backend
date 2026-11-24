@@ -230,7 +230,13 @@ describe('đẩy listing: request chỉ kiểm và xếp việc', () => {
 
   it('hai biến thể cùng sản phẩm trong một request: đọc ảnh một lần, một việc theo cha (#303, #295)', async () => {
     const a = ownProduct('CMR-PAIR-A', ['https://files.commerio.test/pair.jpg']);
-    const b = variant(`CMR-PAIR-B-${randomUUID().slice(0, 6)}`, { productId: a.productId });
+    // Sản phẩm nhiều SKU phải có thuộc tính phân loại (gom biến thể kiểm ngay lúc bấm, 21 §18.11).
+    const axis = randomUUID();
+    a.attributes = [{ attributeId: axis, attributeName: 'Màu', platformKind: null, valueId: randomUUID(), value: 'Đen' }];
+    const b = variant(`CMR-PAIR-B-${randomUUID().slice(0, 6)}`, {
+      productId: a.productId,
+      attributes: [{ attributeId: axis, attributeName: 'Màu', platformKind: null, valueId: randomUUID(), value: 'Trắng' }],
+    });
     all.push(b);
     productImageUrls.mockClear();
     const res = await results([a.id, b.id]);
