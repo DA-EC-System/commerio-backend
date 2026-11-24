@@ -2,7 +2,8 @@
 // (`listings.ts`) và việc nền (`listing-push.ts`), tách riêng để hai file không import vòng.
 import type { Decimal } from 'decimal.js';
 import type { BlockerCode, BlockItem } from '../domain/blocker.ts';
-import type { CategoryPermission, MissingItem } from '../domain/product-spec.ts';
+import type { CategoryPermission, MissingItem, PlatformAttribute } from '../domain/product-spec.ts';
+import { type GroupVariant, groupVariants } from '../domain/variant-group.ts';
 import type { SizeChartRule } from '../repository/schema.ts';
 import type { ListingVariant } from './product-port.ts';
 
@@ -215,6 +216,25 @@ export function feeBlock(
     label: `Gian hàng ${shop.shopName} chưa có cấu hình phí. Soạn cấu hình phí và chờ CEO duyệt rồi đăng`,
     target: { kind: 'shop', field: 'fee_config' },
   };
+}
+
+/**
+ * Mục chặn của phần gom biến thể (be#566, Documents/21 §18.11): `groupVariants` trên các SKU mới của một cha sẽ đi chung
+ * một sản phẩm sàn, cùng hàm với việc nền (`product-push.ts`). Chỉ xét khi spec đã đủ: spec còn thiếu (kể cả trục chưa ánh
+ * xạ) hay chưa có spec thì `pushBlocks` đã báo, không lặp mục. Hàm thuần.
+ */
+export function groupBlock(
+  variants: readonly GroupVariant[],
+  spec: (Pick<SpecCheck, 'missing'> & { row: { axisMap: Readonly<Record<string, string>> }; attributes: readonly PlatformAttribute[] | null }) | undefined,
+): BlockItem | null {
+  if (!spec || spec.missing.length || !variants.length) return null;
+  const group = groupVariants(variants, spec.row.axisMap, spec.attributes);
+  if (group.ok) return null;
+  if (group.code === 'axis_unmapped') {
+    const attributeId = variants[0]!.attributes.find((a) => !spec.row.axisMap[a.attributeId])?.attributeId;
+    return { code: 'axis_unmapped', label: group.message, target: { kind: 'axis', ...(attributeId && { attributeId }) } };
+  }
+  return { code: 'axis_shape', label: group.message, target: { kind: 'axis' } };
 }
 
 /** Tên, mô tả đưa lên sàn của một biến thể, chung cho đẩy mới và sửa nội dung (#219, #293). */

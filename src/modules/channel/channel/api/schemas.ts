@@ -360,6 +360,17 @@ export const PriceQuoteBody = z
       .max(200, 'Tối đa 200 dòng'),
   })
   .meta({ id: 'PriceQuoteInput' });
+/** Quy tắc làm tròn đã áp cho giá bộ lọc (21 §18.11, be#566). */
+export const PriceRounding = z
+  .object({
+    step: z.number().int().meta({ description: 'Bậc làm tròn lên (đồng) của cấu hình phí đang áp' }),
+    ending: z.number().int().nullable().meta({ description: 'Đuôi giá; null khi đuôi 0' }),
+    before: z.number().int().meta({ description: 'Giá sau khi bù phí, trước khi làm tròn (làm tròn tới đồng)' }),
+    after: z.number().int().meta({ description: 'Giá niêm yết sau khi làm tròn' }),
+  })
+  .strict()
+  .meta({ id: 'PriceRounding' });
+const rounding = PriceRounding.nullable().meta({ description: 'null khi giá gõ tay hoặc không tính bằng bộ lọc giá (21 §18.11)' });
 export const PriceQuote = z
   .object({
     shopId: z.string(),
@@ -368,6 +379,7 @@ export const PriceQuote = z
     netReceived: z.number().nullable(),
     belowFloor: z.boolean().nullable().meta({ description: 'null khi người gọi thiếu `inventory.cost.view` (R4: dò giá thấp nhất suy ra giá vốn), chưa có giá vốn, hoặc dòng bị chặn' }),
     feeWarning: z.enum(['over_50']).nullable(),
+    rounding,
     feeConfigId: z.string().nullable(),
     blocked: z.object({ code: z.enum(['price_missing', 'fee_config_invalid', 'fee_not_configured']) }).nullable(),
     marginPct: z.number().nullable().meta({ description: 'null khi người gọi thiếu `inventory.cost.view` (R4) hoặc chưa có giá vốn' }),
@@ -692,6 +704,7 @@ export const ListingRow = z
       .nullable()
       .meta({ description: 'Giá đang bán dưới giá thấp nhất; null khi chưa có giá vốn hoặc chưa có phí. Không kèm giá vốn (R4)' }),
     feeWarning: z.enum(['over_50']).nullable().meta({ description: 'Tổng phí và thuế của gian hàng trên 50%' }),
+    rounding,
     listing: ChannelListing.nullable(),
     remoteTitleChanged: RemoteTitleChanged,
     externalCategoryId: z.string().nullable().meta({
@@ -727,6 +740,32 @@ export const ListingList = z.object({ items: z.array(ListingRow) }).strict().met
 export const ProductListingsParams = z.object({ productId: z.string().max(60) });
 export const ProductListingRow = ListingRow.extend({ shopId: z.uuid(), shopName: z.string(), platform: z.string() }).meta({ id: 'ProductListingRow' });
 export const ProductListingList = z.object({ items: z.array(ProductListingRow) }).strict().meta({ id: 'ProductListingList' });
+
+
+/** Chỗ sửa của mục chặn (21 §18.10 `BlockerTarget`, cộng `listing` của 18.11; kiểu ở `domain/blocker.ts`). */
+export const BlockerTarget = z
+  .discriminatedUnion('kind', [
+    z.object({ kind: z.literal('category') }).strict(),
+    z.object({ kind: z.literal('spec_attribute'), attributeCode: z.string() }).strict(),
+    z.object({ kind: z.literal('axis'), attributeId: z.string().optional() }).strict(),
+    z.object({ kind: z.literal('variant_field'), field: z.enum(['price', 'weight', 'dimensions']) }).strict(),
+    z.object({ kind: z.literal('product_field'), field: z.enum(['images', 'variantImages', 'sizeChart', 'name']) }).strict(),
+    z.object({ kind: z.literal('shop'), field: z.enum(['fee_config', 'category_permission']) }).strict(),
+    z.object({ kind: z.literal('platform_product'), externalProductIds: z.array(z.string()) }).strict(),
+    z.object({ kind: z.literal('listing'), listingId: z.uuid().nullable() }).strict(),
+  ])
+  .meta({ id: 'BlockerTarget' });
+
+export const Blocker = z
+  .object({
+    code: z.string().meta({ description: 'Mã chặn (21 §18.10 `Blocker.code`, cộng mã theo listing và gom biến thể của 18.11)' }),
+    label: z.string().meta({ description: 'Câu cho người bán, BE dựng' }),
+    scope: z.enum(['shop', 'platform', 'common']),
+    target: BlockerTarget,
+    variantIds: z.array(z.uuid()).meta({ description: 'Rỗng khi mục chặn cả sản phẩm' }),
+  })
+  .strict()
+  .meta({ id: 'Blocker' });
 
 export const PushResult = z
   .object({
