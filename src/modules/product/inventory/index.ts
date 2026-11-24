@@ -54,6 +54,6 @@ export { recheckThresholds, setIncomingSource } from './service/thresholds.ts';
 export { deleteStockLevels, stockArchiveBlockers, stockInUse } from './service/archive-blockers.ts';
 // Ngưỡng tồn cho sửa hàng loạt của catalog (#242), trong giao dịch của bên gọi.
 export { applyReorderRule, minQtyOf, reorderRulesOf } from './service/stock.ts';
-export type { IncomingLookup, InventoryContext } from './service/views.ts';
+export type { IncomingLookup, InventoryContext, PlatformStockLookup } from './service/views.ts';
 // Xoá gian hàng đã ngắt (#398): channel xoá phiếu nháp, chờ duyệt và tách phiếu đã ghi sổ khỏi gian hàng.
 export { detachShopStockDocuments, type ShopDocumentScope } from './service/shop-detach.ts';

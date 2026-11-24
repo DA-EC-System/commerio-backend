@@ -15,6 +15,7 @@ import {
   missingOf,
   needsDecision,
 } from '../domain/stock-document.ts';
+import { countSourceOf, type CountSource } from '../domain/count-source.ts';
 import { takeNextNumber } from '../repository/counters.ts';
 import {
   type DocLineRow,
@@ -31,7 +32,7 @@ import {
   setLineCosts,
   updateDoc,
 } from '../repository/documents.ts';
-import { DOC_AUDIT_ENTITY, DOC_ENTITY, detail, summaries, supplierReturnPort } from './document-views.ts';
+import { DOC_AUDIT_ENTITY, DOC_ENTITY, detail, platformStockOf, summaries, supplierReturnPort } from './document-views.ts';
 import { InsufficientStock, applyMoves, type Move } from './posting.ts';
 import { lockedOf, stockOf } from './port.ts';
 import { notFound, type Viewer } from './views.ts';
@@ -45,6 +46,8 @@ export interface DocLineInput {
   variantId: string;
   quantity?: number | undefined;
   counted?: number | null | undefined;
+  /** Kiểm kê đầu kỳ: nguồn số đếm FE gửi (#569); BE quyết lại bằng `countSourceOf`. */
+  countSource?: CountSource | null | undefined;
   scanned?: number | undefined;
   resell?: number | undefined;
   damaged?: number | undefined;
@@ -115,7 +118,7 @@ async function manualLines(
   bucket: 'on_hand' | 'quarantine',
   note: string,
   input: readonly DocLineInput[],
-  { unlimited = false }: { unlimited?: boolean } = {},
+  { unlimited = false, opening = null }: { unlimited?: boolean; opening?: { platformStock: Map<string, number> | null } | null } = {},
 ) {
   const errors: Errors = {};
   if (note.length > 500) errors.note = 'Ghi chú tối đa 500 ký tự';
@@ -130,7 +133,13 @@ async function manualLines(
       const counted = l.counted ?? null;
       if (counted !== null && !isQty(counted, 0)) errors[`lines.${i}.counted`] = 'Số đếm là số nguyên không âm';
       const s = book.get(l.variantId);
-      return { variantId: l.variantId, bookQty: bucket === 'on_hand' ? (s?.onHand ?? 0) : (s?.quarantine ?? 0), countedQty: counted };
+      const countSource = countSourceOf({
+        isOpening: opening !== null,
+        counted,
+        requested: l.countSource,
+        platformStock: opening?.platformStock?.get(l.variantId) ?? null,
+      });
+      return { variantId: l.variantId, bookQty: bucket === 'on_hand' ? (s?.onHand ?? 0) : (s?.quarantine ?? 0), countedQty: counted, countSource };
     }
     if (!isQty(l.quantity, 1)) errors[`lines.${i}.quantity`] = 'Số lượng là số nguyên từ 1';
     return { variantId: l.variantId, quantity: l.quantity ?? 1 };
@@ -230,7 +239,9 @@ export function updateDocument(
     } else {
       // Kiểm kê đầu kỳ (nguồn `shop_setup`) và chuyển chờ xử lý luôn đếm tồn thực
       if (row.kind === 'write_off' || (row.kind === 'stocktake' && !row.isOpening)) area = bucketOf(input.area ?? (row.area === 'on_hand' ? 'stock' : 'quarantine'));
-      lines = await manualLines(row.kind as ManualDocType, area, note, input.lines, { unlimited: row.isOpening });
+      // Kiểm kê đầu kỳ: so số đếm với tồn sàn lúc ghi để chốt `countSource` (#569, Documents/21 §18.6.2)
+      const opening = row.isOpening ? { platformStock: await platformStockOf(row, input.lines.map((l) => l.variantId), actor) } : null;
+      lines = await manualLines(row.kind as ManualDocType, area, note, input.lines, { unlimited: row.isOpening, opening });
     }
     const updated = await updateDoc(row.id, row.version, { area, note, ...(row.kind === 'stocktake' && { countedAt: new Date() }) });
     if (!updated) throw await conflict(row, actor);

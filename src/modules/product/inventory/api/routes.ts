@@ -22,7 +22,7 @@ import {
  * Người gọi và hai quyền đổi dữ liệu trả về, lấy từ lần đọc DB của `authorize` trong chính request này (D1, plan #16
  * A1): thu quyền giá vốn thì lần gọi sau thấy `null` ngay, không chờ token hết hạn.
  */
-function viewer(res: Response): Viewer {
+function baseViewer(res: Response): Viewer {
   const { accountId, companyId } = getAuth(res);
   const { permissions } = getAccess(res);
   return {
@@ -33,14 +33,17 @@ function viewer(res: Response): Viewer {
 }
 
 /** Người làm thao tác phiếu kho: quyền và phân hệ bật lấy nguyên từ `getAccess` cho máy trạng thái (§14.1). */
-function actor(res: Response): docs.DocActor {
+function baseActor(res: Response): docs.DocActor {
   const { permissions, enabledModules } = getAccess(res);
-  return { ...viewer(res), permissions, enabledModules };
+  return { ...baseViewer(res), permissions, enabledModules };
 }
 
 /** Route của module `inventory`, gắn tại /api/v1/inventory (Documents/21 mục 15.2; phiếu kho có duyệt #208). */
 export function inventoryRouter(ctx: InventoryContext): Router {
   const router = Router();
+  // Tồn trên sàn của phiếu kiểm kê đầu kỳ do channel tính (#569), tiêm qua `src/wiring.ts`
+  const viewer = (res: Response): Viewer => ({ ...baseViewer(res), platformStockOf: ctx.platformStockOf });
+  const actor = (res: Response): docs.DocActor => ({ ...baseActor(res), platformStockOf: ctx.platformStockOf });
   const view = ctx.authorize('inventory.stock.view');
   const reorder = ctx.authorize('inventory.reorder.manage');
 
