@@ -47,7 +47,7 @@ import {
 } from './common.ts';
 import { lazadaCategoryNodes, lazadaLeafAttributes, lazadaVariantCapabilities } from './lazada-categories.ts';
 import { lazadaCategoryMismatch, lazadaReactivated, lazadaSkuViews, lazadaUnderReview } from './lazada-category-change.ts';
-import { type LazadaCreatedSku, associatedSkuId, lazadaAddVariation, lazadaSkuIdentity, lazadaVariation, matchCreatedSkus } from './lazada-variants.ts';
+import { type LazadaCreatedSku, associatedSkuId, existingVariation, lazadaAddVariation, lazadaSkuIdentity, lazadaVariation, matchCreatedSkus } from './lazada-variants.ts';
 import { lazadaReturnMethods } from './lazada-returns.ts';
 import { downloadDocument } from './image-source.ts';
 import { lazadaPackingMethods, type LazadaPackingDeps } from './lazada-packing.ts';
@@ -1282,7 +1282,8 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
     // BẪY: truyền item_id vào AssociatedSku thì sàn không báo lỗi mà tạo item mới (L2g);
     // nên lấy sku_id từ sàn và kiểm item_id trả về.
     async addVariants(accessToken, itemId, input: NewVariants) {
-      const associated = associatedSkuId((await call(config.apiUrl, '/product/item/get', { access_token: accessToken, item_id: itemId }, 'GET')).data);
+      const item = (await call(config.apiUrl, '/product/item/get', { access_token: accessToken, item_id: itemId }, 'GET')).data;
+      const associated = associatedSkuId(item);
       const sellerSkus = input.skus.map((s) => s.sellerSku);
       const payload = JSON.stringify({
         Request: {
@@ -1291,7 +1292,7 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
             AssociatedSku: associated,
             Images: { Image: input.imageUrls },
             Attributes: { brand: DEFAULT_BRAND, ...flatAttributes(input.attributes), name: input.name, description: input.description },
-            ...(input.salesAttributes?.length && { variation: lazadaAddVariation(input.salesAttributes, input.skus) }),
+            ...(input.salesAttributes?.length && { variation: lazadaAddVariation(input.salesAttributes, input.skus, existingVariation(item)) }),
             Skus: { Sku: input.skus.map((s) => ({ ...lazadaSkuIdentity(s, input.salesAttributes), ...skuPayload(s) })) },
           },
         },

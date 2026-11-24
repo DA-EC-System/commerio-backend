@@ -45,13 +45,40 @@ export function lazadaVariation(
   );
 }
 
+/** Khai báo `variation` của sản phẩm đang có trên sàn (`/product/item/get` `data.variation`), theo thứ tự `Variation1`, `Variation2`… */
+export function existingVariation(data: unknown): { name: string; hasImage: boolean }[] {
+  const v = (data as { variation?: Record<string, { name?: unknown; hasImage?: unknown }> | null } | undefined)?.variation;
+  if (!v || typeof v !== 'object') return [];
+  return Object.entries(v)
+    .sort(([x], [y]) => x.localeCompare(y, undefined, { numeric: true }))
+    .flatMap(([, d]) => (typeof d?.name === 'string' ? [{ name: d.name, hasImage: d.hasImage === true }] : []));
+}
+
 /**
- * Khai báo cho thêm phân loại (`AssociatedSku`): thứ tự, `hasImage` như lúc tạo (theo mọi giá trị của sản phẩm), lựa chọn chỉ
- * gồm giá trị các SKU mới dùng. Không khai báo thì sản phẩm có thuộc tính tên tự đặt bị từ chối "Phần is not found in the
+ * Khai báo cho thêm phân loại (`AssociatedSku`): lựa chọn chỉ gồm giá trị các SKU mới dùng. Thứ tự và `hasImage` lấy từ sản
+ * phẩm đang có trên sàn (`existing`), không tính từ lượt này: lượt này chỉ có giá trị mới, có thể không mang ảnh, tính lại sẽ
+ * đẩy thuộc tính gắn ảnh khỏi `variation1` và tắt `hasImage` của sản phẩm đã bật (#572). Thuộc tính chưa có trên sàn (hoặc
+ * `existing` trống) thì tính như lúc tạo. Không khai báo thì sản phẩm có tên tự đặt bị từ chối "Phần is not found in the
  * variation label" (d742e42a17955177348851472); khai báo giá trị mới thì nhận (21012a9617955177478925660).
  */
-export function lazadaAddVariation(attrs: readonly SalesAttribute[], skus: readonly ProductSku[]): Record<string, unknown> {
-  return lazadaVariation(attrs, (i, label) => skus.some((s) => s.values[i] === label));
+export function lazadaAddVariation(
+  attrs: readonly SalesAttribute[],
+  skus: readonly ProductSku[],
+  existing: readonly { name: string; hasImage: boolean }[] = [],
+): Record<string, unknown> {
+  const keep = (i: number, label: string) => skus.some((s) => s.values[i] === label);
+  const onPlatform = (a: SalesAttribute) => existing.findIndex((e) => e.name === axisName(a));
+  const known = attrs.map((a, i) => ({ a, i, at: onPlatform(a) })).filter((x) => x.at >= 0).sort((x, y) => x.at - y.at);
+  const fresh = lazadaVariation(attrs.flatMap((a, i) => (onPlatform(a) < 0 ? [{ ...a, values: a.values.filter((v) => keep(i, v.label)) }] : [])));
+  // Thuộc tính đã có giữ chỗ và `hasImage` của sàn; thuộc tính mới (hiếm) nối sau, tính như lúc tạo.
+  const out: Record<string, unknown> = Object.fromEntries(
+    known.map(({ a, i, at }) => [
+      `variation${at + 1}`,
+      { name: axisName(a), hasImage: existing[at]!.hasImage, customize: a.code === null, options: { option: a.values.map((v) => v.label).filter((l) => keep(i, l)) } },
+    ]),
+  );
+  for (const v of Object.values(fresh)) out[`variation${Object.keys(out).length + 1}`] = v;
+  return out;
 }
 
 /**

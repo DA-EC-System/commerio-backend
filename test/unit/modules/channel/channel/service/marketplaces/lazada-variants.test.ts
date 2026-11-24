@@ -5,7 +5,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { NewProduct, NewVariants, SalesAttribute } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { createLazadaAdapter } from '#src/modules/channel/channel/service/marketplaces/lazada.ts';
-import { lazadaAddVariation, lazadaSkuIdentity, lazadaVariation } from '#src/modules/channel/channel/service/marketplaces/lazada-variants.ts';
+import { existingVariation, lazadaAddVariation, lazadaSkuIdentity, lazadaVariation } from '#src/modules/channel/channel/service/marketplaces/lazada-variants.ts';
 
 const config = { appKey: '143465', appSecret: 'secret', redirectUrl: undefined, apiUrl: 'https://api.test/rest', authUrl: 'https://auth.test' };
 const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
@@ -223,6 +223,36 @@ describe('Lazada addVariants', () => {
     expect(product.Skus.Sku[0]).toMatchObject({ SellerSku: 'CM-DO-S', saleProp: { color_family: 'Đỏ', size: 'Int:S' }, Images: { Image: ['https://img.test/do.jpg'] } });
   });
 
+  it('thứ tự và hasImage của khai báo lấy từ sản phẩm trên sàn, không từ lượt này (#572): thêm giá trị không ảnh vào sản phẩm có thuộc tính ảnh đứng sau', async () => {
+    const onPlatform = {
+      code: '0',
+      data: {
+        status: 'Active',
+        skus: [{ SkuId: 117597811498, SellerSku: 'CM-DEN-S' }],
+        variation: {
+          Variation2: { name: 'size', hasImage: false },
+          Variation1: { name: 'color_family', hasImage: true },
+        },
+      },
+    };
+    const fn = fakeFetch(onPlatform, { code: '0', data: { item_id: 13517941999, item_status: 'Active', sku_list: [{ seller_sku: 'CM-DEN-M', sku_id: 117617144675 }] } });
+    // Thứ tự catalog [size, color]; SKU mới dùng giá trị màu "Đen" không có ảnh nên lượt này không gắn ảnh nào
+    const noImage: NewVariants = {
+      ...multi,
+      skus: [{ sellerSku: 'CM-DEN-M', price: '199000', quantity: 3, values: ['M', 'Đen'], ...dims }],
+      salesAttributes: [
+        { code: 'size', name: 'Cỡ', values: [{ optionId: null, label: 'M' }] },
+        { code: 'color_family', name: 'Màu', values: [{ optionId: null, label: 'Đen' }] },
+      ],
+    };
+    await createLazadaAdapter(config, fn).addVariants!('t', '13517941999', noImage);
+    const product = payloadOf(fn, 1).Request.Product as { variation: unknown };
+    expect(product.variation).toEqual({
+      variation1: { name: 'color_family', hasImage: true, customize: false, options: { option: ['Đen'] } },
+      variation2: { name: 'size', hasImage: false, customize: false, options: { option: ['M'] } },
+    });
+  });
+
   it('BẪY: sàn trả item_id khác (tạo item mới) thì xoá SKU của item lạ rồi ném associated_item_mismatch', async () => {
     const fn = fakeFetch(
       itemGet,
@@ -335,5 +365,29 @@ describe('Lazada: thứ tự khai báo và thêm phân loại (#572)', () => {
     expect(lazadaAddVariation([custom], [sku(['Ức'])])).toEqual({
       variation1: { name: 'Phần', hasImage: false, customize: true, options: { option: ['Ức'] } },
     });
+  });
+
+  it('thêm phân loại: thứ tự, hasImage theo sản phẩm trên sàn; thuộc tính chưa có trên sàn nối sau', () => {
+    const existing = [{ name: 'color_family', hasImage: true }, { name: 'smartwear_size', hasImage: false }];
+    // Lượt này không có ảnh (tính theo lượt thì hasImage false, thứ tự [size, color])
+    const noImage = { ...color, values: [{ optionId: null, label: 'Đen' }] };
+    expect(lazadaAddVariation([size, noImage], [sku(['M', 'Đen'])], existing)).toEqual({
+      variation1: { name: 'color_family', hasImage: true, customize: false, options: { option: ['Đen'] } },
+      variation2: { name: 'smartwear_size', hasImage: false, customize: false, options: { option: ['M'] } },
+    });
+    expect(lazadaAddVariation([size, custom], [sku(['M', 'Ức'])], [{ name: 'smartwear_size', hasImage: false }])).toEqual({
+      variation1: { name: 'smartwear_size', hasImage: false, customize: false, options: { option: ['M'] } },
+      variation2: { name: 'Phần', hasImage: false, customize: true, options: { option: ['Ức'] } },
+    });
+  });
+
+  it('đọc khai báo của sản phẩm trên sàn theo thứ tự Variation1, Variation2…; thiếu thì rỗng', () => {
+    expect(existingVariation({ variation: { Variation2: { name: 'size', hasImage: false }, Variation1: { name: 'color_family', hasImage: true } } })).toEqual([
+      { name: 'color_family', hasImage: true },
+      { name: 'size', hasImage: false },
+    ]);
+    expect(existingVariation({ variation: {} })).toEqual([]);
+    expect(existingVariation({})).toEqual([]);
+    expect(existingVariation(undefined)).toEqual([]);
   });
 });
