@@ -595,7 +595,7 @@ describe('21 §18.9 R5: gian hàng chưa có cấu hình phí không đăng đư
     const res = await auth(app().post(`/api/v1/channel/shops/${id}/listings/push`)).send({ variantIds: [ok.id], listPrices: { [ok.id]: 500000 } });
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(PushResults.parse(res.body).results).toEqual([
-      { variantId: ok.id, listingId: null, status: null, code: 'fee_not_configured', message: expect.stringContaining('chưa có cấu hình phí') },
+      { variantId: ok.id, listingId: null, status: null, code: 'fee_not_configured', message: expect.stringContaining('chưa có cấu hình phí'), blockers: [expect.objectContaining({ code: 'fee_not_configured', scope: 'shop' })] },
     ]);
     expect((await testPool().query('select 1 from channel.listings where shop_id = $1', [id])).rows).toEqual([]);
     expect((await testPool().query("select 1 from pgboss.job where name = 'channel.product_push' and data->>'shopId' = $1", [id])).rows).toEqual([]);
