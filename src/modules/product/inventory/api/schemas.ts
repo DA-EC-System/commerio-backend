@@ -151,7 +151,8 @@ const qty = z.number('Số lượng là số nguyên').int('Số lượng là s�
 const DocLineInput = z.object({
   variantId: z.uuid('Biến thể không hợp lệ'),
   quantity: qty,
-  counted: qty,
+  // Kiểm kê: `null` (hay bỏ trống) là chưa đếm; gửi duyệt, ghi sổ khi còn dòng chưa đếm thì 422 (#569, Documents/21 §18.6.2)
+  counted: qty.nullable(),
   scanned: qty,
   resell: qty,
   damaged: qty,
@@ -214,7 +215,7 @@ const StockDocLine = z.object({
   attributesLabel: z.string(),
   quantity: z.int().meta({ description: 'Kiểm kê: Δ = đếm − sổ; kiểm hàng về: số quét; phiếu khác: số lượng' }),
   bookQty: z.int().optional(),
-  counted: z.int().optional(),
+  counted: z.int().nullable().optional().meta({ description: 'Kiểm kê: `null` là chưa đếm' }),
   expected: z.int().optional(),
   resell: z.int().optional(),
   damaged: z.int().optional(),
