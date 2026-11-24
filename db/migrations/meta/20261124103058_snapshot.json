@@ -1,5 +1,5 @@
 {
-  "id": "b783d50e-f806-4ba6-b9a3-785b4ca83de3",
+  "id": "baf85ba9-4ebf-4883-bb4a-a426938d9cbd",
   "prevId": "1fea3506-d1f5-40c8-8cc6-1f6a1d0bf5e8",
   "version": "7",
   "dialect": "postgresql",
@@ -2578,6 +2578,19 @@
           "primaryKey": false,
           "notNull": false
         },
+        "setup_draft": {
+          "name": "setup_draft",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "setup_draft_version": {
+          "name": "setup_draft_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -4552,6 +4565,12 @@
         },
         "locked_at": {
           "name": "locked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "onboarding_completed_at": {
+          "name": "onboarding_completed_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
@@ -15945,7 +15964,6 @@
         "fee_transaction",
         "fee_service",
         "fee_optional",
-        "fee_per_item",
         "withholding_tax",
         "customer_refund",
         "return_fee",

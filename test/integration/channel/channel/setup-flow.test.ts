@@ -12,6 +12,7 @@ import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/ser
 import { type ListingVariant, productPort, setProductPort } from '#src/modules/channel/channel/service/product-port.ts';
 import { syncListings } from '#src/modules/channel/channel/service/listing-sync.ts';
 import { createModuleContext } from '#src/wiring.ts';
+import { createVariant } from '../../helpers/catalog.ts';
 import { addMember, createCompany } from '../../helpers/company.ts';
 import { setModuleEnabled } from '../../helpers/state.ts';
 import { testPool } from '../../helpers/db.ts';
@@ -184,12 +185,22 @@ describe('kiểm kê đầu kỳ và chế độ chờ (AC-6, AC-7, AC-8, AC-9, 
 
   it('AC-7: cổng mặc định lập phiếu kiểm kê đầu kỳ thật của inventory (#245), gian hàng chờ kiểm kê phiếu nháp', async () => {
     const c = await createCompany({ optionalModules: [] });
+    await createVariant(c.companyId);
     const shopId = await connectingShop(c);
     const res = await setup(c, shopId, { externalSkuIds: ['sku-1'], openingStock: 'stocktake' });
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     const result = ShopSetupResult.parse(res.body);
     expect(result.stocktakeNumber).toMatch(/^KK-/);
     expect(result.shop).toMatchObject({ status: 'active', openingStocktake: { number: result.stocktakeNumber, status: 'draft' } });
+  });
+
+  it('công ty chưa có SKU kho: phiếu đầu kỳ rỗng ghi sổ ngay, gian hàng vẫn chờ tới khi nhận sự kiện (#569)', async () => {
+    const c = await createCompany({ optionalModules: [] });
+    const shopId = await connectingShop(c);
+    const res = await setup(c, shopId, { externalSkuIds: ['sku-1'], openingStock: 'stocktake' });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const result = ShopSetupResult.parse(res.body);
+    expect(result.shop).toMatchObject({ status: 'active', openingStocktake: { number: result.stocktakeNumber, status: 'posted' } });
   });
 
   it('AC-7: lập phiếu lỗi thì rollback, đọc lại vẫn connecting, không listing', async () => {

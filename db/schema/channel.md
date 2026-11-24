@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V149**, 24 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
+Phiên bản **V150**, 24 bảng. Mục lục mọi schema và các bảng đã bỏ: [../SCHEMA.md](../SCHEMA.md).
 
 **Không có ở đây:** RLS và policy (mọi bảng có `company_id` bật RLS với policy `company_isolation`, trừ ngoại lệ ở `test/integration/shared/rls-coverage.test.ts`), quyền của role `commerio_app`, hàm SQL, và mọi thứ tạo bằng SQL động. Xem `db/CLAUDE.md` mục Row-Level Security và các migration viết tay.
 
@@ -470,7 +470,7 @@ Trỏ vào bảng này:
 
 ## `channel.product_specs`
 
-Thông tin sàn của một sản phẩm cha, một bộ mỗi sàn, mọi gian hàng của sàn dùng chung (#400, Documents/19 mục 3.3). Thay bảng spec cũ của catalog và ghép danh mục Commerio (xoá ở BE3, migration `*_bo-ghep-danh-muc`). `product_id` là uuid thường (không khoá ngoại chéo schema). `attributes` chỉ giữ attribute `tier = 'category'` (xuất xứ, thương hiệu ở catalog). `axis_map`: attributeId của trục Commerio → mã sales attribute của sàn hoặc `__custom`; `value_map`: attributeValueId → mã lựa chọn của sàn. `version = 0` là bản chép từ ghép danh mục cũ chưa ai lưu lại (#400 A18, migration `*_chep-spec-lan-cuoi`); `PUT` spec luôn ra `version ≥ 1`. RLS.
+Thông tin sàn của một sản phẩm cha, một bộ mỗi sàn, mọi gian hàng của sàn dùng chung (#400, Documents/19 mục 3.3). Thay bảng spec cũ của catalog và ghép danh mục Commerio (xoá ở BE3, migration `*_bo-ghep-danh-muc`). `product_id` là uuid thường (không khoá ngoại chéo schema). `attributes` chỉ giữ attribute `tier = 'category'` (xuất xứ, thương hiệu ở catalog). `axis_map`: attributeId của trục Commerio → mã sales attribute của sàn hoặc `__custom`; nhiều trục cùng mã là thuộc tính biến thể ghép, giá trị nối " - " (#568; `__custom` không ghép); `value_map`: attributeValueId → mã lựa chọn của sàn, không có trên trục ghép. `version = 0` là bản chép từ ghép danh mục cũ chưa ai lưu lại (#400 A18, migration `*_chep-spec-lan-cuoi`); `PUT` spec luôn ra `version ≥ 1`. RLS.
 
 Khai ở `src/modules/channel/channel/repository/schema.ts` · module con `channel` · theo công ty (`company_id`)
 
@@ -714,6 +714,10 @@ Cột:
   Phiếu đầu kỳ đã ghi sổ, gian hàng đang chờ phân hàng: thoát chờ khi nhận `fulfillment.allocation_done` có `cause.documentId` trùng id này (Documents/21 §11.3, §18.6.11; Documents/19 `shops`). Giữ id vì `opening_stocktake_id` đã về null. Sự kiện do `settleOpeningStocktake` phát trong chính giao dịch thoát chờ kiểm kê nên không tới trước cột này; nhận trùng thì cột đã null, tự bị bỏ qua.
 - `orders_pulled_ok_at` timestamptz · null
   Giờ bắt đầu của lượt lấy đơn gần nhất chạy xong trọn (không lỗi, không còn trang), không lùi (#223). Mất uỷ quyền, chưa có mốc này hoặc mốc cũ hơn `ORDERS_STALE_MS` là "đơn chưa cập nhật": SKU có listing trên gian hàng này không được cập nhật tồn lên mọi gian hàng của công ty (`domain/shop.ts` `ordersStale`; Documents/19 `shops`, 21 §18.6.6).
+- `setup_draft` jsonb · null
+  Bản nháp thiết lập (#569, Documents/21 §18.7.5): lựa chọn từng SKU sàn, danh mục theo sản phẩm sàn, cách đẩy tồn, mốc xác nhận từng bước. Xoá khi hoàn tất thiết lập hoặc ngắt gian hàng. `POST /setup` chỉ đọc từ đây.
+- `setup_draft_version` integer · not null · mặc định `0`
+  Bộ đếm của nháp (`draftVersion`), dùng chung cho `PUT /setup/draft` và `POST sku-links`; tách khỏi `version` của gian hàng.
 - `created_at` timestamptz · not null · mặc định `now()`
 - `updated_at` timestamptz · not null · mặc định `now()`
 - `version` integer · not null · mặc định `1`
