@@ -1079,6 +1079,13 @@
       "when": 1795525991106,
       "tag": "20261124131311_ten-thuoc-tinh-20",
       "breakpoints": true
+    },
+    {
+      "idx": 154,
+      "version": "7",
+      "when": 1795535681542,
+      "tag": "20261124155441_cau-hinh-tai-khoan-ke-toan",
+      "breakpoints": true
     }
   ]
 }

@@ -3,7 +3,13 @@
 <!-- Sinh tự động bởi `npm run db:docs` từ db/migrations. Không sửa tay. -->
 
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
-Mới nhất: **V154**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+Mới nhất: **V155**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+
+## V155 · 24/11/2026 · cau-hinh-tai-khoan-ke-toan
+
+`db/migrations/20261124155441_cau-hinh-tai-khoan-ke-toan.sql` · sinh từ schema
+
+- enum `finance.config_kind`: + `account_map`
 
 ## V154 · 24/11/2026 · ten-thuoc-tinh-20
 
