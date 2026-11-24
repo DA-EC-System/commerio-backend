@@ -143,6 +143,7 @@ describe('syncTree', () => {
           addVariant: true,
           maxValueLength: null,
           maxAxisValues: null,
+          maxAxisNameLength: null,
         }),
       }),
     );

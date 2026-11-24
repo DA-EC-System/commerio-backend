@@ -137,8 +137,8 @@ export const attributes = catalogSchema.table(
     check('attributes_platform_kind', sql`${t.platformKind} in (${sql.raw(PLATFORM_KINDS.map((k) => `'${k}'`).join(', '))})`),
     // CHECK `attributes_platform_kind_tier` (platform_kind chỉ ở dòng nền tảng) thêm ở migration viết tay
     // `du-lieu-chung-chuyen`, sau khi gộp thuộc tính chuẩn của từng công ty vào dòng nền tảng.
-    // Tên trục tối đa 15 ký tự (Lazada `VARIATION_*`, Documents/21 mục 5.2).
-    check('attributes_name_length', sql`char_length(${t.name}) <= 15`),
+    // Tên thuộc tính tối đa 20 ký tự: giới hạn tên tự đặt nhỏ nhất của các sàn (TikTok 20), Documents/21 mục 5.2 (#572).
+    check('attributes_name_length', sql`char_length(${t.name}) <= 20`),
   ],
 );
 
