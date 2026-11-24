@@ -7,12 +7,11 @@ import { AppError } from '../../../../shared/errors/app-error.ts';
 import { type PriceRounding, roundingOf } from '../domain/price-filter.ts';
 import { holdsStock } from '../domain/shop.ts';
 import type { StockHeldReason } from '../domain/stock-to-push.ts';
-import type { ListingRow } from '../repository/listings.ts';
-import type { ShopRow } from '../repository/shops.ts';
 import { assertPushable, stockToPushView } from './listings.ts';
 import { evaluatePrices, shopPriceConfig } from './price-inputs.ts';
 import type { ProductPort } from './product-port.ts';
-import { type Blocker, type BlockItem, blockerScope } from './push-block.ts';
+import { checkVariant, loadPushContext } from './push-check.ts';
+import { type Blocker, blockerScope } from './push-block.ts';
 import { type Actor, ownShop } from './shops.ts';
 
 export interface PushPreviewRow {
@@ -30,27 +29,6 @@ export interface PushPreviewRow {
   netReceived: number | null;
   feePct: number | null;
   feeConfigId: string | null;
-}
-
-/** Kết quả kiểm một dòng, dạng đã thống nhất với be#564 (`checkVariant`). */
-interface CheckedRow {
-  items: BlockItem[];
-  /** Giá lần đăng sẽ gửi: giá gõ tay, giá bộ lọc lần đầu (`calc`), hoặc giá đang bán; null khi chưa có. */
-  price: { value: string | null; calc?: { rawPrice: string; roundedPrice: string } };
-  existing: ListingRow | undefined;
-}
-
-/**
- * Chờ be#564 lát 3: thay bằng `loadPushContext(port, shop, ids, listPrices)` rồi `checkVariant(ctx, id)` từng dòng. Chưa có thì
- * route trả 501, không tự viết lại luật chặn ở đây (một luật, một hàm: 21 §18.10).
- */
-async function checkRows(
-  _port: ProductPort,
-  _shop: ShopRow,
-  _ids: readonly string[],
-  _listPrices: Readonly<Record<string, number>> | undefined,
-): Promise<Map<string, CheckedRow>> {
-  throw new AppError(501, 'not_implemented', 'Kiểm trước khi đăng chờ hàm readiness chung (commerio-backend#564)');
 }
 
 /** `(giá − thực nhận) / giá`, bốn chữ số thập phân. */
@@ -71,7 +49,8 @@ export async function previewPush(
       throw new AppError(409, 'shop_not_connected', 'Gian hàng chưa kết nối hoặc cần kết nối lại', { current: shop.status });
     }
     const ids = [...new Set(input.variantIds)];
-    const variants = new Map((await port.variants(ids)).map((v) => [v.id, v]));
+    const pushCtx = await loadPushContext(port, shop, ids, input.listPrices);
+    const { variants } = pushCtx;
     // Biến thể không có hay của công ty khác: không có tên, SKU để hiện dòng (21 §18.11, plan G2). Lưu trữ thì vẫn có dòng.
     const errors: Record<string, string> = {};
     input.variantIds.forEach((id, i) => {
@@ -79,7 +58,7 @@ export async function previewPush(
     });
     if (Object.keys(errors).length) throw new AppError(422, 'validation_failed', 'Dữ liệu không hợp lệ', { errors });
 
-    const checked = await checkRows(port, shop, ids, input.listPrices);
+    const checked = new Map(ids.map((id) => [id, checkVariant(pushCtx, id)]));
     const config = await shopPriceConfig(shop.id);
     const prices = new Map(ids.flatMap((id) => (checked.get(id)?.price.value ? [[id, checked.get(id)!.price.value!] as const] : [])));
     const { hasFee, results } = await evaluatePrices(shop.id, prices);
