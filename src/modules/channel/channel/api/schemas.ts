@@ -708,11 +708,13 @@ export const RemoteProductList = z
         none: z.number().int().nullable(),
         drifted: z.number().int(),
         matched: z.number().int(),
+        platformStockSum: z.number().int().nullable(),
+        availableSum: z.number().int().nullable(),
       })
       .strict()
       .meta({
         description:
-          'Số SKU khớp cả bộ lọc (`status`, `search`, `decision`), không theo trang. `create`…`none`: theo nháp, chỉ gian hàng `connecting` và người gọi có `channel.shop.connect`, còn lại null. `drifted`/`matched`: SKU có `available` (dòng `create` tính 0) khác/bằng `platformStock`',
+          'Số SKU khớp cả bộ lọc (`status`, `search`, `decision`), không theo trang. `create`…`none`: theo nháp, chỉ gian hàng `connecting` và người gọi có `channel.shop.connect`, còn lại null. `drifted`/`matched`: SKU có `available` (dòng `create` tính 0) khác/bằng `platformStock`. `platformStockSum`: tổng `platformStock` của mọi SKU khớp lọc; `availableSum`: tổng `available` của các SKU có `available` (cùng tập với `drifted` + `matched`); cả hai null khi không có SKU nào',
       }),
     syncedAt: z.iso.datetime({ offset: true }).nullable(),
     refresh: RemoteSkuRefresh,

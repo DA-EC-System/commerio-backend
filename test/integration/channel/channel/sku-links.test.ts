@@ -296,12 +296,12 @@ describe('GET remote-products: totals, available, externalCategoryPath (§18.12)
     const page = await productsOf(shopId, { status: 'all', search: t, pageSize: 1 });
     const byId = new Map(page.items[0]!.skus.map((s) => [s.externalSkuId, s]));
     expect([0, 1, 2].map((i) => byId.get(skuIds[i]!)!.available)).toEqual([0, 0, null]);
-    expect(page.totals).toEqual({ create: null, link: null, skip: null, unmanaged: null, none: null, drifted: 1, matched: 1 });
+    expect(page.totals).toEqual({ create: null, link: null, skip: null, unmanaged: null, none: null, drifted: 1, matched: 1, platformStockSum: 6, availableSum: 0 });
 
     // Lọc chỉ SKU chưa liên kết: không SKU nào có available, hai số lệch/khớp về 0. `decision` bị bỏ qua ở gian hàng đang bán.
     const unlinked = await productsOf(shopId, { status: 'unlinked', search: t, decision: 'create' });
     expect(unlinked.items[0]!.skus.map((s) => s.externalSkuId)).toEqual([skuIds[2]]);
-    expect(unlinked.totals).toMatchObject({ drifted: 0, matched: 0, create: null });
+    expect(unlinked.totals).toMatchObject({ drifted: 0, matched: 0, create: null, platformStockSum: 3, availableSum: null });
   });
 
   it('externalCategoryPath tra cây category đã đồng bộ; category chưa có trong cây thì null', async () => {
@@ -354,16 +354,16 @@ describe('GET remote-products: totals, available, externalCategoryPath (§18.12)
     ]);
     expect(skuIds.map((id) => byId.get(id)!.available)).toEqual([0, null, null, null]);
     // Dòng link: tồn sàn 3, có thể bán 0; dòng create tính có thể bán 0: cả hai lệch.
-    expect(all.totals).toEqual({ create: 1, link: 1, skip: 1, unmanaged: 0, none: 1, drifted: 2, matched: 0 });
+    expect(all.totals).toEqual({ create: 1, link: 1, skip: 1, unmanaged: 0, none: 1, drifted: 2, matched: 0, platformStockSum: 12, availableSum: 0 });
 
     const created = await productsOf(shop, { status: 'all', search: t, decision: 'create' });
     expect(created.items[0]!.skus.map((s) => s.externalSkuId)).toEqual([skuIds[1]]);
-    expect(created.totals).toEqual({ create: 1, link: 0, skip: 0, unmanaged: 0, none: 0, drifted: 1, matched: 0 });
+    expect(created.totals).toEqual({ create: 1, link: 0, skip: 0, unmanaged: 0, none: 0, drifted: 1, matched: 0, platformStockSum: 3, availableSum: 0 });
     const none = await productsOf(shop, { status: 'all', search: t, decision: 'none' });
     expect(none.items[0]!.skus.map((s) => s.externalSkuId)).toEqual([skuIds[3]]);
 
     const sale = await productsOf(shop, { status: 'all', search: t, decision: 'create' }, saleToken);
     expect(sale.items[0]!.skus.map((s) => [s.decision, s.available])).toEqual(skuIds.map(() => [null, null]));
-    expect(sale.totals).toEqual({ create: null, link: null, skip: null, unmanaged: null, none: null, drifted: 0, matched: 0 });
+    expect(sale.totals).toEqual({ create: null, link: null, skip: null, unmanaged: null, none: null, drifted: 0, matched: 0, platformStockSum: 12, availableSum: null });
   });
 });

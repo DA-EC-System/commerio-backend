@@ -95,6 +95,10 @@ export interface RemoteProductsTotals {
   none: number | null;
   drifted: number;
   matched: number;
+  /** Tổng tồn trên sàn của mọi SKU khớp lọc; null khi không có SKU nào. */
+  platformStockSum: number | null;
+  /** Tổng số có thể bán ở Commerio của các SKU có `available` (dòng `create` tính 0); null khi không SKU nào có. */
+  availableSum: number | null;
 }
 
 /** `availableOf` theo lô để số tham số của câu SQL không vượt giới hạn của PostgreSQL. */
@@ -155,14 +159,18 @@ export async function remoteProducts(
       return v ? (available.get(v) ?? null) : null;
     };
     const totals: RemoteProductsTotals = draft
-      ? { create: 0, link: 0, skip: 0, unmanaged: 0, none: 0, drifted: 0, matched: 0 }
-      : { create: null, link: null, skip: null, unmanaged: null, none: null, drifted: 0, matched: 0 };
+      ? { create: 0, link: 0, skip: 0, unmanaged: 0, none: 0, drifted: 0, matched: 0, platformStockSum: null, availableSum: null }
+      : { create: null, link: null, skip: null, unmanaged: null, none: null, drifted: 0, matched: 0, platformStockSum: null, availableSum: null };
     for (const r of stock) {
       const action = draft?.decisions.get(r.externalSkuId)?.action;
       if (draft) totals[action ?? 'none'] = (totals[action ?? 'none'] ?? 0) + 1;
       // Dòng `create` chưa có SKU kho: tính có thể bán 0 như FE.
       const n = availableOfSku(r.externalSkuId) ?? (action === 'create' && !variantOf.get(r.externalSkuId) ? 0 : null);
-      if (n !== null) totals[n === r.platformStock ? 'matched' : 'drifted'] += 1;
+      totals.platformStockSum = (totals.platformStockSum ?? 0) + r.platformStock;
+      if (n !== null) {
+        totals[n === r.platformStock ? 'matched' : 'drifted'] += 1;
+        totals.availableSum = (totals.availableSum ?? 0) + n;
+      }
     }
 
     const base = {
