@@ -392,11 +392,48 @@ describe('POST /setup { draftVersion }: hoàn tất từ nháp', () => {
         [s.shopId],
       )
     ).rows;
+    // CEO tự duyệt được (công ty một người): listing không quản tồn có hiệu lực ngay, người duyệt là người thiết lập.
     expect(listings).toEqual([
       { external_sku_id: 'sku-1', variant_id: v1.id, mode: 'mapped', status: 'live' },
       { external_sku_id: 'sku-2', variant_id: null, mode: 'unmanaged', status: 'live' },
     ]);
+    const approved = (await testPool().query("select approved_by, pending_mode from channel.listings where shop_id = $1 and external_sku_id = 'sku-2'", [s.shopId])).rows[0];
+    expect(approved).toEqual({ approved_by: expect.any(String), pending_mode: null });
     expect(await draftRow(s.shopId)).toEqual({ setup_draft: null, setup_draft_version: 0 });
+  });
+});
+
+describe('POST /setup { draftVersion }: không quản tồn theo luật hai người', () => {
+  it('người không tự duyệt được (Admin) hoàn tất: listing không quản tồn chỉ ghi yêu cầu chờ CEO duyệt', async () => {
+    const s = await connectingShop();
+    const admin = await addMember(s.c.companyId, 'admin');
+    const decided = await s.links(
+      {
+        draftVersion: 0,
+        items: [
+          { externalSkuId: 'sku-1', action: 'skip' },
+          { externalSkuId: 'sku-2', action: 'unmanaged' },
+          { externalSkuId: 'sku-3', action: 'skip' },
+          { externalSkuId: 'sku-4', action: 'skip' },
+        ],
+      },
+      admin.token,
+    );
+    expect(decided.status).toBe(200);
+    const one = await s.put({ confirm: 'link_skus', draftVersion: decided.body.draftVersion }, admin.token);
+    const three = await s.put({ openingStock: 'push', returnWindowDays: 7, confirm: 'stock_sync', draftVersion: one.body.draftVersion }, admin.token);
+    const res = await request(testApp())
+      .post(`/api/v1/channel/shops/${s.shopId}/setup`)
+      .set('Authorization', `Bearer ${admin.token}`)
+      .send({ draftVersion: three.body.draftVersion });
+    expect(res.status).toBe(200);
+    const row = (
+      await testPool().query(
+        "select approved_by, pending_mode, pending_requested_by, mapping_self_approved from channel.listings where shop_id = $1 and external_sku_id = 'sku-2'",
+        [s.shopId],
+      )
+    ).rows[0];
+    expect(row).toEqual({ approved_by: null, pending_mode: 'unmanaged', pending_requested_by: admin.accountId, mapping_self_approved: false });
   });
 });
 

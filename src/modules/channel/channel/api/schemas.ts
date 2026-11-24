@@ -622,7 +622,10 @@ export const RemoteProductsQuery = z.object({
   decision: z
     .enum(['create', 'link', 'skip', 'unmanaged', 'none'])
     .optional()
-    .meta({ description: 'Chỉ gian hàng `connecting` (lọc theo nháp thiết lập, be#569); gian hàng khác bỏ qua' }),
+    .meta({
+      description:
+        'Chỉ gian hàng `connecting` và người gọi có `channel.shop.connect`: lọc theo lựa chọn trong nháp thiết lập (`none`: SKU chưa có lựa chọn); còn lại bỏ qua',
+    }),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(50, 'Tối đa 50 sản phẩm mỗi trang').default(20),
 });
@@ -635,6 +638,10 @@ const RemoteSkuRowSchema = z
     titleEn: z.string().nullable().meta({ description: 'Tên tiếng Anh; null khi sàn không có (#396)' }),
     variantLabel: z.string().nullable().meta({ description: 'Nhãn biến thể sàn trả (giá trị thuộc tính bán, vd "Đỏ, M"); null khi sàn không có' }),
     platformStock: z.number().int().meta({ description: 'Tồn trên sàn theo bản sao' }),
+    available: z.number().int().nullable().meta({
+      description:
+        'Số có thể bán của biến thể dòng đang trỏ tới: `matchedVariantId`, hoặc `decision.variantId` khi nháp chọn `link`; dòng `create`, `skip`, `unmanaged`, chưa quyết thì null (FE coi dòng `create` là 0)',
+    }),
     matchedVariantId: z.uuid().nullable(),
     mode: z.enum(['mapped', 'unmanaged']).nullable().meta({ description: 'Ghép hiện hành; null khi chưa ghép (kể cả đang chờ CEO duyệt "không quản tồn")' }),
     listingId: z.uuid().nullable().meta({ description: 'Listing chưa gỡ của SKU sàn này (kể cả dòng chỉ chờ duyệt); CEO dùng để gọi `mapping/approve|reject`' }),
@@ -659,7 +666,10 @@ const RemoteSkuRowSchema = z
       .object({ action: z.enum(['link', 'create', 'skip', 'unmanaged']), variantId: z.uuid().nullable(), groupId: z.uuid().nullable() })
       .strict()
       .nullable()
-      .meta({ description: 'Lựa chọn trong nháp thiết lập; chỉ gian hàng `connecting`' }),
+      .meta({
+        description:
+          'Lựa chọn trong nháp thiết lập; chỉ gian hàng `connecting` và người gọi có `channel.shop.connect`, còn lại null. `groupId`: danh mục nháp chọn cho sản phẩm sàn, chỉ ở dòng `create`',
+      }),
   })
   .strict()
   .meta({ id: 'RemoteSkuRow' });
@@ -674,6 +684,9 @@ export const RemoteProductList = z
           titleEn: z.string().nullable(),
           imageUrl: z.string().nullable().meta({ description: 'Ảnh sản phẩm trên sàn; null khi sàn chưa trả' }),
           externalCategoryId: z.string().nullable().meta({ description: 'Category lá trên sàn; null khi sàn chưa trả' }),
+          externalCategoryPath: z.string().nullable().meta({
+            description: 'Đường dẫn category tra trong cây đã đồng bộ, không gọi sàn; null khi chưa có category hoặc category chưa có trong cây',
+          }),
           suggestedGroupId: z.uuid().nullable().meta({ description: 'Danh mục gợi ý; null tới khi có bảng ánh xạ category (be#569)' }),
           skus: z.array(RemoteSkuRowSchema),
         })
@@ -687,6 +700,23 @@ export const RemoteProductList = z
       .object({ unlinked: z.number().int(), linked: z.number().int(), pending: z.number().int() })
       .strict()
       .meta({ description: 'Số SKU của cả gian hàng theo trạng thái, không theo `search`' }),
+    totals: z
+      .object({
+        create: z.number().int().nullable(),
+        link: z.number().int().nullable(),
+        skip: z.number().int().nullable(),
+        unmanaged: z.number().int().nullable(),
+        none: z.number().int().nullable(),
+        drifted: z.number().int(),
+        matched: z.number().int(),
+        platformStockSum: z.number().int().nullable(),
+        availableSum: z.number().int().nullable(),
+      })
+      .strict()
+      .meta({
+        description:
+          'Số SKU khớp cả bộ lọc (`status`, `search`, `decision`), không theo trang. `create`…`none`: theo nháp, chỉ gian hàng `connecting` và người gọi có `channel.shop.connect`, còn lại null. `drifted`/`matched`: SKU có `available` (dòng `create` tính 0) khác/bằng `platformStock`. `platformStockSum`: tổng `platformStock` của mọi SKU khớp lọc; `availableSum`: tổng `available` của các SKU có `available` (cùng tập với `drifted` + `matched`); cả hai null khi không có SKU nào',
+      }),
     syncedAt: z.iso.datetime({ offset: true }).nullable(),
     refresh: RemoteSkuRefresh,
     nameMatchSkipped: z.boolean().meta({ description: 'Bỏ gợi ý theo tên vì quá nhiều cặp phải so hoặc quá giờ' }),

@@ -3,7 +3,7 @@
 // của công ty buộc kiểm kê đầu kỳ (`stocktake`): lập phiếu qua cổng inventory, gian hàng ở chế độ chờ kiểm kê tới khi
 // phiếu ghi sổ. Gọi sàn ngoài giao dịch.
 import { Decimal } from 'decimal.js';
-import { assertTransition, recordTransition } from '../../../core/index.ts';
+import { assertTransition, canSelfApprove, recordTransition } from '../../../core/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { moduleOfPermission } from '../../../../shared/auth/company-access.ts';
 import { pgError } from '../../../../shared/db/pg-error.ts';
@@ -334,211 +334,37 @@ function pickListings(
   input.decisions.forEach((d, i) => {
     const s = byExternal.get(d.externalSkuId);
     if (d.unmanaged) {
-      // Không quản tồn (§18.7.5 `unmanaged`): listing `unmanaged`, không biến thể.
-      const error = !s ? 'SKU sàn không có trong gợi ý' : d.variantId !== null ? 'Không quản tồn thì không chọn biến thể' : seenSkus.has(d.externalSkuId) ? 'SKU sàn bị chọn hai lần' : null;
-      seenSkus.add(d.externalSkuId);
-      if (error) errors[`decisions.${i}`] = error;
-      else unmanaged.push(s!);
-      return;
-    }
-    if (d.create) {
-      const error = !s
-        ? 'SKU sàn không có trong gợi ý'
-        : d.variantId !== null
-          ? 'Tạo SKU kho thì không chọn biến thể'
-          : seenSkus.has(d.externalSkuId)
-            ? 'SKU sàn bị chọn hai lần'
-            : !s.canCreate
-              ? CANNOT_CREATE[s.cannotCreateReason!]
-              : seenCreateSkus.has(s.sellerSku)
-                ? 'Hai SKU sàn cùng SKU người bán'
-                : null;
-      seenSkus.add(d.externalSkuId);
-      if (error) errors[`decisions.${i}`] = error;
-      else {
-        seenCreateSkus.add(s!.sellerSku);
-        toCreate.push({ index: i, suggestion: s! });
-      }
-      return;
-    }
-    const v = d.variantId === null ? undefined : byId.get(d.variantId);
-    const error = !s
-      ? 'SKU sàn không có trong gợi ý'
-      : d.variantId !== null && !s.sellerSku
-        ? 'SKU sàn chưa có SKU người bán, đặt trên sàn trước rồi liên kết'
-        : seenSkus.has(d.externalSkuId)
-        ? 'SKU sàn bị chọn hai lần'
-        : d.variantId === null
-          ? null
-          : !v
-            ? 'Biến thể không thuộc công ty'
-            : v.archived
-              ? 'Biến thể đã lưu trữ'
-              : listed.has(v.id)
-                ? 'Variant đã liên kết listing khác của gian hàng này'
-                : seenVariants.has(v.id)
-                  ? 'Biến thể đã chọn cho SKU sàn khác'
-                  : null;
-    seenSkus.add(d.externalSkuId);
-    if (error) errors[`decisions.${i}`] = error;
-    else if (s && v) {
-      seenVariants.add(v.id);
-      picked.push({ ...s, variantId: v.id });
-    }
-  });
-  if (toCreate.length && !input.createGroupId && !input.createGroups) errors.createGroupId = 'Chọn danh mục sản phẩm cho sản phẩm tạo từ sàn';
-  return picked;
-}
-
-/** Công ty chưa có gian hàng nào xong thiết lập (có mốc, không chờ kiểm kê) thì gian hàng này là đầu tiên (#198 A1). */
-export async function companySetupState(actor: Actor, shopId: string) {
-  const state = await withCompany(actor.companyId, () => setupStateOfCompany(shopId));
-  return { firstShopOfCompany: !state.hasSetUpShop, awaitingStocktake: state.awaitingStocktake };
-}
-
-export const awaitingError = (number: string) => `Công ty đang chờ phiếu kiểm kho đầu kỳ ${number} hoàn thành`;
-
-export async function setupPreview(port: ProductPort, actor: Actor, shopId: string) {
-  const { offered, nameMatchSkipped } = await suggestions(port, actor, shopId);
-  const items = offered.map(({ externalProductId: _p, sellerSku: _s, productName: _n, variantLabel: _l, price: _c, ...s }) => s);
-  const { firstShopOfCompany } = await companySetupState(actor, shopId);
-  const unmatchedRemote = items.filter((s) => s.match === 'none').length;
-  // Nháp thiết lập (#569, §18.7.5): `draft` null và `draftVersion` 0 khi chưa có; `changed` so SKU sàn lúc xác nhận với bản vừa đọc.
-  const saved = await withCompany(actor.companyId, () => readSetupDraft(shopId));
-  const draft = saved?.draft ?? null;
-  return {
-    suggestions: items,
-    unmatchedRemote,
-    nameMatchSkipped,
-    proposedCutoffAt: new Date(),
-    firstShopOfCompany,
-    draft: draft ? { ...draft, changed: changedOf(draft.baseline, items.map((s) => s.externalSkuId)) } : null,
-    draftVersion: saved?.version ?? 0,
-  };
-}
-
-type LegacySetupInput = SetupChoice & { openingStock: 'push' | 'stocktake'; returnWindowDays?: number | null | undefined };
-
-/** Hoàn tất từ nháp (#569, §18.7.5 `POST /setup { draftVersion }`): đủ ba mốc, đúng `draftVersion`, rồi chạy luật trên nội dung nháp. */
-async function inputOfDraft(actor: Actor, shopId: string, draftVersion: number): Promise<LegacySetupInput> {
-  const saved = await withCompany(actor.companyId, async () => {
-    await ownShop(shopId);
-    return readSetupDraft(shopId);
-  });
-  if (!saved) throw new AppError(404, 'not_found', 'Không tìm thấy gian hàng');
-  if (saved.status !== 'connecting') {
-    throw new AppError(409, 'invalid_transition', 'Gian hàng không ở bước thiết lập', { current: saved.status });
-  }
-  const missing = saved.draft ? missingSteps(saved.draft) : (['link_skus', 'assign_groups', 'stock_sync'] as const);
-  if (!saved.draft || missing.length) {
-    throw new AppError(409, 'setup_draft_incomplete', 'Chưa xác nhận đủ các bước thiết lập', { missing });
-  }
-  if (draftVersion !== saved.version) {
-    throw new AppError(409, 'version_conflict', 'Bản nháp thiết lập vừa được cập nhật, tải lại', {
-      current: { draft: saved.draft, draftVersion: saved.version },
-    });
-  }
-  const draft: SetupDraft = saved.draft;
-  return {
-    decisions: draft.decisions.map((d: SetupDecision) => ({
-      externalSkuId: d.externalSkuId,
-      variantId: d.action === 'link' ? d.variantId : null,
-      ...(d.action === 'create' ? { create: true } : {}),
-      ...(d.action === 'unmanaged' ? { unmanaged: true } : {}),
-    })),
-    createGroups: new Map(draft.createGroups.map((g) => [g.externalProductId, g.groupId])),
-    openingStock: draft.openingStock!,
-    returnWindowDays: draft.returnWindowDays,
-  };
-}
-
-/** `POST /setup`: có `draftVersion` thì hoàn tất từ nháp, không thì body cũ (bỏ ở PR sau của #569). */
-export async function finishSetup(
-  port: ProductPort,
-  actor: Actor,
-  shopId: string,
-  body: Partial<LegacySetupInput> & { draftVersion?: number | undefined },
-) {
-  return finishSetupWith(port, actor, shopId, body.draftVersion !== undefined ? await inputOfDraft(actor, shopId, body.draftVersion) : (body as LegacySetupInput));
-}
-
-async function finishSetupWith(
-  port: ProductPort,
-  actor: Actor,
-  shopId: string,
-  input: LegacySetupInput,
-): Promise<{ shop: Shop; matched: number; created: number; stocktakeNumber: string | null }> {
-  const wantsCreate = !!input.decisions?.some((d) => d.create);
-  // Tạo sản phẩm là việc của catalog (#500): thiếu quyền thì 403, không vòng qua quyền catalog.
-  if (wantsCreate && !canManageProducts(actor)) throw new AppError(403, 'forbidden', 'Bạn không có quyền tạo sản phẩm');
-  // `decisions` không dùng tiêu đề hay gợi ý theo tên: không đọc nhãn biến thể (đỡ tới 50 lời gọi sàn, #282 review chéo I-2),
-  // trừ khi có dòng tạo SKU kho: nhãn là giá trị trục của biến thể mới (#500).
-  const candidates = await suggestions(port, actor, shopId, !input.decisions || wantsCreate);
-  const { returnWindow } = capabilitiesOf((await withCompany(actor.companyId, () => ownShop(shopId))).platform);
-  const { firstShopOfCompany, awaitingStocktake } = await companySetupState(actor, shopId);
-  const errors: Record<string, string> = {};
-  if (awaitingStocktake) errors.openingStock = awaitingError(awaitingStocktake);
-  else if (firstShopOfCompany && input.openingStock === 'push') errors.openingStock = 'Gian hàng đầu tiên của công ty phải kiểm kê đầu kỳ';
-  const toCreate: { index: number; suggestion: Suggestion }[] = [];
-  const unmanaged: Suggestion[] = [];
-  const picked = pickListings(candidates, input, errors, toCreate, unmanaged);
-  if (toCreate.length && !port.createFromPlatform) errors.decisions = 'Chưa tạo được SKU kho từ SKU sàn';
-  const returnWindowInvalid = returnWindowError(returnWindow, input.returnWindowDays);
-  if (returnWindowInvalid) errors.returnWindowDays = returnWindowInvalid;
-  if (Object.keys(errors).length) throw new AppError(422, 'validation_failed', 'Dữ liệu không hợp lệ', { errors });
-
-  const stocktake = await withCompany(actor.companyId, async () => {
-    // Kiểm lại dưới khoá của công ty: thiết lập của gian hàng khác (vd vừa vào chế độ chờ kiểm kê) chạy song song thì
-    // lần sau thấy kết quả của lần trước (A12, #198 diff-review N2). Index một phần vẫn chặn hai phiếu.
-    await lockCompanySetup(actor.companyId);
-    const now = await setupStateOfCompany(shopId);
-    const raced = now.awaitingStocktake
-      ? awaitingError(now.awaitingStocktake)
-      : !now.hasSetUpShop && input.openingStock === 'push'
-        ? 'Gian hàng đầu tiên của công ty phải kiểm kê đầu kỳ'
-        : null;
-    if (raced) throw new AppError(422, 'validation_failed', 'Dữ liệu không hợp lệ', { errors: { openingStock: raced } });
-    const { shop } = await shopSession(shopId);
-    const { to } = assertTransition(shopMachine, shop.status, 'finish_setup', { actor });
-    if (toCreate.length) {
-      picked.push(...(await createFromRemote(port, actor, shop, (productId) => input.createGroups?.get(productId) ?? input.createGroupId, toCreate)));
-    }
-    const matched: string[] = [];
-    for (const p of picked) {
-      const row = await insertListing({
-        companyId: actor.companyId,
-        shopId: shop.id,
-        variantId: p.variantId,
-        externalSkuId: p.externalSkuId,
-        externalProductId: p.externalProductId,
-        sellerSku: p.sellerSku,
-        status: 'live',
-        platformStock: p.platformStock,
-        contentSource: 'platform',
-        // Mốc tên trên sàn (#396): tên vừa đọc, cùng lượt đã lưu vào bản sao; tên tiếng Anh lấy ở lần ghi bản sao sau.
-        remoteTitleAtMatch: p.title,
-      });
-      await recordTransition({ entityType: 'listings', entityId: row.id, from: null, to: 'live', action: 'match', actorId: actor.accountId });
-      matched.push(row.id);
-    }
-    // Không quản tồn (§18.7.5 `unmanaged`): listing `unmanaged` đã duyệt ngay, người chọn khi thiết lập là người duyệt.
+      // Không quản tồn (§18.7.5 `unmanaged`): cùng luật hai người với ghép tay (`matchListing`): người tự duyệt được (CEO,
+    // công ty một người) thì listing `unmanaged` có hiệu lực ngay và ghi nhật ký tự duyệt; người khác thì ghi yêu cầu chờ CEO
+    // duyệt (`pendingMode`), listing chưa vào bước tính tồn.
+    const selfOk = unmanaged.length ? await canSelfApprove(actor.accountId) : false;
     for (const s of unmanaged) {
-      const row = await insertListing({
+      const base = {
         companyId: actor.companyId,
         shopId: shop.id,
-        mode: 'unmanaged',
+        mode: 'unmanaged' as const,
         externalSkuId: s.externalSkuId,
         externalProductId: s.externalProductId,
         sellerSku: s.sellerSku,
-        status: 'live',
+        status: 'live' as const,
         platformStock: s.platformStock,
-        contentSource: 'platform',
-        mappingRequestedBy: actor.accountId,
-        approvedBy: actor.accountId,
-        mappingSelfApproved: true,
+        contentSource: 'platform' as const,
         remoteTitleAtMatch: s.title,
+      };
+      const row = await insertListing(
+        selfOk
+          ? { ...base, mappingRequestedBy: actor.accountId, approvedBy: actor.accountId, mappingSelfApproved: true }
+          : { ...base, pendingMode: 'unmanaged', pendingRequestedBy: actor.accountId, pendingRequestedAt: new Date() },
+      );
+      await recordTransition({
+        entityType: 'listings',
+        entityId: row.id,
+        from: null,
+        to: 'live',
+        action: selfOk ? 'match' : 'request_mapping',
+        actorId: actor.accountId,
+        ...(selfOk ? { selfApproved: true, audit: { entityType: 'channel.listings', label: s.sellerSku || s.externalSkuId } } : {}),
       });
-      await recordTransition({ entityType: 'listings', entityId: row.id, from: null, to: 'live', action: 'match', actorId: actor.accountId });
     }
     // Bản tạm của cổng (chưa có #245) ném 501: cả giao dịch rollback, gian hàng vẫn `connecting` (Documents/21 §18.7.9).
     const doc =

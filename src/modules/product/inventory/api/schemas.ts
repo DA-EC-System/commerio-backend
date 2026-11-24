@@ -153,6 +153,8 @@ const DocLineInput = z.object({
   quantity: qty,
   // Kiểm kê: `null` (hay bỏ trống) là chưa đếm; gửi duyệt, ghi sổ khi còn dòng chưa đếm thì 422 (#569, Documents/21 §18.6.2)
   counted: qty.nullable(),
+  // Kiểm kê đầu kỳ: nguồn số đếm (#569, Documents/21 §18.6.2); phiếu khác bỏ qua
+  countSource: z.enum(['manual', 'platform'], 'Nguồn số đếm là manual hoặc platform').nullable().optional(),
   scanned: qty,
   resell: qty,
   damaged: qty,
@@ -216,6 +218,16 @@ const StockDocLine = z.object({
   quantity: z.int().meta({ description: 'Kiểm kê: Δ = đếm − sổ; kiểm hàng về: số quét; phiếu khác: số lượng' }),
   bookQty: z.int().optional(),
   counted: z.int().nullable().optional().meta({ description: 'Kiểm kê: `null` là chưa đếm' }),
+  platformStock: z
+    .int()
+    .nullable()
+    .optional()
+    .meta({ description: 'Kiểm kê đầu kỳ: tồn trên sàn ở gian hàng của phiếu (bản sao SKU sàn), chỉ tham khảo; phiếu khác `null`' }),
+  countSource: z
+    .enum(['manual', 'platform'])
+    .nullable()
+    .optional()
+    .meta({ description: 'Kiểm kê đầu kỳ: nguồn số đếm; `null` khi chưa đếm hoặc phiếu khác' }),
   expected: z.int().optional(),
   resell: z.int().optional(),
   damaged: z.int().optional(),

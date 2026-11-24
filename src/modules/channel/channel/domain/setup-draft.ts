@@ -176,4 +176,26 @@ export function reconcileWithRemote(draft: SetupDraft, remoteSkuIds: readonly st
   let next = pruneCreateGroups({ ...draft, decisions: draft.decisions.filter((d) => present.has(d.externalSkuId)) }, productOf);
   if (changedOf(draft.baseline, remoteSkuIds)) next = { ...clearFrom(next, 'link_skus'), baseline: draft.baseline };
   return next;
+||||||| 3324eddb
+
+export type DraftDecisionAction = SetupDecision['action'];
+const DECISION_ACTIONS: readonly string[] = ['link', 'create', 'skip', 'unmanaged'];
+
+/**
+ * Lựa chọn từng SKU sàn và danh mục của sản phẩm sàn trong nháp (§18.12 `decision`, `totals`); nháp chưa có hoặc dòng hỏng
+ * hình thì bỏ dòng đó (đọc an toàn như `draftConfirmedOf`).
+ */
+export function draftDecisionsOf(raw: unknown): { decisions: Map<string, SetupDecision>; groups: Map<string, string> } {
+  const d = raw as { decisions?: unknown; createGroups?: unknown } | null;
+  const decisions = new Map<string, SetupDecision>();
+  for (const x of Array.isArray(d?.decisions) ? (d.decisions as Record<string, unknown>[]) : []) {
+    if (typeof x?.externalSkuId !== 'string' || typeof x.action !== 'string' || !DECISION_ACTIONS.includes(x.action)) continue;
+    const variantId = typeof x.variantId === 'string' ? x.variantId : null;
+    decisions.set(x.externalSkuId, { externalSkuId: x.externalSkuId, action: x.action as DraftDecisionAction, variantId });
+  }
+  const groups = new Map<string, string>();
+  for (const g of Array.isArray(d?.createGroups) ? (d.createGroups as Record<string, unknown>[]) : []) {
+    if (typeof g?.externalProductId === 'string' && typeof g.groupId === 'string') groups.set(g.externalProductId, g.groupId);
+  }
+  return { decisions, groups };
 }
