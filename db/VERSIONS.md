@@ -3,7 +3,13 @@
 <!-- Sinh tự động bởi `npm run db:docs` từ db/migrations. Không sửa tay. -->
 
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
-Mới nhất: **V150**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+Mới nhất: **V151**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
+
+## V151 · 24/11/2026 · phi-moi-mon
+
+`db/migrations/20261124115024_phi-moi-mon.sql` · sinh từ schema
+
+- enum `finance.ledger_kind`: + `fee_per_item`
 
 ## V150 · 24/11/2026 · lien-ket-sku-565
 

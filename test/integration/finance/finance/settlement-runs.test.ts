@@ -124,6 +124,28 @@ describe('kéo quyết toán (§21.3)', () => {
     expect((await get(s.ceo, '/settlement-runs')).body.total).toBe(2);
   });
 
+  it('phí mỗi món ước tính không có khoản thực tế cùng loại: kiện đã quyết toán thì dòng đó coi như đã thay (#381)', async () => {
+    const s = await setup();
+    await testPool().query(
+      `update finance.config_versions set payload = payload || '{"perItemFee": 3000}' where company_id = $1 and kind = 'fee'`,
+      [s.companyId],
+    );
+    await deliver(s);
+    const perItem = await testPool().query(
+      `select id, amount from finance.ledger_entries where order_id = $1 and kind = 'fee_per_item'`,
+      [s.order.orderId],
+    );
+    expect(perItem.rows).toEqual([{ id: expect.any(String), amount: '-6000.00' }]);
+    expect((await get(s.ceo, `/orders/${s.order.orderId}/profit`)).body).toMatchObject({ net: 236520, estimated: true });
+
+    await runSettlement(fakeSource(() => settlementOf('P', '-5160.00')), s.companyId, null, s.shopId);
+    const paired = await testPool().query('select 1 from finance.ledger_replacements where estimate_id = $1', [perItem.rows[0].id]);
+    expect(paired.rowCount).toBe(0);
+    expect((await get(s.ceo, `/orders/${s.order.orderId}/profit`)).body).toMatchObject({ net: 242520, estimated: false });
+    const replaced = await get(s.ceo, `/ledger?orderId=${s.order.orderId}&filter=replaced`);
+    expect(replaced.body.items.map((e: { kind: string }) => e.kind)).toContain('fee_per_item');
+  });
+
   it('sàn thu phí của đơn đã huỷ, chưa giao kiện nào: mismatch (cancelled_charged)', async () => {
     const s = await setup();
     await testPool().query(`update "order".orders set status = 'cancelled' where id = $1`, [s.order.orderId]);
