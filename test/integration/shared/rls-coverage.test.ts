@@ -61,6 +61,7 @@ const EXPECTED_PRIVILEGES: Record<string, readonly Privilege[]> = {
   // Danh mục sàn dùng chung (Documents/19 mục 3.3): dòng do migration chèn, app chỉ đọc.
   'channel.marketplaces': ['SELECT'],
   'channel.platform_category_attributes': ['SELECT'],
+  'channel.platform_category_group_maps': ['SELECT'],
   // Hàng việc nền (#102): request chỉ gửi việc trong giao dịch; mọi bảng khác của pgboss chỉ worker (role chủ bảng) chạm.
   'pgboss.queue': ['SELECT'],
   'pgboss.job_common': ['INSERT'],

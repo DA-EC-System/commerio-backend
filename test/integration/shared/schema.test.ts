@@ -102,6 +102,7 @@ const EXPECTED_TABLES: Record<string, readonly string[]> = {
     'messages',
     'platform_categories',
     'platform_category_attributes',
+    'platform_category_group_maps',
     'price_calculations',
     'product_specs',
     'raw_orders',
