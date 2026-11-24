@@ -1023,6 +1023,20 @@
       "when": 1795261838907,
       "tag": "20261121115038_bang-san-fk",
       "breakpoints": true
+    },
+    {
+      "idx": 146,
+      "version": "7",
+      "when": 1795267657738,
+      "tag": "20261121132737_luot-dong-bo",
+      "breakpoints": true
+    },
+    {
+      "idx": 147,
+      "version": "7",
+      "when": 1795267680008,
+      "tag": "20261121132759_luot-dong-bo-rls",
+      "breakpoints": true
     }
   ]
 }

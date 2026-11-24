@@ -14,6 +14,7 @@ import { getProductSpec, putProductSpec } from '../service/product-specs.ts';
 import { listAxisMappings, putAxisMapping } from '../service/axis-mappings.ts';
 import { attributeCatalog, listSpecMappings, putSpecMapping } from '../service/spec-mappings.ts';
 import { pushZeroStock, restoreAfterZeroStock, requestListingSync } from '../service/listing-sync.ts';
+import { getLatestSyncRun, getSyncRun } from '../service/sync-runs.ts';
 import * as listings from '../service/listings.ts';
 import * as mapping from '../service/mapping.ts';
 import { createVariantFromRemote, matchBulk } from '../service/remote-link.ts';
@@ -75,6 +76,7 @@ import {
   ProductSpecParams,
   ProductSpecQuery,
   ShopParams,
+  SyncRunParams,
   TokenBody,
   ConfirmPriceBody,
   ListingIdParams,
@@ -384,7 +386,18 @@ export function channelRouter(ctx: ModuleContext): Router {
 
   router.post('/shops/:id/listings/sync', ctx.authorize('channel.shop.sync'), validate({ params: ShopParams }), async (_req, res) => {
     const { id } = validated<typeof ShopParams>(res, 'params');
-    res.status(202).json(await requestListingSync(actor(res).companyId, id));
+    res.status(202).json(await requestListingSync(actor(res), id));
+  });
+
+  // Kết quả lượt đồng bộ do người bấm (21 §18 "Kết quả lượt đồng bộ"). `latest` đặt trước `:runId`.
+  router.get('/shops/:id/listings/sync-runs/latest', view, validate({ params: ShopParams }), async (_req, res) => {
+    const { id } = validated<typeof ShopParams>(res, 'params');
+    res.json(await getLatestSyncRun(actor(res), id));
+  });
+
+  router.get('/shops/:id/listings/sync-runs/:runId', view, validate({ params: SyncRunParams }), async (_req, res) => {
+    const { id, runId } = validated<typeof SyncRunParams>(res, 'params');
+    res.json(await getSyncRun(actor(res), id, runId));
   });
 
   // Kéo đơn ngay, không chờ vòng 5 phút (#105).

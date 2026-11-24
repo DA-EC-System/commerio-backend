@@ -316,9 +316,9 @@ describe('nút Đồng bộ chỉ xếp việc (POST /listings/sync, 202, #223)'
     const first = await press();
     const second = await press();
     expect(first.status).toBe(202);
-    expect(ListingSyncResult.parse(first.body)).toEqual({ queued: true });
+    expect(ListingSyncResult.parse(first.body)).toEqual({ queued: true, runId: expect.any(String) });
     expect(second.status).toBe(202);
-    expect(second.body).toEqual({ queued: false });
+    expect(second.body).toEqual({ queued: false, runId: first.body.runId });
     expect(await jobs()).toBe(1);
     expect(getSkusCalls).toBe(0);
     expect(updatePriceQuantity).not.toHaveBeenCalled();
