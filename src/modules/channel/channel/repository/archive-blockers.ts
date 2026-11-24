@@ -25,6 +25,19 @@ export async function currentListingStatuses(variantIds: readonly string[]): Pro
   return rows.flatMap((r) => (r.variantId ? [{ variantId: r.variantId, status: r.status }] : []));
 }
 
+/** Cặp SKU × gian hàng có listing ở các trạng thái `statuses` (không lặp), một câu cho cả lô. Gọi trong `withCompany`. */
+export async function listingShopPairs(
+  variantIds: readonly string[],
+  statuses: readonly ListingStatus[],
+): Promise<{ variantId: string; shopId: string }[]> {
+  if (!variantIds.length || !statuses.length) return [];
+  const rows = await getDb()
+    .selectDistinct({ variantId: listings.variantId, shopId: listings.shopId })
+    .from(listings)
+    .where(and(inArray(listings.status, [...statuses]), inArray(listings.variantId, [...variantIds])));
+  return rows.flatMap((r) => (r.variantId ? [{ variantId: r.variantId, shopId: r.shopId }] : []));
+}
+
 /**
  * SKU đã dùng (#204 spec mục 6, chặn xoá hẳn sản phẩm), một câu cho cả lô; chứng từ ở mọi trạng thái, kể cả đã huỷ.
  * SKU không có thì không có trong Set. Gọi trong `withCompany`.

@@ -756,8 +756,8 @@ const LabelCounts = z
     description: 'Số SKU theo nhãn chính, đủ 7 khoá, tính mọi SKU: trạng thái kinh doanh khác selling, không thì hiện diện trên sàn',
   });
 
-export const ProductListItem = z
-  .object({
+/** Trường chung của dòng danh sách và chi tiết sản phẩm. */
+const ProductSummary = z.object({
     id: z.uuid(),
     name: z.string(),
     code: z.string().meta({ description: 'Mã cha, cấp lúc tạo theo mẫu SKU của công ty, không sửa (#204 D5)' }),
@@ -771,10 +771,28 @@ export const ProductListItem = z
     status: z.enum(['active', 'archived']).meta({ description: '`archived` khi mọi SKU đã lưu trữ (suy từ SKU, không lưu)' }),
     updatedAt: z.string(),
     version: z.number().int(),
-  })
-  .meta({ id: 'ProductListItem' });
+  });
 
-export const ProductDetail = ProductListItem.extend({
+const ShopCoverage = z
+  .object({
+    shopId: z.uuid(),
+    shopName: z.string().meta({ description: 'Tên hiển thị của gian hàng nếu có, không thì tên trên sàn' }),
+    platform: z.string(),
+    listed: z.number().int().meta({
+      description: 'Số SKU chưa lưu trữ đã lên sàn ở gian hàng này (listing đang duyệt, đang bán, đang ẩn) hoặc đang đẩy, như `listed` của readiness',
+    }),
+    missing: z.number().int().meta({ description: 'Số SKU chưa lưu trữ chưa có ở gian hàng này; 0 là đủ ("✓")' }),
+  })
+  .meta({ id: 'ProductShopCoverage' });
+
+export const ProductListItem = ProductSummary.extend({
+  channelCoverage: z.array(ShopCoverage).meta({
+    description:
+      'Độ phủ sàn theo gian hàng chưa ngắt (cũ trước). Rỗng khi người xem không có `channel.shop.view` hoặc công ty chưa có gian hàng. `listed` + `missing` = `variantCount`',
+  }),
+}).meta({ id: 'ProductListItem' });
+
+export const ProductDetail = ProductSummary.extend({
   description: z.string(),
   images: z.array(
     z
@@ -892,7 +910,20 @@ export const BulkEditPage = z
 
 export const BulkSaveResult = z
   .object({
-    saved: z.array(z.object({ variantId: z.string(), version: z.number().int().meta({ description: '`version` mới của SKU' }) })),
+    saved: z.array(
+      z.object({
+        variantId: z.string(),
+        version: z.number().int().meta({ description: '`version` mới của SKU' }),
+        reorderVersion: z
+          .number()
+          .int()
+          .nullable()
+          .meta({
+            description:
+              '`version` của dòng tồn sau khi lưu (dùng cho `reorderVersion` lần lưu sau, không cần đọc lại dòng); dòng không gửi `minQty` trả version hiện tại; null khi chưa có dòng tồn',
+          }),
+      }),
+    ),
     failed: z.array(
       z.object({
         variantId: z.string(),
