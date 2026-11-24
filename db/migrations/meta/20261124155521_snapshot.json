@@ -1,6 +1,6 @@
 {
-  "id": "1947d4aa-9046-487c-a012-6d0188f29faf",
-  "prevId": "3e2caa3b-ef3c-4807-bef3-4a7dec1d811c",
+  "id": "486d1486-4452-48c7-ab19-32035a9ab3d6",
+  "prevId": "f546bd2a-b904-4fcf-9091-51a34dc6aeb0",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -11633,7 +11633,7 @@
         },
         "attributes_name_length": {
           "name": "attributes_name_length",
-          "value": "char_length(\"product\".\"attributes\".\"name\") <= 15"
+          "value": "char_length(\"product\".\"attributes\".\"name\") <= 20"
         }
       },
       "isRLSEnabled": false
