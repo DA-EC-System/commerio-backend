@@ -5,18 +5,20 @@
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
 Mới nhất: **V153**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
 
-## V153 · 24/11/2026 · can-nang-kich-thuoc-tran
+## V153 · 24/11/2026 · dong-bo-category-du-lieu
 
-`db/migrations/20261124125652_can-nang-kich-thuoc-tran.sql` · sinh từ schema
+`db/migrations/20261124125551_dong-bo-category-du-lieu.sql` · viết tay
 
-- `product.product_variants`: đổi check `product_variants_dimensions`
+- viết tay: quyền, khoá ngoại, dữ liệu
+- #569 (Documents/21 §18.5): bảng ánh xạ category sàn → danh mục chuẩn là dữ liệu của nền tảng.
 
-## V152 · 24/11/2026 · can-nang-kich-thuoc-du-lieu
+## V152 · 24/11/2026 · dong-bo-category
 
-`db/migrations/20261124125649_can-nang-kich-thuoc-du-lieu.sql` · viết tay
+`db/migrations/20261124125548_dong-bo-category.sql` · sinh từ schema
 
-- viết tay: dữ liệu
-- #434 (viết tay, chỉ dữ liệu, chạy lại được): cân nặng trên 50.000 g, cạnh trên 2.000 mm (Documents/21 §17.5) chỉ có trong dữ liệu thử trên staging (PATCH SKU trước #434 không chặn).
+- + bảng `channel.platform_category_group_maps`
+- `channel.marketplaces`: + cột `category_sync_state`, `category_sync_error`, `category_sync_at`; + check `marketplaces_category_sync_state`
+- `channel.shops`: + cột `category_permissions_state`, `category_permissions_error`, `category_permissions_checked_at`; + check `shops_category_permissions_state`
 
 ## V151 · 24/11/2026 · phi-moi-mon
 

@@ -149,6 +149,9 @@ function respondBy(r: Row): Date | null {
 /** Người bán đã xử lý hàng về: đồng ý hoàn tiền (người bán, hay sàn tự hoàn khi quá hạn) hoặc từ chối nhận hàng. */
 const SELLER_HANDLED = new Set(['REJECT_RECEIVE_PACKAGE', 'RETURN_OR_REFUND_REQUEST_SUCCESS', 'RETURN_OR_REFUND_REQUEST_COMPLETE']);
 
+/** Sàn đã hoàn tiền cho khách (người bán đồng ý sau kiểm hàng, hay sàn tự hoàn khi quá hạn), #437. */
+const REFUND_CONFIRMED = new Set(['RETURN_OR_REFUND_REQUEST_SUCCESS', 'RETURN_OR_REFUND_REQUEST_COMPLETE']);
+
 export function toRemoteReturn(r: Row): RemoteReturn {
   const rawStatus = str(r.return_status);
   return {
@@ -165,6 +168,7 @@ export function toRemoteReturn(r: Row): RemoteReturn {
     returnTrackingCode: opt(r.return_tracking_number),
     respondBy: respondBy(r),
     sellerHandledReceipt: SELLER_HANDLED.has(rawStatus),
+    refundConfirmed: REFUND_CONFIRMED.has(rawStatus),
     createdAt: unixDate(r.create_time),
     updatedAt: unixDate(r.update_time),
   };

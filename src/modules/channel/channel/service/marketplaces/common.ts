@@ -1041,9 +1041,10 @@ export interface MarketplaceAdapter {
   confirmReturnReceived?(accessToken: string, externalReturnId: string, externalLineIds: readonly string[]): Promise<void>;
   /**
    * Báo sàn người bán đã kiểm hàng trả và đồng ý hoàn tiền, sau khi phiếu kiểm hàng hoàn ghi sổ (#392; TikTok
-   * `APPROVE_RECEIVED_PACKAGE`). Sàn đã qua bước này (người bán làm trên sàn, sàn tự hoàn khi quá hạn) thì coi là xong.
+   * `APPROVE_RECEIVED_PACKAGE` theo cả yêu cầu, Lazada `agreeRefund` theo mã dòng đơn ngược, #437). Sàn đã qua bước này
+   * (người bán làm trên sàn, sàn tự hoàn khi quá hạn) thì coi là xong.
    */
-  approveReturnRefund?(accessToken: string, externalReturnId: string): Promise<void>;
+  approveReturnRefund?(accessToken: string, externalReturnId: string, externalLineIds: readonly string[]): Promise<void>;
   /** Lịch sử đơn ngược phía sàn (#202, §20.1). */
   returnHistory?(
     accessToken: string,
@@ -1154,6 +1155,12 @@ export interface RemoteReturn extends RemoteAftersale {
    * chỉ giao hàng về (Lazada). App còn chờ hàng về mà sàn báo vậy thì hàng được xử lý ngoài app (#392). Thiếu là false.
    */
   sellerHandledReceipt?: boolean;
+  /**
+   * Sàn xác nhận hoàn tiền cho khách sau khi hàng trả về người bán (#437; Lazada `REFUND_PENDING`/`REFUND_SUCCESS` mọi
+   * món đã về, TikTok `…_SUCCESS`/`…_COMPLETE`). Yêu cầu đã đóng sau kiểm hàng chỉ ghi "Đã hoàn" và sổ tiền lúc này. Thiếu
+   * là false.
+   */
+  refundConfirmed?: boolean;
   /** Trạng thái vận chuyển chiều về của sàn (Lazada `ofc_status`), chỉ để hiện (#202). */
   ofcStatus?: string | null;
   /** Hàng trả về kho sàn hay về người bán (Lazada `return_to_type`/`is_rtm`). */
@@ -1191,6 +1198,11 @@ export class MarketplaceError extends Error {
    * `errorMap` của adapter, khớp mã chi tiết trước mã ngoài cùng.
    */
   details: PlatformErrorDetail[] = [];
+  /**
+   * Câu tiếng Việt cho người dùng khi adapter hiểu lỗi hơn câu chung (#437: Lazada từ chối thiếu ảnh, yêu cầu đã xử lý
+   * trên sàn); `toAppError` dùng thay "Sàn từ chối yêu cầu".
+   */
+  userMessage: string | null = null;
 
   constructor(kind: MarketplaceErrorKind, platformCode: string | null = null, platformMessage: string | null = null) {
     super(`Sàn trả lỗi ${kind}${platformCode ? ` (${platformCode})` : ''}`);
