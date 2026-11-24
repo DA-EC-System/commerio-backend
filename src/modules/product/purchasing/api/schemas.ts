@@ -83,7 +83,7 @@ const NewProductInput = z
   .object({
     parentId: z.uuid('Chọn sản phẩm cha').nullable(),
     parentName: z.string('Nhập tên sản phẩm cha').trim().max(120, 'Tối đa 120 ký tự').nullable(),
-    groupId: z.string('Chọn nhóm hàng').nullable(),
+    groupId: z.string('Chọn danh mục sản phẩm').nullable(),
     optionValues: z.record(
       z.string().trim().min(1, 'Nhập tên trục phân loại').max(15, 'Tên trục tối đa 15 ký tự'),
       z.string('Nhập giá trị phân loại').trim().min(1, 'Nhập giá trị phân loại').max(20, 'Giá trị tối đa 20 ký tự'),
@@ -95,7 +95,7 @@ const NewProductInput = z
     if (!p.parentId === !p.parentName) {
       ctx.addIssue({ code: 'custom', path: ['parentName'], message: 'Chọn sản phẩm cha có sẵn hoặc nhập tên sản phẩm cha mới' });
     } else if (p.parentName && !p.groupId) {
-      ctx.addIssue({ code: 'custom', path: ['groupId'], message: 'Chọn nhóm hàng' });
+      ctx.addIssue({ code: 'custom', path: ['groupId'], message: 'Chọn danh mục sản phẩm' });
     }
   });
 

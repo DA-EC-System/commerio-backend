@@ -171,7 +171,7 @@ export function pushBlocks(
   if (spec?.sizeChartRule === 'required' && !hasSizeChart) {
     out.push({
       code: 'size_chart_missing',
-      label: 'Danh mục này bắt buộc ảnh bảng kích cỡ: thêm ảnh bảng kích cỡ cho sản phẩm',
+      label: 'Category trên sàn này bắt buộc ảnh bảng kích cỡ: thêm ảnh bảng kích cỡ cho sản phẩm',
       target: { kind: 'product_field', field: 'sizeChart' },
     });
   }
