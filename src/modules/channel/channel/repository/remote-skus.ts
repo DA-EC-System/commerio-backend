@@ -228,3 +228,26 @@ export async function unmatchedRemoteCounts(shopIds: readonly string[]): Promise
     .groupBy(remoteSkus.shopId);
   return new Map(rows.map((r) => [r.shopId, r.n]));
 }
+
+/**
+ * Tồn trên sàn theo biến thể ở một gian hàng, đọc từ bản sao (#569, Documents/21 §18.6.2 `StockDocLine.platformStock`):
+ * cộng `quantity` của mọi SKU sàn mà listing chưa gỡ, ghép `mapped`, trỏ tới biến thể. Biến thể không liên kết SKU sàn nào
+ * (hoặc SKU sàn đã rời bản sao) thì vắng trong Map.
+ */
+export async function remoteStockByVariant(shopId: string, variantIds: readonly string[]): Promise<Map<string, number>> {
+  if (!variantIds.length) return new Map();
+  const rows = await getDb()
+    .select({ variantId: listings.variantId, quantity: sql<number>`sum(${remoteSkus.quantity})::int` })
+    .from(listings)
+    .innerJoin(remoteSkus, and(eq(remoteSkus.shopId, listings.shopId), eq(remoteSkus.externalSkuId, listings.externalSkuId)))
+    .where(
+      and(
+        eq(listings.shopId, shopId),
+        eq(listings.mode, 'mapped'),
+        ne(listings.status, 'delisted'),
+        inArray(listings.variantId, [...variantIds]),
+      ),
+    )
+    .groupBy(listings.variantId);
+  return new Map(rows.flatMap((r) => (r.variantId ? [[r.variantId, Number(r.quantity)] as const] : [])));
+}
