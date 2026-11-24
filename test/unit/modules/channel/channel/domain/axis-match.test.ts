@@ -62,6 +62,18 @@ describe('suggestAxes', () => {
     expect(r.axisMap).toEqual({ 'a-size': '100001', 'a-size2': '100007' });
   });
 
+  it('nhiều trục hơn maxAxes mà leaf có đích ghép: gợi ý ghép mọi trục, không valueMap (#568)', () => {
+    const leaf = [sales('color_family', 'Màu sắc', [{ id: '10', label: 'Đỏ' }])];
+    const r = suggestAxes({ axes: [color, size], leaf, companyCodes: new Map(), standard: { color: ['color_family'] }, caps: { ...lazadaCaps, maxAxes: 1 } });
+    expect(r).toEqual({ axisMap: { 'a-color': 'color_family', 'a-size': 'color_family' }, valueMap: {} });
+  });
+
+  it('nhiều trục hơn maxAxes mà leaf không có đích ghép (kiểu số): giữ gợi ý thường', () => {
+    const leaf = [{ ...sales('weight'), input: 'number' as const }];
+    const r = suggestAxes({ axes: [color, size], leaf, companyCodes: new Map(), standard: { color: ['weight'] }, caps: { ...lazadaCaps, maxAxes: 1 } });
+    expect(r.axisMap).toEqual({ 'a-color': 'weight' });
+  });
+
   it('leaf null trả rỗng', () => {
     expect(suggestAxes({ axes: [color], leaf: null, companyCodes: new Map(), standard: tiktokStd, caps: tiktokCaps })).toEqual({ axisMap: {}, valueMap: {} });
   });
