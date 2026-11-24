@@ -1,0 +1,1 @@
+ALTER TYPE "finance"."config_kind" ADD VALUE 'account_map';
