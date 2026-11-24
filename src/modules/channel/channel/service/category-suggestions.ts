@@ -7,7 +7,7 @@ import { categoryInfoOf } from '../repository/platform-categories.ts';
 import { permissionsOf, specUsesOf, upsertPermissions } from '../repository/product-specs.ts';
 import { type CategorySuggestion, type MarketplaceAdapter, MarketplaceError } from './marketplaces/index.ts';
 import { productPort } from './product-port.ts';
-import { maxAxesOf } from './platform-categories.ts';
+import { leafVariantInfoOf } from './platform-categories.ts';
 import { onMarketplace, shopSession } from './shops.ts';
 
 export interface SuggestionItem {
@@ -18,7 +18,7 @@ export interface SuggestionItem {
   usedByCompany: boolean;
   /** Số thuộc tính biến thể tối đa (be#564); null khi leaf chưa lấy attribute hoặc sàn không khai. */
   maxAxes: number | null;
-  /** Đích ghép thuộc tính biến thể (be#568); null tới khi có `combineTarget`. */
+  /** Đích ghép thuộc tính biến thể (be#568); null khi leaf chưa lấy attribute. */
   combinable: boolean | null;
 }
 
@@ -136,22 +136,22 @@ export async function suggestCategories(ctx: ModuleContext, companyId: string, s
     const shown = [...group, ...recent].map((u) => u.externalId);
     const known = await permissionsOf(shop.id, [...itemIds, ...shown]);
     const permissionOfId = (id: string) => known.get(id)?.status ?? null;
-    const axes = await maxAxesOf(shop.platform, [...itemIds, ...shown]);
+    const leafInfo = await leafVariantInfoOf(shop.platform, [...itemIds, ...shown]);
     const items: SuggestionItem[] = raw.map((s) => ({
       externalId: s.externalId,
       path: infos.get(s.externalId)?.path ?? s.path,
       permission: s.permissionStatuses ? permissionOf(s.permissionStatuses) : null,
       usedByCompany: used.has(s.externalId),
-      maxAxes: axes.get(s.externalId) ?? null,
-      combinable: null,
+      maxAxes: leafInfo.get(s.externalId)?.maxAxes ?? null,
+      combinable: leafInfo.get(s.externalId)?.combinable ?? null,
     }));
     const usedView = (u: { externalId: string; productCount: number }): UsedCategory => ({
       externalId: u.externalId,
       path: usedInfos.get(u.externalId)?.path ?? u.externalId,
       productCount: u.productCount,
       permission: permissionOfId(u.externalId),
-      maxAxes: axes.get(u.externalId) ?? null,
-      combinable: null,
+      maxAxes: leafInfo.get(u.externalId)?.maxAxes ?? null,
+      combinable: leafInfo.get(u.externalId)?.combinable ?? null,
     });
     return { items, group: group.map(usedView), recent: recent.map(usedView), cached: false, ...(suggestError && { suggestError }) };
   });

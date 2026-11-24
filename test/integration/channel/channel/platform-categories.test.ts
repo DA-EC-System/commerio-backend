@@ -18,7 +18,7 @@ import {
 } from '#src/modules/channel/channel/repository/platform-categories.ts';
 import { MarketplaceError } from '#src/modules/channel/channel/service/marketplaces/common.ts';
 import { registerAdapter, resetAdapters } from '#src/modules/channel/channel/service/marketplaces/index.ts';
-import { leafDetail, listPlatformCategories, maxAxesOf } from '#src/modules/channel/channel/service/platform-categories.ts';
+import { leafDetail, leafVariantInfoOf, listPlatformCategories } from '#src/modules/channel/channel/service/platform-categories.ts';
 import { currentCompanyId, withCompany } from '#src/shared/db/client.ts';
 import { createModuleContext } from '#src/wiring.ts';
 import { createVariant } from '../../helpers/catalog.ts';
@@ -124,21 +124,37 @@ describe('syncTree', () => {
     expect(kids.items.map((c) => c.externalId)).toEqual(['S2', 'S3']);
   });
 
-  it('maxAxesOf theo variantCapabilities, chỉ leaf đã lấy attribute (be#564 A2); sàn không khai hook: rỗng', async () => {
+  it('leafVariantInfoOf: chỉ leaf đã lấy attribute (be#564 A2); maxAxes theo variantCapabilities, null khi sàn không khai; combinable theo combineTarget', async () => {
     const leaf = `MX-${randomUUID().slice(0, 8)}`;
     const empty = `MX-${randomUUID().slice(0, 8)}`;
     const unfetched = `MX-${randomUUID().slice(0, 8)}`;
-    await replaceLeaf('shopee', leaf, { attributes: [attr('size', { kind: 'sales' }), attr('color', { kind: 'sales' })], fetchedAt: new Date() });
+    const text = { kind: 'sales' as const, input: 'text' as const, allowCustom: true };
+    await replaceLeaf('shopee', leaf, { attributes: [attr('size', text), attr('color', text)], fetchedAt: new Date() });
     await replaceLeaf('shopee', empty, { attributes: [], fetchedAt: new Date() });
     registerAdapter('shopee', fakeAdapter({}));
-    expect(await maxAxesOf('shopee', [leaf])).toEqual(new Map());
+    expect(await leafVariantInfoOf('shopee', [leaf])).toEqual(new Map([[leaf, { maxAxes: null, combinable: true }]]));
     registerAdapter(
       'shopee',
       fakeAdapter({
-        variantCapabilities: (attrs) => ({ maxAxes: attrs.filter((a) => a.kind === 'sales').length, customAxisName: false, salesRequired: [], addVariant: true }),
+        variantCapabilities: (attrs) => ({
+          maxAxes: attrs.filter((a) => a.kind === 'sales').length,
+          customAxisName: false,
+          salesRequired: [],
+          addVariant: true,
+          maxValueLength: null,
+          maxAxisValues: null,
+        }),
       }),
     );
-    expect(await maxAxesOf('shopee', [leaf, empty, unfetched])).toEqual(new Map([[leaf, 2], [empty, 0]]));
+    expect(await leafVariantInfoOf('shopee', [leaf, empty, unfetched])).toEqual(
+      new Map([
+        [leaf, { maxAxes: 2, combinable: true }],
+        [empty, { maxAxes: 0, combinable: false }],
+      ]),
+    );
+    // Dòng tạm của `replaceLeaf` là node `active` của 'shopee': xoá để không đổi số đếm của các ca `syncTree` sau.
+    await testPool().query("delete from channel.platform_category_attributes where platform = 'shopee' and external_category_id = any($1)", [[leaf, empty]]);
+    await testPool().query("delete from channel.platform_categories where platform = 'shopee' and external_id = any($1)", [[leaf, empty]]);
   });
 
   it('cây thiếu bất thường (bỏ hơn 5% node active, cây từ 100 node) thì không ghi gì; allowShrink thì ghi (review BE1 P2-3)', async () => {

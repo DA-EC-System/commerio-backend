@@ -66,8 +66,8 @@ export interface ChannelListing {
   stockSync: ListingRow['stockSync'];
   priceSync: ListingRow['priceSync'];
   platformStock: number | null;
-  stockSyncError: SyncError | null;
-  priceSyncError: SyncError | null;
+  stockSyncError: PushErrorView | null;
+  priceSyncError: PushErrorView | null;
   /** Cảnh báo QC (§18.4): chưa đọc từ sàn, luôn null. */
   qcAlert: null;
   lastPushedAt: Date | null;
@@ -166,8 +166,8 @@ export function toListing(r: ListingRow, names: ReadonlyMap<string, string> = ne
     stockSync: r.stockSync,
     priceSync: r.priceSync,
     platformStock: r.platformStock,
-    stockSyncError: r.stockSyncError,
-    priceSyncError: r.priceSyncError,
+    stockSyncError: pushErrorView(r.stockSyncError),
+    priceSyncError: pushErrorView(r.priceSyncError),
     qcAlert: null,
     lastPushedAt: r.lastPushedAt,
     lastPushedPrice: r.listedPrice === null ? null : Number(r.listedPrice),

@@ -30,7 +30,7 @@ registerAdapter(
   fakeAdapter({
     categoriesNeedToken: false,
     standardSalesAttributes: { color: ['100000'], size: ['100007'] },
-    variantCapabilities: () => ({ maxAxes: 3, customAxisName: true, salesRequired: [], addVariant: true }),
+    variantCapabilities: () => ({ maxAxes: 3, customAxisName: true, salesRequired: [], addVariant: true, maxValueLength: null, maxAxisValues: null }),
     leafAttributes: async () => [],
   }),
 );
@@ -40,6 +40,7 @@ const leafs = {
   lzFull: `AXS-LZ-${sfx}`,
   lzNoSize: `AXS-LZN-${sfx}`,
   lzAlt: `AXS-LZA-${sfx}`,
+  lzFree: `AXS-LZF-${sfx}`,
   ttColor: `AXS-TT-${sfx}`,
   branch: `AXS-BR-${sfx}`,
 };
@@ -50,7 +51,7 @@ let productId: string;
 let redId: string;
 let mId: string;
 
-async function leaf(platform: string, id: string, attrs: { code: string; label: string }[]) {
+async function leaf(platform: string, id: string, attrs: { code: string; label: string; allowCustom?: boolean }[]) {
   const q = testPool();
   await q.query(
     `insert into channel.platform_categories (platform, external_id, name, is_leaf, path, path_search, synced_at, attributes_fetched_at)
@@ -60,9 +61,9 @@ async function leaf(platform: string, id: string, attrs: { code: string; label: 
   for (const a of attrs) {
     const options = a.code === 'color_family' ? [{ id: '10', label: 'Đỏ' }, { id: '11', label: 'Xanh' }] : [];
     await q.query(
-      `insert into channel.platform_category_attributes (platform, external_category_id, code, label, kind, input, options, tier, fetched_at)
-       values ($1, $2, $3, $4, 'sales', 'select', $5, 'category', now())`,
-      [platform, id, a.code, a.label, JSON.stringify(options)],
+      `insert into channel.platform_category_attributes (platform, external_category_id, code, label, kind, input, options, allow_custom, tier, fetched_at)
+       values ($1, $2, $3, $4, 'sales', 'select', $5, $6, 'category', now())`,
+      [platform, id, a.code, a.label, JSON.stringify(options), a.allowCustom ?? false],
     );
   }
 }
@@ -102,6 +103,7 @@ beforeAll(async () => {
     { code: 'size', label: 'Kích cỡ' },
   ]);
   await leaf('lazada', leafs.lzNoSize, [{ code: 'color_family', label: 'Màu' }]);
+  await leaf('lazada', leafs.lzFree, [{ code: 'color_family', label: 'Màu', allowCustom: true }]);
   await leaf('lazada', leafs.lzAlt, [
     { code: 'color_family', label: 'Màu' },
     { code: `alt_${sfx}`, label: 'Màu khác' },
@@ -134,13 +136,30 @@ describe('gợi ý ghép trục', () => {
     expect(res.body.spec).toBeNull();
     expect(res.body.suggestedAxisMap).toEqual({ [colorAttr]: 'color_family', [sizeAttr]: 'size' });
     expect(res.body.suggestedValueMap).toEqual({ [redId]: '10' });
-    expect(res.body.variantCapabilities).toEqual({ maxAxes: 2, customAxisName: false, salesRequired: [], addVariant: true });
+    // Hai sale prop chỉ nhận lựa chọn có sẵn (allow_custom mặc định false): không có đích ghép (#568)
+    expect(res.body.variantCapabilities).toEqual({
+      maxAxes: 2,
+      customAxisName: false,
+      salesRequired: [],
+      addVariant: true,
+      maxValueLength: 20,
+      maxAxisValues: 50,
+      combineTarget: null,
+    });
   });
 
   it('TikTok leaf chỉ có 100000: trục size thành __custom', async () => {
     const res = await get('tiktok', `?categoryId=${leafs.ttColor}`);
     expect(res.body.suggestedAxisMap).toEqual({ [colorAttr]: '100000', [sizeAttr]: '__custom' });
-    expect(res.body.variantCapabilities).toEqual({ maxAxes: 3, customAxisName: true, salesRequired: [], addVariant: true });
+    expect(res.body.variantCapabilities).toEqual({
+      maxAxes: 3,
+      customAxisName: true,
+      salesRequired: [],
+      addVariant: true,
+      maxValueLength: null,
+      maxAxisValues: null,
+      combineTarget: null,
+    });
   });
 
   it('Lazada leaf không có size: không gợi ý trục size (không __custom)', async () => {
@@ -205,5 +224,41 @@ describe('gợi ý ghép trục', () => {
         { code: 'axes', label: 'Sản phẩm có 2 thuộc tính biến thể, category này nhận tối đa 1', reason: 'axis_limit' },
       ]),
     );
+  });
+
+  describe('thuộc tính biến thể ghép (#568)', () => {
+    let other: string;
+    beforeAll(async () => {
+      const v = await createVariant(ceo.companyId);
+      await bindValues(v.variantId, [redId, mId]);
+      other = v.productId;
+    });
+    const putOther = (body: object) =>
+      request(app).put(`/api/v1/channel/products/${other}/specs/lazada`).set('Authorization', `Bearer ${ceo.token}`).send(body);
+
+    it('leaf một sale prop nhận chữ: GET trả combineTarget, PUT lần đầu ghép hai trục, không valueMap, không missing', async () => {
+      const view = await request(app)
+        .get(`/api/v1/channel/products/${other}/specs/lazada?categoryId=${leafs.lzFree}`)
+        .set('Authorization', `Bearer ${ceo.token}`);
+      expect(view.status, JSON.stringify(view.body)).toBe(200);
+      expect(view.body.variantCapabilities).toMatchObject({ maxAxes: 1, combineTarget: 'color_family', maxValueLength: 20, maxAxisValues: 50 });
+      expect(view.body.suggestedAxisMap).toEqual({ [colorAttr]: 'color_family', [sizeAttr]: 'color_family' });
+      const res = await putOther({ externalCategoryId: leafs.lzFree, attributes: {}, version: null });
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+      expect(res.body.spec.axisMap).toEqual({ [colorAttr]: 'color_family', [sizeAttr]: 'color_family' });
+      expect(res.body.spec.valueMap).toEqual({});
+      expect(res.body.missing).toEqual([]);
+    });
+
+    it('valueMap trên trục ghép: 422 errors["valueMap.<id>"]; ghép vào leaf chỉ nhận lựa chọn có sẵn: 422 từng trục', async () => {
+      const current = (await request(app).get(`/api/v1/channel/products/${other}/specs/lazada`).set('Authorization', `Bearer ${ceo.token}`)).body.spec;
+      const both = { [colorAttr]: 'color_family', [sizeAttr]: 'color_family' };
+      const withValue = await putOther({ externalCategoryId: leafs.lzFree, attributes: {}, axisMap: both, valueMap: { [redId]: '10' }, version: current.version });
+      expect(withValue.status).toBe(422);
+      expect(withValue.body.errors[`valueMap.${redId}`]).toBeDefined();
+      const fixed = await putOther({ externalCategoryId: leafs.lzNoSize, attributes: {}, axisMap: both, version: current.version });
+      expect(fixed.status).toBe(422);
+      expect(Object.keys(fixed.body.errors)).toEqual(expect.arrayContaining([`axisMap.${colorAttr}`, `axisMap.${sizeAttr}`]));
+    });
   });
 });

@@ -82,6 +82,49 @@ export async function marketplacePushError(adapter: MarketplaceAdapter, err: Mar
   });
 }
 
+/** Một phần hỏng (tồn hoặc giá) của kết quả `updatePriceQuantity`: `code` là mã gốc của sàn hoặc mã app `marketplace_*`, `no_result`. */
+export interface SyncFailure {
+  code: string;
+  message: string;
+  requestId?: string | null;
+}
+
+/**
+ * Lỗi đồng bộ tồn, giá (`stockSyncError`, `priceSyncError`, #571, Documents/21 §18.6.4) cùng hình `pushError`: mã sàn dịch bằng
+ * `errorMap` của adapter theo thao tác `op`; mã chưa có thì `marketplace_rejected` kèm câu sàn, ghi log và đếm metric như lượt đẩy.
+ * Không đọc leaf, spec (lỗi tồn, giá không chỉ tới attribute).
+ */
+export function syncErrorOf(
+  adapter: Pick<MarketplaceAdapter, 'name' | 'errorMap'>,
+  platform: Marketplace,
+  part: SyncFailure,
+  op: 'stock' | 'price',
+  variantId: string | null,
+  at: Date,
+): SyncError {
+  const raw = { variantId, requestId: part.requestId ?? null };
+  const app = (code: string, message: string, platformMessage: string | null): SyncError => ({
+    ...errorOf(code, message, { ...raw, platformCode: null, platformMessage }),
+    at: at.toISOString(),
+  });
+  const said = part.message || null;
+  if (part.code === 'marketplace_unavailable') return app('marketplace_unavailable', `${adapter.name} đang lỗi tạm, lượt đồng bộ sau app gửi lại`, said);
+  if (part.code === 'marketplace_unauthorized') return app('shop_not_connected', `${adapter.name} không nhận uỷ quyền của gian hàng; kết nối lại gian hàng`, said);
+  if (part.code === 'no_result') return app('marketplace_rejected', `${adapter.name} không trả kết quả cho SKU này; lượt đồng bộ sau app gửi lại`, null);
+  // Mã app khác (`marketplace_rejected` không kèm mã sàn, `unknown` của TikTok) không phải mã sàn: không đưa vào `platformCode`.
+  const platformCode = part.code.startsWith('marketplace_') || part.code === 'unknown' ? null : part.code;
+  const ctx: PushErrorContext = { platformName: adapter.name, attributeLabel: () => null, axisAttributeId: () => null };
+  const out = translatePlatformError(adapter.errorMap ?? [], { platformCode, platformMessage: said, details: [] }, ctx, op);
+  if (!out.mapped && out.platformCode) {
+    unmapped.inc({ platform, op });
+    logger.warn({ platform, op, platformCode: out.platformCode, platformMessage: out.platformMessage, requestId: raw.requestId }, 'push_error_unmapped');
+  }
+  return {
+    ...errorOf(out.code, out.message, { ...raw, kind: out.kind, target: out.target, platformCode: out.platformCode, platformMessage: out.platformMessage }),
+    at: at.toISOString(),
+  };
+}
+
 /** `pushError` trả ra API (21 §18.6.4): bản ghi trước #567 không có các trường mới thì `null`. */
 export interface PushErrorView {
   code: string;

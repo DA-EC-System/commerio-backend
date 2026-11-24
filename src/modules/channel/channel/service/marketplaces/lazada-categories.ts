@@ -98,9 +98,17 @@ export function lazadaLeafAttributes(data: unknown): PlatformAttribute[] {
 /**
  * Khả năng khai biến thể của một leaf Lazada (#448, Documents#214 mục 3): sàn chỉ nhận trục là sale prop của category
  * (`BIZ_CHECK_SALEPROP_ATTRIBUTE_INVALID` với tên ngoài), nên số trục tối đa là số sale prop của leaf, không nhận tên tự đặt,
- * và sale prop bắt buộc (`is_mandatory`) phải có trong `axisMap`.
+ * và sale prop bắt buộc (`is_mandatory`) phải có trong `axisMap`. Giá trị phân loại tối đa 20 ký tự, mỗi trục tối đa 50 giá trị
+ * (open.lazada.com, CreateProduct "Variation", đọc 24/11/2026; #568).
  */
 export function lazadaVariantCapabilities(leaf: readonly PlatformAttribute[]): VariantCapabilities {
   const sales = leaf.filter((a) => a.kind === 'sales');
-  return { maxAxes: sales.length, customAxisName: false, salesRequired: sales.filter((a) => a.required).map((a) => a.code), addVariant: true };
+  return {
+    maxAxes: sales.length,
+    customAxisName: false,
+    salesRequired: sales.filter((a) => a.required).map((a) => a.code),
+    addVariant: true,
+    maxValueLength: 20,
+    maxAxisValues: 50,
+  };
 }

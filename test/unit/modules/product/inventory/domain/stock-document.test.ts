@@ -16,6 +16,8 @@ describe('phiếu kho (#208)', () => {
   it('phần giảm: kiểm kê lấy phần đếm thiếu, phiếu khác lấy số lượng', () => {
     expect(decreaseOf('stocktake', { quantity: null, bookQty: 10, countedQty: 8 })).toBe(2);
     expect(decreaseOf('stocktake', { quantity: null, bookQty: 10, countedQty: 12 })).toBe(0);
+    // Chưa đếm: không khoá phần nào của tồn sổ (#569)
+    expect(decreaseOf('stocktake', { quantity: null, bookQty: 10, countedQty: null })).toBe(0);
     expect(decreaseOf('write_off', { quantity: 3, bookQty: null, countedQty: null })).toBe(3);
   });
 
