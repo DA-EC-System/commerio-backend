@@ -640,8 +640,9 @@ describe('kiểm hàng hoàn xong (`inventory.return_inspected`)', () => {
 describe('đồng ý hoàn tiền sau kiểm hàng hoàn (#392)', () => {
   const approving = { marketplaceReturns: { approvesRefundAfterInspection: async () => true } as never };
 
-  /** Yêu cầu đã quét nhận, có phiếu kiểm hàng hoàn; `claim` thì phiếu có phần thiếu; `line` là một dòng phiếu (dự kiến 2, quét 2). */
-  async function receivedReturn(claim = false, line?: { resell: number; damaged: number; toSupplier: number }) {
+  type InspectionLine = { expected?: number; scanned?: number; resell: number; damaged: number; toSupplier: number };
+  /** Yêu cầu đã quét nhận, có phiếu kiểm hàng hoàn; `claim` thì phiếu có phần thiếu; `lines` là dòng phiếu (mặc định dự kiến 2, quét 2). */
+  async function receivedReturn(claim = false, lines: readonly InspectionLine[] = []) {
     const { externalOrderId } = await marketplaceOrder();
     const r = remoteReturn(externalOrderId, { rawStatus: 'BUYER_SHIPPED_ITEM', status: 'awaiting_return' });
     remote = [r];
@@ -652,11 +653,11 @@ describe('đồng ý hoàn tiền sau kiểm hàng hoàn (#392)', () => {
       [company.companyId, `KT-${randomUUID().slice(0, 6)}`, claim],
     );
     const inspectionId = doc.rows[0]!.id;
-    if (line) {
+    for (const line of lines) {
       await db().query(
         `insert into product.stock_document_lines (company_id, document_id, variant_id, expected_qty, scanned_qty, resell_qty, damaged_qty, to_supplier_qty)
-         values ($1, $2, $3, 2, 2, $4, $5, $6)`,
-        [company.companyId, inspectionId, variantId, line.resell, line.damaged, line.toSupplier],
+         values ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [company.companyId, inspectionId, variantId, line.expected ?? 2, line.scanned ?? 2, line.resell, line.damaged, line.toSupplier],
       );
     }
     await db().query(
@@ -669,11 +670,13 @@ describe('đồng ý hoàn tiền sau kiểm hàng hoàn (#392)', () => {
     withCompany(company.companyId, () => onReturnInspected({ payload: { inspectionId, lines: [{ variantId, resellable: 2 }] } }, ctx));
 
   it.each([
-    ['bán lại hết', { resell: 2, damaged: 0, toSupplier: 0 }, 'pending'],
-    ['trả NCC (không biết lý do) không chặn', { resell: 1, damaged: 0, toSupplier: 1 }, 'pending'],
-    ['có món hỏng', { resell: 1, damaged: 1, toSupplier: 0 }, 'withheld'],
-  ] as const)('phiếu %s: refund_approval %s (#437)', async (_name, line, approval) => {
-    const { r, inspectionId } = await receivedReturn(false, line);
+    ['bán lại hết', [{ resell: 2, damaged: 0, toSupplier: 0 }], 'pending'],
+    ['trả NCC (không biết lý do) không chặn', [{ resell: 1, damaged: 0, toSupplier: 1 }], 'pending'],
+    ['có món hỏng', [{ resell: 1, damaged: 1, toSupplier: 0 }], 'withheld'],
+    ['quét thiếu', [{ scanned: 1, resell: 1, damaged: 0, toSupplier: 0 }], 'withheld'],
+    ['đủ món nhưng thêm món sai mẫu', [{ resell: 2, damaged: 0, toSupplier: 0 }, { expected: 0, scanned: 1, resell: 1, damaged: 0, toSupplier: 0 }], 'withheld'],
+  ] as const)('phiếu %s: refund_approval %s (#437)', async (_name, lines, approval) => {
+    const { r, inspectionId } = await receivedReturn(false, lines);
     await inspect(inspectionId, approving);
     const closed = await requestOf(r.externalId);
     expect(closed).toMatchObject({ status: 'closed', refund_approval: approval, needs_attention: approval === 'withheld' });

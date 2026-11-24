@@ -3,8 +3,8 @@
 import { findDoc, linesOfDocs } from '../repository/documents.ts';
 
 /**
- * Phiếu kiểm hàng hoàn có dòng thiếu (đi qua bước gửi duyệt phần thiếu, hay quét ít hơn dự kiến), sai mẫu
- * (`actual_variant_id`) hoặc hỏng (`damaged_qty > 0`); phiếu không thấy thì false. Trả NCC không tính: dòng phiếu không ghi
+ * Phiếu kiểm hàng hoàn có dòng thiếu (đi qua bước gửi duyệt phần thiếu, hay quét ít hơn dự kiến), sai mẫu (dòng ngoài
+ * yêu cầu: dự kiến 0, quét từ 1) hoặc hỏng (`damaged_qty > 0`); phiếu không thấy thì false. Trả NCC không tính: dòng phiếu không ghi
  * lý do trả NCC, nên app không biết phần đó có phải do hỏng (Thành chốt 24/11/2026, #437).
  */
 export async function returnInspectionClaimed(documentId: string): Promise<boolean> {
@@ -13,6 +13,9 @@ export async function returnInspectionClaimed(documentId: string): Promise<boole
   if (doc.claimFlag) return true;
   const lines = (await linesOfDocs([documentId])).get(documentId) ?? [];
   return lines.some(
-    (l) => (l.damagedQty ?? 0) > 0 || l.actualVariantId !== null || (l.expectedQty !== null && l.scannedQty !== null && l.scannedQty < l.expectedQty),
+    (l) =>
+      (l.damagedQty ?? 0) > 0 ||
+      ((l.expectedQty ?? 0) === 0 && (l.scannedQty ?? 0) > 0) ||
+      (l.expectedQty !== null && l.scannedQty !== null && l.scannedQty < l.expectedQty),
   );
 }
