@@ -36,7 +36,7 @@ Cột:
 
 - `id` uuid · khoá chính · mặc định `gen_random_uuid()`
 - `company_id` uuid · not null → `core.companies` (theo công ty)
-- `kind` enum `finance.config_kind` · not null: `fee` | `tax_regime` | `tax_rules` | `mismatch_threshold` | `min_margin`
+- `kind` enum `finance.config_kind` · not null: `fee` | `tax_regime` | `tax_rules` | `mismatch_threshold` | `min_margin` | `account_map`
 - `shop_id` uuid · null → `channel.shops.id` (tham chiếu, không có khoá ngoại)
 - `status` enum `finance.config_status` · not null · mặc định `'draft'`: `draft` | `pending_approval` | `rejected` | `scheduled` | `active` | `superseded` | `cancelled`
 - `payload` jsonb · not null
