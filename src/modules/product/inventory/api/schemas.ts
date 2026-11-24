@@ -24,7 +24,7 @@ const page = {
 
 export const StockListQuery = z.object({
   ...page,
-  groupId: z.uuid('Nhóm hàng không hợp lệ').optional(),
+  groupId: z.uuid('Danh mục sản phẩm không hợp lệ').optional(),
   productId: z.uuid('Sản phẩm không hợp lệ').optional(),
   belowMin: z
     .enum(['true', 'false'], 'belowMin là true hoặc false')
@@ -151,7 +151,10 @@ const qty = z.number('Số lượng là số nguyên').int('Số lượng là s�
 const DocLineInput = z.object({
   variantId: z.uuid('Biến thể không hợp lệ'),
   quantity: qty,
-  counted: qty,
+  // Kiểm kê: `null` (hay bỏ trống) là chưa đếm; gửi duyệt, ghi sổ khi còn dòng chưa đếm thì 422 (#569, Documents/21 §18.6.2)
+  counted: qty.nullable(),
+  // Kiểm kê đầu kỳ: nguồn số đếm (#569, Documents/21 §18.6.2); phiếu khác bỏ qua
+  countSource: z.enum(['manual', 'platform'], 'Nguồn số đếm là manual hoặc platform').nullable().optional(),
   scanned: qty,
   resell: qty,
   damaged: qty,
@@ -214,7 +217,17 @@ const StockDocLine = z.object({
   attributesLabel: z.string(),
   quantity: z.int().meta({ description: 'Kiểm kê: Δ = đếm − sổ; kiểm hàng về: số quét; phiếu khác: số lượng' }),
   bookQty: z.int().optional(),
-  counted: z.int().optional(),
+  counted: z.int().nullable().optional().meta({ description: 'Kiểm kê: `null` là chưa đếm' }),
+  platformStock: z
+    .int()
+    .nullable()
+    .optional()
+    .meta({ description: 'Kiểm kê đầu kỳ: tồn trên sàn ở gian hàng của phiếu (bản sao SKU sàn), chỉ tham khảo; phiếu khác `null`' }),
+  countSource: z
+    .enum(['manual', 'platform'])
+    .nullable()
+    .optional()
+    .meta({ description: 'Kiểm kê đầu kỳ: nguồn số đếm; `null` khi chưa đếm hoặc phiếu khác' }),
   expected: z.int().optional(),
   resell: z.int().optional(),
   damaged: z.int().optional(),

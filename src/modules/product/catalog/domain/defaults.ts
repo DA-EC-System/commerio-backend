@@ -66,7 +66,7 @@ export const GROUP_SPLITS: Readonly<Partial<Record<DefaultGroup, readonly Defaul
 
 export interface DefaultAttribute {
   readonly kind: PlatformKind;
-  /** Tối đa 15 ký tự (CHECK `attributes_name_length`). */
+  /** Tối đa 20 ký tự (CHECK `attributes_name_length`). */
   readonly name: string;
   /** `[giá trị, mã]` theo thứ tự hiện; giá trị ≤ 20 ký tự, mã `^[A-Z0-9]{1,6}$`. */
   readonly values: readonly (readonly [value: string, code: string])[];

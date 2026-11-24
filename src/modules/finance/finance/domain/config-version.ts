@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { vnDateText } from '../../../../shared/vn-format.ts';
 import { defineMachine } from '../../../core/index.ts';
 
-export const CONFIG_KINDS = ['fee', 'tax_regime', 'tax_rules', 'mismatch_threshold', 'min_margin'] as const;
+export const CONFIG_KINDS = ['fee', 'tax_regime', 'tax_rules', 'mismatch_threshold', 'min_margin', 'account_map'] as const;
 export type ConfigKind = (typeof CONFIG_KINDS)[number];
 
 /** Tên loại cấu hình người dùng thấy (chép `CONFIG_KINDS` của FE `src/features/finance/lifecycleShared.ts`). */
@@ -14,6 +14,7 @@ const CONFIG_KIND_NAMES: Record<ConfigKind, string> = {
   tax_rules: 'Biểu thuế',
   mismatch_threshold: 'Ngưỡng chênh lệch đối soát',
   min_margin: 'Lãi tối thiểu trên giá vốn',
+  account_map: 'Tài khoản kế toán',
 };
 
 /** Nhãn nhật ký: "Phí sàn <gian hàng> từ dd/MM/yyyy"; thiếu gian hàng hay ngày thì bỏ phần đó (#352). */
@@ -37,6 +38,50 @@ const pct = (label: string) =>
     .multipleOf(0.01, `${label} tối đa hai chữ số thập phân`);
 const DEFAULT_ROUND_STEP = 1000;
 const vnd = (label: string) => z.number(`${label} là số đồng`).int(`${label} là số nguyên đồng`).min(0, `${label} không âm`);
+
+/**
+ * Vai trò tài khoản trong sổ xuất cho phần mềm kế toán (#232; Documents/25 §10.5). Số hiệu do công ty khai trong bản
+ * `account_map`, không viết cứng: mỗi loại dòng sổ ghi Nợ/Có theo vai trò (`domain/misa-export.ts`).
+ */
+export const ACCOUNT_ROLES = [
+  'platformReceivable',
+  'customerReceivable',
+  'revenue',
+  'outputVat',
+  'otherIncome',
+  'sellingExpense',
+  'adminExpense',
+  'otherExpense',
+  'withheldTax',
+  'cogs',
+  'inventory',
+  'bank',
+  'cash',
+  'supplierPayable',
+] as const;
+export type AccountRole = (typeof ACCOUNT_ROLES)[number];
+export const ACCOUNT_ROLE_NAMES: Record<AccountRole, string> = {
+  platformReceivable: 'Tài khoản phải thu sàn',
+  customerReceivable: 'Tài khoản phải thu khách hàng',
+  revenue: 'Tài khoản doanh thu bán hàng',
+  outputVat: 'Tài khoản thuế GTGT đầu ra',
+  otherIncome: 'Tài khoản thu nhập khác',
+  sellingExpense: 'Tài khoản chi phí bán hàng',
+  adminExpense: 'Tài khoản chi phí quản lý',
+  otherExpense: 'Tài khoản chi phí khác',
+  withheldTax: 'Tài khoản thuế bị khấu trừ',
+  cogs: 'Tài khoản giá vốn',
+  inventory: 'Tài khoản hàng hoá',
+  bank: 'Tài khoản tiền gửi ngân hàng',
+  cash: 'Tài khoản tiền mặt',
+  supplierPayable: 'Tài khoản phải trả nhà cung cấp',
+};
+/** Số hiệu tài khoản chi tiết: 3–10 chữ số (MISA chỉ nhận tài khoản chi tiết đã có trong danh mục). */
+const accountCode = (label: string) => z.string(`${label} là số hiệu tài khoản`).regex(/^[0-9]{3,10}$/, `${label} là 3–10 chữ số`);
+/** Mã đối tượng của gian hàng trong phần mềm kế toán. */
+const objectCode = z
+  .string('Mã đối tượng là chuỗi')
+  .regex(/^[A-Za-z0-9._-]{1,30}$/, 'Mã đối tượng 1–30 ký tự: chữ không dấu, số, dấu chấm, gạch ngang, gạch dưới');
 
 /**
  * Nội dung `payload` theo `kind` (§21.4). `tax_rules`: `vatPct`, `pitPct` là thuế sàn khấu trừ của hộ kinh doanh, cá nhân
@@ -86,6 +131,15 @@ export const PAYLOAD_SCHEMAS = {
   }),
   mismatch_threshold: z.strictObject({ abs: vnd('Ngưỡng chênh lệch đối soát'), pct: pct('Ngưỡng chênh lệch đối soát theo phần trăm'), resolveLimit: vnd('Hạn mức tự xử lý chênh lệch') }),
   min_margin: z.strictObject({ pct: pct('Lãi tối thiểu trên giá vốn') }),
+  account_map: z.strictObject({
+    accounts: z.strictObject(
+      Object.fromEntries(ACCOUNT_ROLES.map((r) => [r, accountCode(ACCOUNT_ROLE_NAMES[r])])) as Record<AccountRole, ReturnType<typeof accountCode>>,
+    ),
+    shopObjects: z
+      .record(z.uuid('Gian hàng không hợp lệ'), objectCode)
+      .refine((m) => Object.keys(m).length <= 200, 'Tối đa 200 gian hàng')
+      .optional(),
+  }),
 } satisfies Record<ConfigKind, z.ZodType>;
 
 export type ConfigPayload<K extends ConfigKind = ConfigKind> = z.infer<(typeof PAYLOAD_SCHEMAS)[K]>;

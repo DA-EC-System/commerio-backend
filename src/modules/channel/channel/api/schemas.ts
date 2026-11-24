@@ -90,6 +90,7 @@ export const Shop = z
     platform: z.string().meta({ description: 'Mã sàn (`ShopPlatform.platform`)' }),
     externalShopId: z.string().meta({ description: 'Mã gian hàng (người bán) phía sàn' }),
     shopName: z.string(),
+    displayName: z.string().nullable().meta({ description: 'Tên người dùng đặt (1–60 ký tự); null thì hiện `shopName` (#565)' }),
     region: z.string().nullable(),
     status: z.enum(['connecting', 'active', 'needs_reauth', 'disconnected']),
     accessExpiresAt: iso.nullable(),
@@ -103,6 +104,8 @@ export const Shop = z
     lastOrderSyncAt: iso.nullable(),
     orderCutoffAt: iso.nullable().meta({ description: 'Mốc kéo đơn, null khi chưa thiết lập' }),
     ordersPulledOkAt: iso.nullable().meta({ description: 'Giờ bắt đầu lượt lấy đơn gần nhất chạy xong trọn (#223)' }),
+    openOrdersPulledAt: iso.nullable().meta({ description: 'Lượt kéo đơn còn mở sau thiết lập đã xong; null khi chưa xong (#198)' }),
+    unlinkedSkuCount: z.number().int().meta({ description: 'Số SKU sàn chưa liên kết, không tính SKU chờ CEO duyệt (#565)' }),
     ordersStale: z.boolean().meta({
       description:
         'Đơn chưa cập nhật (21 §18.6.6): mất uỷ quyền, hoặc 15 phút chưa có lượt lấy đơn chạy trọn. SKU bán ở gian hàng này tạm không đẩy tăng tồn trên mọi gian hàng; listing bị giữ có `stockSyncError.code = orders_stale`',
@@ -360,6 +363,17 @@ export const PriceQuoteBody = z
       .max(200, 'Tối đa 200 dòng'),
   })
   .meta({ id: 'PriceQuoteInput' });
+/** Quy tắc làm tròn đã áp cho giá bộ lọc (21 §18.11, be#566). */
+export const PriceRounding = z
+  .object({
+    step: z.number().int().meta({ description: 'Bậc làm tròn lên (đồng) của cấu hình phí đang áp' }),
+    ending: z.number().int().nullable().meta({ description: 'Đuôi giá; null khi đuôi 0' }),
+    before: z.number().int().meta({ description: 'Giá sau khi bù phí, trước khi làm tròn (làm tròn tới đồng)' }),
+    after: z.number().int().meta({ description: 'Giá niêm yết sau khi làm tròn' }),
+  })
+  .strict()
+  .meta({ id: 'PriceRounding' });
+const rounding = PriceRounding.nullable().meta({ description: 'null khi giá gõ tay hoặc không tính bằng bộ lọc giá (21 §18.11)' });
 export const PriceQuote = z
   .object({
     shopId: z.string(),
@@ -368,6 +382,7 @@ export const PriceQuote = z
     netReceived: z.number().nullable(),
     belowFloor: z.boolean().nullable().meta({ description: 'null khi người gọi thiếu `inventory.cost.view` (R4: dò giá thấp nhất suy ra giá vốn), chưa có giá vốn, hoặc dòng bị chặn' }),
     feeWarning: z.enum(['over_50']).nullable(),
+    rounding,
     feeConfigId: z.string().nullable(),
     blocked: z.object({ code: z.enum(['price_missing', 'fee_config_invalid', 'fee_not_configured']) }).nullable(),
     marginPct: z.number().nullable().meta({ description: 'null khi người gọi thiếu `inventory.cost.view` (R4) hoặc chưa có giá vốn' }),
@@ -384,7 +399,36 @@ export const UpdateContentBody = z
 
 const listingStatus = z.enum(['pushing', 'push_failed', 'under_review', 'rejected', 'live', 'hidden', 'platform_hold', 'delisted']);
 const syncState = z.enum(['synced', 'pending', 'error']);
-const syncError = z.object({ code: z.string(), message: z.string(), at: iso }).strict().nullable();
+
+/** Chỗ sửa của mục chặn (21 §18.10 `BlockerTarget`, cộng `listing` của 18.11; kiểu ở `domain/blocker.ts`). */
+export const BlockerTarget = z
+  .discriminatedUnion('kind', [
+    z.object({ kind: z.literal('category') }).strict(),
+    z.object({ kind: z.literal('spec_attribute'), attributeCode: z.string() }).strict(),
+    z.object({ kind: z.literal('axis'), attributeId: z.string().optional() }).strict(),
+    z.object({ kind: z.literal('variant_field'), field: z.enum(['price', 'weight', 'dimensions']) }).strict(),
+    z.object({ kind: z.literal('product_field'), field: z.enum(['images', 'variantImages', 'sizeChart', 'name']) }).strict(),
+    z.object({ kind: z.literal('shop'), field: z.enum(['fee_config', 'category_permission']) }).strict(),
+    z.object({ kind: z.literal('platform_product'), externalProductIds: z.array(z.string()) }).strict(),
+    z.object({ kind: z.literal('listing'), listingId: z.uuid().nullable() }).strict(),
+  ])
+  .meta({ id: 'BlockerTarget' });
+
+/** Lỗi lượt đẩy đã dịch (#567, 21 §18.6.4 "Dịch lỗi đẩy của sàn"); bản ghi trước #567 trả `null` ở các trường mới. */
+const pushError = z
+  .object({
+    code: z.string(),
+    kind: z.enum(['data', 'platform', 'connection']).nullable(),
+    message: z.string(),
+    target: BlockerTarget.nullable(),
+    variantId: z.string().nullable(),
+    platformCode: z.string().nullable(),
+    platformMessage: z.string().nullable(),
+    requestId: z.string().nullable(),
+    at: iso,
+  })
+  .strict()
+  .nullable();
 
 const pendingRevision = z
   .object({ status: z.enum(['auditing', 'failed']), rejectReason: z.string().nullable(), at: iso })
@@ -435,17 +479,22 @@ export const ChannelListing = z
     sellerSku: z.string().nullable(),
     status: listingStatus,
     rejectReason: z.string().nullable(),
-    pushError: syncError.meta({
+    pushError: pushError.meta({
       description:
-        'Lỗi của lượt đẩy (21 §18.6.4): `marketplace_rejected`, `marketplace_unavailable` (`message` là câu của sàn); `shop_not_eligible`, `listing_check_failed` (sàn kiểm trước khi tạo sản phẩm, #305); `shop_not_connected` (gian hàng ngắt khi việc chạy); `sku_exists_on_platform` (#399: SellerSku đã có trên sàn từ trước lượt đẩy, sản phẩm của người bán; dùng Ghép SKU); mã chặn theo dòng (`not_found`, `sku_not_ready`, `price_missing`…) khi dữ liệu đổi giữa lúc xếp việc và lúc chạy',
+        'Lỗi của lượt đẩy (21 §18.6.4). `code` là mã đã dịch: mã của bảng dịch sàn (`attribute_value_invalid`, `weight_out_of_range`, `attribute_required`, `axis_unmapped`, `images_missing`, `image_rejected`, `category_not_leaf`, `name_length`, `variant_images_missing`), không dịch được thì `marketplace_rejected`; lỗi tạm `marketplace_unavailable`; `shop_not_eligible`, `listing_check_failed` (#305); `shop_not_connected`; `sku_exists_on_platform` (#399); mã chặn theo dòng khi dữ liệu đổi giữa lúc xếp việc và lúc chạy. `message` là câu tiếng Việt cho người bán. `kind`: `data` (sửa được trong app), `platform` (sàn từ chối vì lý do ngoài dữ liệu), `connection` (lỗi tạm). `target` chỉ chỗ sửa (`BlockerTarget`), null khi không suy được. `platformCode`, `platformMessage` là mã và câu gốc của sàn (Lazada lấy từ `detail`), `requestId` của sàn. Lỗi ghi trước #567 có `kind`, `target`, `variantId`, `platformCode`, `platformMessage`, `requestId` là null',
     }),
     pushAttempts: z.number().int().meta({ description: 'Số lần đã gọi sàn trong lượt đẩy hiện tại (đặt về 0 khi bấm đẩy)' }),
     hiddenBy: z.enum(['platform', 'zero_stock']).nullable(),
     stockSync: syncState,
     priceSync: syncState,
     platformStock: z.number().int().nullable(),
-    stockSyncError: syncError.meta({ description: 'Lỗi lần đẩy tồn gần nhất của riêng SKU này; `message` là câu của sàn' }),
-    priceSyncError: syncError,
+    stockSyncError: pushError.meta({
+      description:
+        'Lỗi lần đẩy tồn gần nhất của riêng SKU này, cùng hình `pushError` (#571, 21 §18.6.4). Lỗi sàn: `code` đã dịch bằng bảng dịch của sàn (`promotion_locked`, `semi_hosted_product`…), không dịch được thì `marketplace_rejected`; `message` là câu tiếng Việt, mã và câu gốc ở `platformCode`, `platformMessage`. Lỗi do app giữ (`stock_not_counted`, `orders_stale`, `variant_missing`, `promotion_locked` đọc trước khi đẩy) có `kind`, `target`, `platformCode`, `platformMessage`, `requestId` null',
+    }),
+    priceSyncError: pushError.meta({
+      description: 'Lỗi lần đẩy giá gần nhất, cùng hình `stockSyncError` (`price_invalid` chỉ ô giá; `price_missing` do app giữ)',
+    }),
     qcAlert: z.null().meta({ description: 'Cảnh báo QC của sàn; chưa đọc, luôn null' }),
     lastPushedAt: iso.nullable(),
     lastPushedPrice: z.number().int().nullable(),
@@ -552,6 +601,161 @@ export const RemoteSkuList = z
   .strict()
   .meta({ id: 'RemoteSkuList' });
 
+// ---- Liên kết SKU sàn gom theo sản phẩm sàn (#565, Documents/21 §18.12) ----
+
+/** Lượt Tải lại chạy nền (#361), dùng chung cho `remote-skus` và `remote-products`. */
+const RemoteSkuRefresh = RemoteSkuList.shape.refresh;
+
+export const RemoteProductsQuery = z.object({
+  status: z.enum(['unlinked', 'linked', 'pending', 'all']).default('unlinked').meta({
+    description:
+      '`unlinked`: SKU chưa có listing chưa gỡ và không chờ duyệt; `linked`: có listing chưa gỡ (`mapped`, hoặc `unmanaged` đã duyệt); `pending`: chỉ có yêu cầu chờ CEO duyệt',
+  }),
+  search: z
+    .string()
+    .trim()
+    .max(200, 'Tối đa 200 ký tự')
+    .refine((s) => s.length === 0 || s.length >= 2, 'Nhập ít nhất 2 ký tự')
+    .optional()
+    .meta({ description: 'Tên (cả tên tiếng Anh), SKU người bán, mã SKU sàn, mã sản phẩm sàn; bỏ dấu, không phân biệt hoa thường' }),
+  decision: z
+    .enum(['create', 'link', 'skip', 'unmanaged', 'none'])
+    .optional()
+    .meta({
+      description:
+        'Chỉ gian hàng `connecting` và người gọi có `channel.shop.connect`: lọc theo lựa chọn trong nháp thiết lập (`none`: SKU chưa có lựa chọn); còn lại bỏ qua',
+    }),
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(50, 'Tối đa 50 sản phẩm mỗi trang').default(20),
+});
+
+const RemoteSkuRowSchema = z
+  .object({
+    externalSkuId: z.string(),
+    sellerSku: z.string(),
+    title: z.string().meta({ description: 'Tên SKU trên sàn người mua VN thấy' }),
+    titleEn: z.string().nullable().meta({ description: 'Tên tiếng Anh; null khi sàn không có (#396)' }),
+    variantLabel: z.string().nullable().meta({ description: 'Nhãn biến thể sàn trả (giá trị thuộc tính bán, vd "Đỏ, M"); null khi sàn không có' }),
+    platformStock: z.number().int().meta({ description: 'Tồn trên sàn theo bản sao' }),
+    available: z.number().int().nullable().meta({
+      description:
+        'Số có thể bán của biến thể dòng đang trỏ tới: `matchedVariantId`, hoặc `decision.variantId` khi nháp chọn `link`; dòng `create`, `skip`, `unmanaged`, chưa quyết thì null (FE coi dòng `create` là 0)',
+    }),
+    matchedVariantId: z.uuid().nullable(),
+    mode: z.enum(['mapped', 'unmanaged']).nullable().meta({ description: 'Ghép hiện hành; null khi chưa ghép (kể cả đang chờ CEO duyệt "không quản tồn")' }),
+    listingId: z.uuid().nullable().meta({ description: 'Listing chưa gỡ của SKU sàn này (kể cả dòng chỉ chờ duyệt); CEO dùng để gọi `mapping/approve|reject`' }),
+    listingVersion: z.number().int().nullable(),
+    pendingMapping,
+    remoteTitleChanged: RemoteTitleChanged,
+    suggestion: z
+      .object({
+        variantId: z.uuid(),
+        sku: z.string(),
+        productName: z.string(),
+        match: z.enum(['sku', 'name']),
+        score: z.number().min(0).max(1).nullable().meta({ description: 'Độ giống tên 0..1, chỉ khi `match = name`' }),
+        confidence: z.enum(['high', 'medium', 'low']).meta({ description: '`high`: trùng SKU người bán; `medium`: tên giống từ 0,7; `low`: dưới 0,7' }),
+      })
+      .strict()
+      .nullable()
+      .meta({ description: 'Gợi ý liên kết cho SKU `unlinked` của trang; FE không tự chọn sẵn gợi ý `name`' }),
+    canCreate: z.boolean(),
+    cannotCreateReason: z.enum(['no_seller_sku', 'sku_too_long', 'sku_taken', 'no_permission', 'already_matched']).nullable(),
+    decision: z
+      .object({ action: z.enum(['link', 'create', 'skip', 'unmanaged']), variantId: z.uuid().nullable(), groupId: z.uuid().nullable() })
+      .strict()
+      .nullable()
+      .meta({
+        description:
+          'Lựa chọn trong nháp thiết lập; chỉ gian hàng `connecting` và người gọi có `channel.shop.connect`, còn lại null. `groupId`: danh mục nháp chọn cho sản phẩm sàn, chỉ ở dòng `create`',
+      }),
+  })
+  .strict()
+  .meta({ id: 'RemoteSkuRow' });
+
+export const RemoteProductList = z
+  .object({
+    items: z.array(
+      z
+        .object({
+          externalProductId: z.string(),
+          title: z.string().meta({ description: 'Tên sản phẩm sàn (theo SKU đầu, bỏ phần nhãn biến thể)' }),
+          titleEn: z.string().nullable(),
+          imageUrl: z.string().nullable().meta({ description: 'Ảnh sản phẩm trên sàn; null khi sàn chưa trả' }),
+          externalCategoryId: z.string().nullable().meta({ description: 'Category lá trên sàn; null khi sàn chưa trả' }),
+          externalCategoryPath: z.string().nullable().meta({
+            description: 'Đường dẫn category tra trong cây đã đồng bộ, không gọi sàn; null khi chưa có category hoặc category chưa có trong cây',
+          }),
+          suggestedGroupId: z.uuid().nullable().meta({ description: 'Danh mục gợi ý; null tới khi có bảng ánh xạ category (be#569)' }),
+          skus: z.array(RemoteSkuRowSchema),
+        })
+        .strict()
+        .meta({ id: 'RemoteProduct' }),
+    ),
+    total: z.number().int().meta({ description: 'Số sản phẩm sàn khớp lọc' }),
+    page: z.number().int(),
+    pageSize: z.number().int(),
+    counts: z
+      .object({ unlinked: z.number().int(), linked: z.number().int(), pending: z.number().int() })
+      .strict()
+      .meta({ description: 'Số SKU của cả gian hàng theo trạng thái, không theo `search`' }),
+    totals: z
+      .object({
+        create: z.number().int().nullable(),
+        link: z.number().int().nullable(),
+        skip: z.number().int().nullable(),
+        unmanaged: z.number().int().nullable(),
+        none: z.number().int().nullable(),
+        drifted: z.number().int(),
+        matched: z.number().int(),
+        platformStockSum: z.number().int().nullable(),
+        availableSum: z.number().int().nullable(),
+      })
+      .strict()
+      .meta({
+        description:
+          'Số SKU khớp cả bộ lọc (`status`, `search`, `decision`), không theo trang. `create`…`none`: theo nháp, chỉ gian hàng `connecting` và người gọi có `channel.shop.connect`, còn lại null. `drifted`/`matched`: SKU có `available` (dòng `create` tính 0) khác/bằng `platformStock`. `platformStockSum`: tổng `platformStock` của mọi SKU khớp lọc; `availableSum`: tổng `available` của các SKU có `available` (cùng tập với `drifted` + `matched`); cả hai null khi không có SKU nào',
+      }),
+    syncedAt: z.iso.datetime({ offset: true }).nullable(),
+    refresh: RemoteSkuRefresh,
+    nameMatchSkipped: z.boolean().meta({ description: 'Bỏ gợi ý theo tên vì quá nhiều cặp phải so hoặc quá giờ' }),
+  })
+  .strict()
+  .meta({ id: 'RemoteProductList' });
+
+export const SkuLinksBody = z
+  .object({
+    items: z
+      .array(
+        z.object({
+          externalSkuId: z.string('Thiếu SKU sàn').trim().min(1, 'Thiếu SKU sàn').max(200),
+          action: z.enum(['link', 'create', 'skip', 'unmanaged'], 'Thao tác không hợp lệ'),
+          variantId: z.uuid('Biến thể không hợp lệ').nullable().optional(),
+        }),
+      )
+      .max(200, 'Tối đa 200 SKU mỗi lần')
+      .optional(),
+    groups: z
+      .array(z.object({ externalProductId: z.string('Thiếu sản phẩm sàn').trim().min(1).max(200), groupId: z.uuid('Chọn danh mục sản phẩm') }))
+      .max(200, 'Tối đa 200 sản phẩm mỗi lần')
+      .optional(),
+    draftVersion: z.number().int().min(0).optional().meta({ description: 'Bắt buộc khi gian hàng `connecting`; gian hàng `active` bỏ qua' }),
+  })
+  .meta({ id: 'SkuLinksInput' });
+
+export const SkuLinkResult = z
+  .object({
+    externalSkuId: z.string(),
+    result: z.enum(['linked', 'pending', 'created', 'error']).meta({ description: '`pending`: chờ CEO duyệt; `created`: tạo SKU kho rồi liên kết' }),
+    variantId: z.uuid().nullable(),
+    productId: z.uuid().nullable(),
+    code: z.string().nullable().meta({ description: 'Mã lỗi khi `error`' }),
+    message: z.string().nullable(),
+  })
+  .strict()
+  .meta({ id: 'SkuLinkResult' });
+export const SkuLinksResult = z.object({ results: z.array(SkuLinkResult) }).strict().meta({ id: 'SkuLinksResult' });
+
 export const MatchBody = z
   .object({
     externalSkuId: z.string('Thiếu SKU sàn').trim().min(1, 'Thiếu SKU sàn').max(200),
@@ -589,7 +793,7 @@ export const MatchBulkResult = z
   .strict()
   .meta({ id: 'ListingMatchBulkResult' });
 export const CreateVariantParams = z.object({ id: z.string(), externalSkuId: z.string().trim().min(1).max(200) });
-export const CreateVariantBody = z.object({ groupId: z.uuid('Chọn nhóm hàng') }).meta({ id: 'RemoteSkuCreateVariantInput' });
+export const CreateVariantBody = z.object({ groupId: z.uuid('Chọn danh mục sản phẩm') }).meta({ id: 'RemoteSkuCreateVariantInput' });
 export const CreateVariantResult = z
   .object({
     variantId: z.uuid(),
@@ -692,6 +896,7 @@ export const ListingRow = z
       .nullable()
       .meta({ description: 'Giá đang bán dưới giá thấp nhất; null khi chưa có giá vốn hoặc chưa có phí. Không kèm giá vốn (R4)' }),
     feeWarning: z.enum(['over_50']).nullable().meta({ description: 'Tổng phí và thuế của gian hàng trên 50%' }),
+    rounding,
     listing: ChannelListing.nullable(),
     remoteTitleChanged: RemoteTitleChanged,
     externalCategoryId: z.string().nullable().meta({
@@ -707,6 +912,10 @@ export const ListingRow = z
     }),
     stockHeldReason: z.enum(['shop_waiting_opening', 'not_counted']).nullable().meta({
       description: 'Lý do chưa đẩy tồn, cùng nghĩa và thứ tự xét với `listings/match-preview`; khác null thì `stockToPush` null (21 §18.9 R3)',
+    }),
+    lastSyncFailedAt: iso.nullable().meta({
+      description:
+        'Giờ lần đẩy lỗi hoặc bị giữ gần nhất (`at` mới hơn của `stockSyncError`, `priceSyncError` còn hiệu lực); null khi không có lỗi. `listing.lastPushedAt` là lần thành công gần nhất (21 §18 "Kết quả lượt đồng bộ")',
     }),
   })
   .strict()
@@ -724,6 +933,50 @@ export const ProductListingsParams = z.object({ productId: z.string().max(60) })
 export const ProductListingRow = ListingRow.extend({ shopId: z.uuid(), shopName: z.string(), platform: z.string() }).meta({ id: 'ProductListingRow' });
 export const ProductListingList = z.object({ items: z.array(ProductListingRow) }).strict().meta({ id: 'ProductListingList' });
 
+
+export const Blocker = z
+  .object({
+    code: z.string().meta({ description: 'Mã chặn (21 §18.10 `Blocker.code`, cộng mã theo listing và gom biến thể của 18.11)' }),
+    label: z.string().meta({ description: 'Câu cho người bán, BE dựng' }),
+    scope: z.enum(['shop', 'platform', 'common']),
+    target: BlockerTarget,
+    variantIds: z.array(z.uuid()).meta({ description: 'Rỗng khi mục chặn cả sản phẩm' }),
+  })
+  .strict()
+  .meta({ id: 'Blocker' });
+
+export const ReadinessQuery = z.object({ shopId: z.uuid().optional() }).strict();
+
+export const CategoryState = z
+  .object({
+    state: z.enum(['chosen', 'suggested', 'none']),
+    externalCategoryId: z.string().nullable(),
+    path: z.string().nullable(),
+    source: z.enum(['push', 'match', 'group', 'recent']).nullable(),
+    maxAxes: z.number().int().nullable().meta({ description: 'null khi attribute của leaf chưa lấy về' }),
+    combinable: z.boolean().nullable().meta({ description: 'Leaf có đích ghép thuộc tính biến thể (18.8.3); null khi chưa biết' }),
+  })
+  .strict()
+  .meta({ id: 'CategoryState' });
+
+export const ShopReadiness = z
+  .object({
+    shopId: z.uuid(),
+    shopName: z.string(),
+    platform: z.string(),
+    status: z.enum(['ready', 'blocked']),
+    counts: z.object({ ready: z.number().int(), blocked: z.number().int(), listed: z.number().int() }).strict(),
+    category: CategoryState,
+    blockers: z.array(Blocker).meta({ description: 'Mỗi mục thiếu một phần tử; thứ tự: mục theo sàn, mục của SKU, mục của gian hàng' }),
+    variants: z.array(
+      z.object({ variantId: z.uuid(), status: z.enum(['ready', 'blocked', 'listed']), blockerCodes: z.array(z.string()) }).strict(),
+    ),
+  })
+  .strict()
+  .meta({ id: 'ShopReadiness' });
+
+export const ProductReadiness = z.object({ items: z.array(ShopReadiness) }).strict().meta({ id: 'ProductReadiness' });
+
 export const PushResult = z
   .object({
     variantId: z.string(),
@@ -731,18 +984,70 @@ export const PushResult = z
     status: listingStatus.nullable().meta({ description: '`pushing` khi đã xếp việc; dòng bị chặn: trạng thái listing hiện có' }),
     code: z.string().nullable().meta({
       description:
-        'Null khi đã xếp việc. Dòng bị chặn: `not_found`, `push_in_progress`, `already_listed` (`under_review`, `live`, `hidden`), `mapping_pending` (listing lỗi đang chờ CEO duyệt ghép SKU sàn có sẵn), `sku_not_ready`, `price_missing`, `category_unmapped`, `dimensions_missing`, `images_missing`',
+        'Null khi đã xếp việc. Dòng bị chặn: `not_found`, `push_in_progress`, `already_listed` (`under_review`, `live`, `hidden`), `mapping_pending` (listing lỗi đang chờ CEO duyệt ghép SKU sàn có sẵn), `fee_not_configured` (lần đăng đầu, đăng lại sau gỡ hay sau lỗi mà gian hàng chưa có cấu hình phí, kể cả giá gõ tay; Documents/21 §18.9 R5), `sku_not_ready`, `price_missing`, `category_unmapped`, `dimensions_missing`, `images_missing`',
     }),
     message: z.string().nullable(),
+    blockers: z.array(Blocker).optional().meta({ description: 'Dòng bị chặn: mọi mục chặn kèm chỗ sửa (21 §18.10, §18.11); `code`, `message` là mục đầu' }),
   })
   .strict()
   .meta({ id: 'PushResult' });
 
 export const PushResults = z.object({ results: z.array(PushResult) }).strict().meta({ id: 'PushResults' });
 
+const variantIdList = z
+  .array(z.uuid('Biến thể không hợp lệ'), 'Chọn ít nhất một biến thể')
+  .min(1, 'Chọn ít nhất một biến thể')
+  .max(200, 'Tối đa 200 biến thể mỗi lần xem trước');
+
+/** Body của kiểm trước khi đăng hàng loạt (21 §18.11, be#566): như `push` nhưng tới 200 biến thể. */
+export const PushPreviewBody = z
+  .object({
+    variantIds: variantIdList,
+    listPrices: z
+      .record(z.string(), z.number('Giá là số đồng').int('Giá là số nguyên đồng').positive('Giá phải lớn hơn 0'))
+      .optional()
+      .meta({ description: 'Giá niêm yết người bán gõ theo biến thể; không làm tròn (`rounding` null)' }),
+  })
+  .superRefine((body, ctx) => {
+    const ids = new Set(body.variantIds);
+    for (const id of Object.keys(body.listPrices ?? {})) {
+      if (!ids.has(id)) ctx.addIssue({ code: 'custom', path: ['listPrices', id], message: 'Biến thể không nằm trong lần đăng này' });
+    }
+  })
+  .meta({ id: 'ListingPushPreviewInput' });
+
+export const PushPreviewRow = z
+  .object({
+    variantId: z.uuid(),
+    productId: z.uuid(),
+    productName: z.string(),
+    attributesLabel: z.string(),
+    sku: z.string(),
+    status: z.enum(['ready', 'blocked']),
+    blockers: z.array(Blocker).meta({
+      description:
+        'Cùng hàm với readiness (18.10) và `push`. Người gọi thiếu `inventory.cost.view` không nhận `below_floor` (lệnh đăng vẫn chặn)',
+    }),
+    listPrice: z.number().int().nullable().meta({ description: 'Giá lần đăng sẽ gửi (đã làm tròn); null khi chưa tính được' }),
+    rounding,
+    stockToPush: z.number().int().nullable(),
+    stockHeldReason: z.enum(['shop_waiting_opening', 'not_counted']).nullable(),
+    netReceived: z.number().nullable(),
+    feePct: z.number().nullable().meta({ description: '(listPrice − netReceived) / listPrice' }),
+    feeConfigId: z.string().nullable(),
+  })
+  .strict()
+  .meta({ id: 'PushPreviewRow' });
+
+export const PushPreview = z
+  .object({ rows: z.array(PushPreviewRow), summary: z.object({ ready: z.number().int(), blocked: z.number().int() }).strict() })
+  .strict()
+  .meta({ id: 'PushPreview' });
+
 export const ListingSyncResult = z
   .object({
     queued: z.boolean().meta({ description: '`true`: vừa xếp một lượt đồng bộ; `false`: gian hàng đã có lượt chờ, không xếp thêm' }),
+    runId: z.uuid().meta({ description: 'Lượt người bấm; lượt `queued` đang có thì cùng id (21 §18 "Kết quả lượt đồng bộ")' }),
   })
   .strict()
   .meta({ id: 'ListingSyncResult' });
@@ -782,9 +1087,9 @@ export const SetupBody = z
           'Biến thể người dùng chọn cho từng SKU sàn, `null` là bỏ qua; SKU không có trong mảng cũng bỏ qua. Dòng sai: 422 `errors["decisions.<i>"]` (21 §18.7.5)',
       }),
     createGroupId: z
-      .uuid('Chọn nhóm hàng')
+      .uuid('Chọn danh mục sản phẩm')
       .optional()
-      .meta({ description: 'Nhóm hàng cho sản phẩm tạo từ SKU sàn; bắt buộc khi có dòng `create` (#500, 21 §18.7.5)' }),
+      .meta({ description: 'Danh mục sản phẩm cho sản phẩm tạo từ SKU sàn; bắt buộc khi có dòng `create` (#500, 21 §18.7.5)' }),
     openingStock: z.enum(['push', 'stocktake'], 'Chọn cách xử lý tồn đầu kỳ'),
     returnWindowDays: z.number('Hạn trả hàng là số ngày').int('Hạn trả hàng là số ngày nguyên').nullable().optional().meta({
       description:
@@ -900,9 +1205,22 @@ export const UpdateShopBody = z
       .int('Hạn trả hàng là số ngày nguyên')
       .min(1, 'Hạn trả hàng từ 1 đến 60 ngày')
       .max(60, 'Hạn trả hàng từ 1 đến 60 ngày')
-      .meta({ description: 'Hạn trả hàng (ngày); chỉ sàn `capabilities.returnWindow = days` (#362)' }),
+      .optional()
+      .meta({ description: 'Hạn trả hàng (ngày); chỉ sàn `capabilities.returnWindow = days` (#362). Bỏ trống là giữ' }),
+    displayName: z
+      .string('Tên gian hàng là chuỗi')
+      .trim()
+      .min(1, 'Tên gian hàng từ 1 đến 60 ký tự')
+      .max(60, 'Tên gian hàng từ 1 đến 60 ký tự')
+      .nullable()
+      .optional()
+      .meta({ description: 'Tên đặt riêng (#565, 21 §18.7.1); `null` bỏ tên riêng, hiện tên sàn; bỏ trống là giữ' }),
   })
   .strict()
+  .refine((b) => b.returnWindowDays !== undefined || b.displayName !== undefined, {
+    message: 'Chọn ít nhất một thông tin để sửa',
+    path: ['returnWindowDays'],
+  })
   .meta({ id: 'ShopUpdateInput' });
 
 // Category và attribute của sàn (#400, Documents/21 §18.5).
@@ -931,6 +1249,11 @@ export const LeafDetailQuery = z
   })
   .meta({ id: 'PlatformLeafQuery' });
 
+const MAX_AXES = z.number().int().min(0).nullable().meta({
+  description: 'Số thuộc tính biến thể tối đa của leaf (21 §18.10, be#564); null khi không phải leaf, leaf chưa lấy attribute, hoặc sàn không khai',
+});
+const COMBINABLE = z.boolean().nullable().meta({ description: 'Leaf có đích ghép thuộc tính biến thể (21 §18.8.3, be#568); null khi chưa biết' });
+
 const platformCategoryShape = {
   externalId: z.string(),
   parentExternalId: z.string().nullable(),
@@ -942,6 +1265,8 @@ const platformCategoryShape = {
     description:
       '`externalId` từ gốc tới chính category, cùng thứ tự với `path` (commerio-backend#467); đọc từ cây đã đồng bộ, cha chưa có trong cây thì thiếu phần gốc',
   }),
+  maxAxes: MAX_AXES,
+  combinable: COMBINABLE,
 };
 export const PlatformCategory = z.object(platformCategoryShape).strict().meta({ id: 'PlatformCategory' });
 export const PlatformCategoryPage = z
@@ -1037,9 +1362,17 @@ export const ProductSpecSchema = z
 export const VariantCapabilitiesSchema = z
   .object({
     maxAxes: z.number().int().min(0),
-    customAxisName: z.boolean().meta({ description: 'false: sàn từ chối tên trục tự đặt' }),
+    customAxisName: z.boolean().meta({ description: 'false: sàn từ chối tên thuộc tính biến thể tự đặt' }),
     salesRequired: z.array(z.string()).meta({ description: 'Sales attribute bắt buộc phải có trong `axisMap`' }),
     addVariant: z.boolean().meta({ description: 'true: thêm được phân loại vào sản phẩm sàn đã có; false thì SKU bị chặn ở lần đẩy đầu chặn cả cha (§18.8.4)' }),
+    combineTarget: z.string().nullable().meta({
+      description: 'Mã sales attribute BE đề xuất để ghép khi sản phẩm nhiều thuộc tính biến thể hơn `maxAxes`; null khi leaf không ghép được (#568)',
+    }),
+    maxValueLength: z.number().int().positive().nullable().meta({ description: 'Số ký tự tối đa của giá trị thuộc tính biến thể ghép; null: sàn không công bố' }),
+    maxAxisValues: z.number().int().positive().nullable().meta({ description: 'Số giá trị tối đa của thuộc tính biến thể ghép; null: sàn không công bố' }),
+    maxAxisNameLength: z.number().int().positive().nullable().meta({
+      description: 'Số ký tự tối đa của tên thuộc tính biến thể tự đặt (`__custom`); dài hơn thì `missing` `axis_name_too_long` (#572). Lazada 50, TikTok 20',
+    }),
   })
   .strict()
   .meta({ id: 'VariantCapabilities' });
@@ -1167,7 +1500,7 @@ export const CategorySuggestionsQuery = z.object({
 });
 const CATEGORY_PERMISSION = z.enum(['available', 'invite_only', 'non_main_category', 'prohibited']).nullable();
 const UsedCategory = z
-  .object({ externalId: z.string(), path: z.string(), productCount: z.number().int().min(1), permission: CATEGORY_PERMISSION })
+  .object({ externalId: z.string(), path: z.string(), productCount: z.number().int().min(1), permission: CATEGORY_PERMISSION, maxAxes: MAX_AXES, combinable: COMBINABLE })
   .strict();
 export const CategorySuggestionsView = z
   .object({
@@ -1178,10 +1511,12 @@ export const CategorySuggestionsView = z
           path: z.string(),
           permission: CATEGORY_PERMISSION,
           usedByCompany: z.boolean().meta({ description: 'Công ty đã dùng category này trong spec của sản phẩm nào đó trên sàn' }),
+          maxAxes: MAX_AXES,
+          combinable: COMBINABLE,
         })
         .strict(),
     ),
-    group: z.array(UsedCategory).max(5).meta({ description: 'Category của sản phẩm cùng nhóm hàng trên sàn này, nhiều sản phẩm nhất trước (không đếm sản phẩm đang đẩy), tối đa 5' }),
+    group: z.array(UsedCategory).max(5).meta({ description: 'Category của sản phẩm cùng danh mục sản phẩm trên sàn này, nhiều sản phẩm nhất trước (không đếm sản phẩm đang đẩy), tối đa 5' }),
     recent: z.array(UsedCategory).max(5).meta({ description: 'Category công ty dùng gần đây, bỏ phần đã ở items, group, tối đa 5' }),
     cached: z.boolean(),
     suggestError: z
@@ -1204,6 +1539,13 @@ export const CategorySyncBody = z
       .boolean('allowShrink phải là true hoặc false')
       .optional()
       .meta({ description: 'Cho lượt này ghi cả khi cây sàn trả thiếu quá ngưỡng (đánh `removed` hàng loạt). Chỉ quản trị nền tảng' }),
+    shopId: z
+      .uuid('shopId không hợp lệ')
+      .optional()
+      .meta({
+        description:
+          'Gian hàng đang thiết lập (#569): sàn cần token mà chưa có gian hàng `active` nào thì lượt mượn token của gian hàng này. Phải là gian hàng của công ty, cùng sàn; không thì 404',
+      }),
   })
   .default({})
   .meta({ id: 'CategorySyncInput' });
@@ -1312,3 +1654,80 @@ export const ProductListingListWithSeparate = ProductListingList.extend({ separa
   .meta({ id: 'ProductListingListWithSeparate' });
 export const RegroupParams = z.object({ id: z.string(), productId: z.string().max(60) });
 export const RegroupQueued = z.object({ queued: z.literal(true) }).strict().meta({ id: 'RegroupQueued' });
+
+/** Lượt đồng bộ do người bấm (Documents/21 §18 "Kết quả lượt đồng bộ"). */
+export const SyncRunParams = z.object({ id: z.string(), runId: z.string() });
+export const SyncRunError = z
+  .object({
+    listingId: z.uuid(),
+    variantId: z.uuid().nullable(),
+    productId: z.uuid().nullable(),
+    productName: z.string().nullable(),
+    attributesLabel: z.string().nullable(),
+    sku: z.string().nullable().meta({ description: 'SKU người bán của listing' }),
+    code: z.string(),
+    message: z.string().meta({ description: 'Câu tiếng Việt cho người bán do app viết (lỗi sàn dịch bằng bảng dịch của sàn, #571)' }),
+    kind: z.enum(['data', 'platform', 'connection']).nullable().meta({ description: 'Loại lỗi như `pushError.kind`; null khi lỗi do app giữ hoặc dòng ghi trước #571' }),
+    target: BlockerTarget.nullable().meta({ description: 'Chỗ sửa (`BlockerTarget`); null khi không suy được' }),
+    platformCode: z.string().nullable().meta({ description: 'Mã gốc của sàn; null khi lỗi do app giữ' }),
+    platformMessage: z.string().nullable().meta({ description: 'Câu sàn trả, nguyên văn; null khi lỗi do app giữ' }),
+    at: iso,
+    fix: z
+      .enum(['variant_price', 'stocktake', 'platform', 'shop_reconnect'])
+      .nullable()
+      .meta({ description: 'Chỗ sửa: `variant_price` mở Thông tin SKU ô Giá muốn thực nhận, `stocktake` tạo phiếu kiểm kê, `platform` sửa trên trang sàn' }),
+  })
+  .strict()
+  .meta({ id: 'SyncRunError' });
+export const SyncRun = z
+  .object({
+    id: z.uuid(),
+    shopId: z.uuid(),
+    status: z.enum(['queued', 'running', 'done', 'failed']),
+    requestedAt: iso,
+    startedAt: iso.nullable(),
+    finishedAt: iso.nullable(),
+    progress: z
+      .object({
+        processed: z.number().int(),
+        total: z.number().int().nullable().meta({ description: 'Số listing lượt này phải đẩy; null khi đang đọc trạng thái trên sàn' }),
+      })
+      .strict(),
+    succeeded: z.number().int(),
+    failed: z.number().int(),
+    errors: z.array(SyncRunError).meta({ description: 'Tối đa 200 dòng; số đủ ở `failed`' }),
+    error: z
+      .object({ code: z.string(), message: z.string() })
+      .strict()
+      .nullable()
+      .meta({ description: 'Lỗi cả lượt (`status = failed`): sàn lỗi, `marketplace_unauthorized`, `shop_not_connected`, `run_stale` (quá 30 phút)' }),
+  })
+  .strict()
+  .meta({ id: 'SyncRun' });
+
+// Trạng thái đồng bộ category khi nối gian hàng (#569, Documents/21 §18.5).
+export const CategorySyncView = z
+  .object({
+    tree: z
+      .object({
+        state: z.enum(['ready', 'queued', 'running', 'failed', 'unsupported']).meta({
+          description: '`ready`: đã có cây; `unsupported`: sàn chưa đọc được category từ app; `failed` kèm `error` (nút Thử lại gọi `POST /platforms/:platform/categories/sync`)',
+        }),
+        syncedAt: z.string().nullable(),
+        leafCount: z.number().int(),
+        error: z.string().nullable(),
+      })
+      .strict(),
+    permissions: z
+      .object({
+        state: z.enum(['ready', 'queued', 'running', 'failed']),
+        checkedAt: z.string().nullable(),
+        availableCount: z.number().int().meta({ description: 'Số category lá gian hàng được bán' }),
+        error: z.string().nullable(),
+      })
+      .strict()
+      .nullable()
+      .meta({ description: '`null` khi sàn không có quyền category theo gian hàng (Lazada)' }),
+  })
+  .strict()
+  .meta({ id: 'CategorySync' });

@@ -217,7 +217,7 @@ function race(err: unknown): never {
   // Giá trị mới của trục đụng giá trị, mã vừa được `PUT /attributes` thêm (route đó không lấy khoá công ty).
   if (code === '23505' && constraint?.startsWith('attribute_values_')) throw invalid({ axes: 'Thuộc tính vừa được sửa, thử lại' });
   // Nhóm hàng hay giá trị vừa bị xoá giữa lúc đọc và lúc ghi.
-  if (code === '23503' && constraint?.startsWith('products_group_id')) throw invalid({ groupId: 'Nhóm hàng vừa bị xoá' });
+  if (code === '23503' && constraint?.startsWith('products_group_id')) throw invalid({ groupId: 'Danh mục sản phẩm vừa bị xoá' });
   if (code === '23503' && constraint?.startsWith('variant_attribute_values_')) throw invalid({ variants: 'Có giá trị thuộc tính vừa bị xoá' });
   if (code === '23503' && constraint === 'products_image_attribute_id_attributes_id_fk') throw invalid({ imageAttributeId: NOT_AXIS });
   throw err;
@@ -227,7 +227,20 @@ function race(err: unknown): never {
  * Một trang danh sách với số câu truy vấn cố định (#204 Review Focus 2): trang sản phẩm, SKU của cả trang, ngưỡng tồn,
  * hiện diện, link ảnh đại diện mỗi thứ một lần, không theo số dòng.
  */
-export async function listProducts(ctx: CatalogContext, companyId: string, filter: ProductFilter) {
+/** Độ phủ sàn của một sản phẩm theo gian hàng (FE#464): `listed` + `missing` = số SKU chưa lưu trữ. */
+export interface ShopCoverage {
+  shopId: string;
+  shopName: string;
+  platform: string;
+  listed: number;
+  missing: number;
+}
+
+/**
+ * `channel`: người xem có `channel.shop.view` thì kèm `channelCoverage`; không có thì mảng rỗng, không hỏi channel
+ * (FE#464).
+ */
+export async function listProducts(ctx: CatalogContext, companyId: string, filter: ProductFilter, { channel = false }: { channel?: boolean } = {}) {
   return withCompany(companyId, async () => {
     const { rows, total } = await findPage(filter);
     const variants = rows.length ? await findVariants({ productIds: rows.map((p) => p.id) }) : [];
@@ -239,9 +252,21 @@ export async function listProducts(ctx: CatalogContext, companyId: string, filte
       (s) => s.productId,
     );
     const urls = await publicFileUrls(rows.flatMap((p) => (p.thumbnailFileId ? [p.thumbnailFileId] : [])));
-    const items = rows.map((p) =>
-      toListItem(p, p.thumbnailFileId ? (urls.get(p.thumbnailFileId) ?? null) : null, skusOf.get(p.id) ?? []),
-    );
+    const active = variants.filter((v) => v.businessStatus !== 'archived');
+    const coverage = channel && rows.length ? await requirePort(ctx, 'channelCoverageOf')(active.map((v) => v.id)) : null;
+    const activeOf = Map.groupBy(active, (v) => v.productId);
+    const coverageOf = (productId: string): ShopCoverage[] => {
+      if (!coverage) return [];
+      const own = activeOf.get(productId) ?? [];
+      return coverage.shops.map((s) => {
+        const listed = own.filter((v) => coverage.listedShops.get(v.id)?.has(s.shopId)).length;
+        return { ...s, listed, missing: own.length - listed };
+      });
+    };
+    const items = rows.map((p) => ({
+      ...toListItem(p, p.thumbnailFileId ? (urls.get(p.thumbnailFileId) ?? null) : null, skusOf.get(p.id) ?? []),
+      channelCoverage: coverageOf(p.id),
+    }));
     return { items, total, page: filter.page, pageSize: filter.pageSize };
   });
 }
@@ -288,7 +313,7 @@ export async function createProduct(ctx: CatalogContext, caller: Caller, input: 
     const imageError = await fileProblem(imageIds, 'product_image', MAX_PRODUCT_IMAGES);
     const sizeChartError = sizeChartId ? await fileProblem([sizeChartId], 'product_image', 1) : null;
     const errors: Record<string, string> = { ...checked.errors, ...specCheck.errors };
-    if (!group) errors.groupId = 'Chọn nhóm hàng';
+    if (!group) errors.groupId = 'Chọn danh mục sản phẩm';
     if (imageError) errors.images = imageError;
     if (sizeChartError) errors.sizeChart = sizeChartError;
     for (const v of valueImages) {
@@ -375,7 +400,7 @@ export async function updateProduct(ctx: CatalogContext, caller: Caller, id: str
     // Đổi nhóm (P6): nhóm đọc qua RLS, nhóm công ty khác hay id lạ là 422; SKU không đổi.
     const changesGroup = input.groupId !== undefined && input.groupId !== product.groupId;
     const [newGroup] = changesGroup && isUuid(input.groupId!) ? await findGroups(input.groupId) : [];
-    if (changesGroup && !newGroup) errors.groupId = 'Chọn nhóm hàng';
+    if (changesGroup && !newGroup) errors.groupId = 'Chọn danh mục sản phẩm';
     const specCheck = await checkSpecs(input.specs ?? []);
     Object.assign(errors, specCheck.errors);
     if (Object.keys(errors).length) throw invalid(errors);

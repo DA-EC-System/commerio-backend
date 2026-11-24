@@ -145,6 +145,29 @@ function where(f: LedgerFilter) {
   );
 }
 
+/**
+ * Dòng xuất sổ cho phần mềm kế toán (#232): dòng thực tế và giá vốn (`isExportable`, cùng lọc `actual`) có
+ * `occurred_on` trong [from, to), cũ trước, theo thứ tự cố định để xuất lại ra cùng tệp. Lấy tối đa `limit` dòng: bên gọi
+ * xin `cap + 1` để biết vượt trần mà không đếm riêng. `hideCost`: bỏ dòng giá vốn (R4).
+ */
+export async function exportEntries(from: string, to: string, limit: number, hideCost: boolean) {
+  return getDb()
+    .select({
+      id: ledgerEntries.id,
+      kind: ledgerEntries.kind,
+      amount: ledgerEntries.amount,
+      occurredOn: ledgerEntries.occurredOn,
+      shopId: ledgerEntries.shopId,
+      orderId: ledgerEntries.orderId,
+      externalOrderId: ledgerEntries.externalOrderId,
+      reason: ledgerEntries.reason,
+    })
+    .from(ledgerEntries)
+    .where(where({ filter: 'actual', from, to, hideCost }))
+    .orderBy(ledgerEntries.occurredOn, ledgerEntries.createdAt, ledgerEntries.id)
+    .limit(limit);
+}
+
 /** Một trang sổ, mới trước; kèm tổng số dòng khớp lọc. */
 export async function findEntries(f: LedgerFilter, page: { limit: number; offset: number }): Promise<{ rows: LedgerRow[]; total: number }> {
   const rows = await getDb()
@@ -234,7 +257,7 @@ export async function dailyFigures(
       net: sumWhere(sql`${cash}`),
       cogs: sumWhere(sql`${inArray(e.kind, NON_CASH)}`),
       cashCollected: sumWhere(sql`${cash} and not ${e.isEstimate}`),
-      platformFee: sumWhere(sql`${inArray(e.kind, ['fee_fixed', 'fee_transaction', 'fee_service', 'fee_optional'])}`),
+      platformFee: sumWhere(sql`${inArray(e.kind, ['fee_fixed', 'fee_transaction', 'fee_service', 'fee_optional', 'fee_per_item'])}`),
       shippingFee: sumWhere(sql`${inArray(e.kind, ['shipping_cost', 'shipping_income'])}`),
       estimated: sql<boolean>`coalesce(bool_or(${e.isEstimate} and ${cash}), false)`,
       lastAt: sql<Date>`max(${e.createdAt})`.mapWith((v: string | Date) => new Date(v)),

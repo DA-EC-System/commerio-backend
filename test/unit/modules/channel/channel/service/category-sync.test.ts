@@ -8,6 +8,12 @@ vi.mock('#src/modules/channel/channel/repository/platform-categories.ts', async 
   syncTree: (...args: unknown[]) => syncTree(...args),
 }));
 
+// Trạng thái đồng bộ cây ghi DB (#569); unit test không có DB nên thay bằng hàm rỗng.
+vi.mock('#src/modules/channel/channel/repository/category-sync-state.ts', async (orig) => ({
+  ...(await orig<object>()),
+  setTreeSyncState: async () => undefined,
+}));
+
 const { CategoryTreeShrunkError } = await import('#src/modules/channel/channel/repository/platform-categories.ts');
 const { runCategorySync } = await import('#src/modules/channel/channel/service/category-sync.ts');
 const { registerAdapter, resetAdapters } = await import('#src/modules/channel/channel/service/marketplaces/index.ts');

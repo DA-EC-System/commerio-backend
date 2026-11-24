@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V146** (`20261121115038_bang-san-fk`): 103 bảng trong 6 schema, 93 khoá ngoại, 83 cột tham chiếu không có khoá ngoại. Lịch sử từng phiên bản: [VERSIONS.md](VERSIONS.md).
+Phiên bản **V156** (`20261124160256_cau-hinh-tai-khoan-ke-toan`): 105 bảng trong 6 schema, 95 khoá ngoại, 84 cột tham chiếu không có khoá ngoại. Lịch sử từng phiên bản: [VERSIONS.md](VERSIONS.md).
 
 Nguồn: snapshot của migration mới nhất, comment trong `src/modules/<lớn>/<con>/repository/schema.ts`, khoá ngoại, trigger, index, EXCLUDE viết tay trong migration. Cột, kiểu, ràng buộc, quan hệ của từng bảng ở `db/schema/<schema>.md`.
 
@@ -120,7 +120,7 @@ Chi tiết: [schema/finance.md](schema/finance.md)
 - `finance.unmatched_receipts` (finance): Tiền về không gán được vào đơn (không có mã, lệch tiền, đơn đã huỷ); gán hoặc hoàn sau (UC-PF-07).
 - `finance.webhook_events` (payment): Webhook cổng đã nhận (sau khi kiểm chữ ký), chống xử lý lặp.
 
-## `channel` · Kênh bán · lớp 5 · 23 bảng
+## `channel` · Kênh bán · lớp 5 · 25 bảng
 
 Chi tiết: [schema/channel.md](schema/channel.md)
 
@@ -129,12 +129,14 @@ Chi tiết: [schema/channel.md](schema/channel.md)
 - `channel.conversation_notes` (inbox): Ghi chú nội bộ trên hội thoại, khách không thấy.
 - `channel.conversation_tags` (inbox)
 - `channel.conversations` (inbox)
+- `channel.listing_sync_runs` (channel): Lượt đồng bộ do người bấm (Documents/21 §18 "Kết quả lượt đồng bộ", thiết kế `trang-san-pham-tab/design/v2.html` Màn 2).
 - `channel.listings` (channel): Một SKU trên một gian hàng, đồng thời là bảng ghép SKU sàn → SKU app.
 - `channel.marketplaces` (channel): Danh mục sàn dùng chung cho mọi công ty (Documents/19 mục 3.3, thay enum `channel.marketplace` 21/11/2026).
 - `channel.message_channels` (inbox): Kênh nhắn tin đã kết nối (trang Messenger, hộp thư, Zalo OA, chat sàn).
 - `channel.messages` (inbox): Tin nhắn; tin gửi đi chưa có mã ngoài cho tới khi nền tảng nhận.
 - `channel.platform_categories` (channel): Bản sao cây category của sàn (#400, Documents/19 mục 3.3).
 - `channel.platform_category_attributes` (channel): Attribute của một leaf category (#400, Documents/19 mục 3.3).
+- `channel.platform_category_group_maps` (channel): Ánh xạ category sàn sang danh mục chuẩn (#569, Documents/21 §18.5, Documents/19 mục 3.3): dữ liệu chuẩn dùng chung mọi công ty, chỉ migration ghi (`commerio_app` chỉ `SELECT`), không `company_id`, kh…
 - `channel.price_calculations` (channel): Một lần chạy bộ lọc giá cho một SKU trên một gian hàng (25 §6.2): lưu đầu vào, kết quả từng bước và phiên bản cấu hình phí, thuế đã dùng, để biết giá trên sàn ra từ đâu.
 - `channel.product_specs` (channel): Thông tin sàn của một sản phẩm cha, một bộ mỗi sàn, mọi gian hàng của sàn dùng chung (#400, Documents/19 mục 3.3).
 - `channel.raw_orders` (channel): Dữ liệu gốc của đơn sàn mỗi lần cập nhật; `order_id` có khi đã tạo đơn trong `order`.

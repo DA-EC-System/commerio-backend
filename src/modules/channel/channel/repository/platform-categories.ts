@@ -151,21 +151,42 @@ export async function leafAttributesOf(platform: Marketplace, externalId: string
       asc(platformCategoryAttributes.label),
       asc(platformCategoryAttributes.code),
     );
-  return rows.map((r) => {
-    return {
-      code: r.code,
-      label: r.label,
-      kind: r.kind,
-      input: r.input,
-      options: r.options,
-      allowCustom: r.allowCustom,
-      required: r.required,
-      requiredWhen: r.requiredWhen,
-      isKey: r.isKey,
-      tier: r.tier,
-      raw: r.raw,
-    };
-  });
+  return rows.map(toAttribute);
+}
+
+const toAttribute = (r: typeof platformCategoryAttributes.$inferSelect): PlatformAttribute => ({
+  code: r.code,
+  label: r.label,
+  kind: r.kind,
+  input: r.input,
+  options: r.options,
+  allowCustom: r.allowCustom,
+  required: r.required,
+  requiredWhen: r.requiredWhen,
+  isKey: r.isKey,
+  tier: r.tier,
+  raw: r.raw,
+});
+
+/**
+ * Attribute đã lưu của các leaf **đã lấy attribute** (`attributes_fetched_at` khác null, kể cả leaf không có attribute nào:
+ * mảng rỗng), hai câu cho cả lô (be#564 A2). Leaf chưa lấy thì vắng trong Map.
+ */
+export async function fetchedLeafAttributesOf(platform: Marketplace, externalIds: readonly string[]): Promise<Map<string, PlatformAttribute[]>> {
+  const ids = [...new Set(externalIds)];
+  if (!ids.length) return new Map();
+  const fetched = await getDb()
+    .select({ id: platformCategories.externalId })
+    .from(platformCategories)
+    .where(and(eq(platformCategories.platform, platform), inArray(platformCategories.externalId, ids), isNotNull(platformCategories.attributesFetchedAt)));
+  const out = new Map<string, PlatformAttribute[]>(fetched.map((r) => [r.id, []]));
+  if (!out.size) return out;
+  const rows = await getDb()
+    .select()
+    .from(platformCategoryAttributes)
+    .where(and(eq(platformCategoryAttributes.platform, platform), inArray(platformCategoryAttributes.externalCategoryId, [...out.keys()])));
+  for (const r of rows) out.get(r.externalCategoryId)!.push(toAttribute(r));
+  return out;
 }
 
 /** Bảng tham chiếu không được ghi trong `withCompany` (role `commerio_app` chỉ đọc): báo lỗi lập trình sớm. */

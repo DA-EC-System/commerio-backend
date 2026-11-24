@@ -6,8 +6,9 @@ import { skuPatternError, valueCode } from '../domain/sku.ts';
 import { PLATFORM_KINDS, SPEC_INPUTS } from '../domain/specs.ts';
 import { MAX_PRODUCT_IMAGES } from '../service/product-images.ts';
 
-// Giới hạn (Documents/21 V24, mục 5.2): tên nhóm hàng 60, sản phẩm 200, mô tả 5000; tên thuộc tính 15, giá trị 20
-// (luật Lazada `VARIATION_*`, 19/11/2026).
+// Giới hạn (Documents/21 V24, mục 5.2): tên nhóm hàng 60, sản phẩm 200, mô tả 5000; tên thuộc tính 20, giá trị 20.
+// Tên 20 là giới hạn tên tự đặt nhỏ nhất của các sàn đang nối (TikTok 20, Lazada 50 đo thật; trước là 15 theo tài liệu Lazada
+// cũ, đổi 24/11/2026, #572); giới hạn của từng sàn kiểm lúc đăng bằng `variantCapabilities.maxAxisNameLength`.
 
 const name = (what: string, max: number) =>
   z
@@ -76,7 +77,7 @@ const keepSuggest = SuggestConfig.partial()
 
 export const GroupBody = z
   .object({
-    name: name('nhóm hàng', 60),
+    name: name('danh mục sản phẩm', 60),
     suggest: keepSuggest,
     copyTemplateFromGroupId: z
       .string()
@@ -85,8 +86,8 @@ export const GroupBody = z
   })
   .meta({ id: 'ProductGroupRequest' });
 export const UpdateGroupBody = GroupBody.extend({
-  name: name('nhóm hàng', 60).optional().meta({ description: 'Bắt buộc với nhóm của công ty; nhóm nền tảng gửi thì 422 `errors.name`' }),
-  version: settingsVersion.meta({ description: 'Nhóm nền tảng: `version` của cài đặt công ty (0 khi chưa đặt)' }),
+  name: name('danh mục sản phẩm', 60).optional().meta({ description: 'Bắt buộc với danh mục của công ty; danh mục mặc định gửi thì 422 `errors.name`' }),
+  version: settingsVersion.meta({ description: 'Danh mục mặc định: `version` của cài đặt công ty (0 khi chưa đặt)' }),
 }).meta({ id: 'UpdateProductGroupRequest' });
 
 export const GroupListQuery = z.object({
@@ -94,7 +95,7 @@ export const GroupListQuery = z.object({
     .enum(['true', 'false'])
     .optional()
     .transform((v) => v === 'true')
-    .meta({ description: '`true`: trả cả nhóm nền tảng công ty đã ẩn (trang Nhóm hàng)' }),
+    .meta({ description: '`true`: trả cả danh mục mặc định công ty đã ẩn (trang Danh mục sản phẩm)' }),
 });
 
 export const GroupHiddenBody = z.object({ hidden: z.boolean('Thiếu hidden') }).meta({ id: 'ProductGroupHiddenRequest' });
@@ -105,7 +106,7 @@ export const AttributeValueParams = z.object({ id: z.string(), valueId: z.string
 /** Không gửi `productIds` là chuyển cả nhóm (21 mục 5.2). */
 export const MoveProductsBody = z
   .object({
-    targetGroupId: z.string('Chọn nhóm hàng đích').min(1, 'Chọn nhóm hàng đích'),
+    targetGroupId: z.string('Chọn danh mục sản phẩm đích').min(1, 'Chọn danh mục sản phẩm đích'),
     productIds: z.array(z.string()).min(1, 'Chọn sản phẩm').max(1000, 'Tối đa 1000 sản phẩm mỗi lần').optional(),
   })
   .meta({ id: 'MoveProductsRequest' });
@@ -115,7 +116,7 @@ export const SettingsBody = z.object({ skuPattern, suggest: keepSuggest, version
 // ---------- Thuộc tính ----------
 
 const CODE = /^[A-Z0-9]{1,6}$/;
-const MAX_ATTRIBUTE_NAME = 15;
+const MAX_ATTRIBUTE_NAME = 20;
 const MAX_VALUE = 20;
 /** Lazada: tối đa 50 giá trị mỗi trục của một sản phẩm. */
 const MAX_AXIS_VALUES = 50;
@@ -211,7 +212,7 @@ export const GroupTemplateBody = z
       .max(2, 'Tối đa 2 trục phân loại')
       .refine((ids) => new Set(ids).size === ids.length, 'Hai trục phải khác nhau')
       .optional()
-      .meta({ description: 'Nhóm của công ty: bỏ trống là giữ trục. Nhóm nền tảng: gửi thì 422' }),
+      .meta({ description: 'Danh mục của công ty: bỏ trống là giữ trục. Danh mục mặc định: gửi thì 422' }),
     fields: z
       .array(z.object({ fieldId: z.string(), required: z.boolean() }))
       .max(100, 'Tối đa 100 thông số')
@@ -235,9 +236,9 @@ export const GroupTemplateBody = z
       .optional()
       .meta({
         description:
-          'Thuộc tính biến thể được phép (Documents/21 mục 5.7); bỏ trường là giữ. Nhóm nền tảng: chỉ phần của công ty. Nhóm của công ty: cả danh sách, trục chưa có thì tự thêm vào đầu',
+          'Thuộc tính biến thể được phép (Documents/21 mục 5.7); bỏ trường là giữ. Danh mục mặc định: chỉ phần của công ty. Danh mục của công ty: cả danh sách, trục chưa có thì tự thêm vào đầu',
       }),
-    version: settingsVersion.meta({ description: 'Nhóm nền tảng: chỉ gửi phần của công ty; `version` của cài đặt công ty' }),
+    version: settingsVersion.meta({ description: 'Danh mục mặc định: chỉ gửi phần của công ty; `version` của cài đặt công ty' }),
   })
   .meta({ id: 'GroupTemplateRequest' });
 
@@ -273,7 +274,7 @@ export const TemplateFieldBody = z
   .object({
     field: TemplateFieldInput,
     required: z.boolean('Chọn bắt buộc hay không'),
-    version: settingsVersion.meta({ description: '`version` của mẫu (nhóm nền tảng: của cài đặt công ty), như `PUT /groups/:id/template`' }),
+    version: settingsVersion.meta({ description: '`version` của mẫu (danh mục mặc định: của cài đặt công ty), như `PUT /groups/:id/template`' }),
   })
   .meta({ id: 'TemplateFieldRequest' });
 
@@ -409,7 +410,7 @@ const sizeChartFileId = z
 export const CreateProductBody = z
   .object({
     name: name('sản phẩm', 200),
-    groupId: z.string('Chọn nhóm hàng').min(1, 'Chọn nhóm hàng'),
+    groupId: z.string('Chọn danh mục sản phẩm').min(1, 'Chọn danh mục sản phẩm'),
     description,
     imageFileIds,
     sizeChartFileId,
@@ -468,7 +469,7 @@ const brand = z
   .nullish()
   .meta({ description: 'Thương hiệu, tối đa 100 ký tự; rỗng hoặc `null` là không thương hiệu' });
 
-const groupId = z.string('Chọn nhóm hàng').min(1, 'Chọn nhóm hàng').optional().meta({ description: 'Đổi nhóm hàng (P6); SKU không đổi' });
+const groupId = z.string('Chọn danh mục sản phẩm').min(1, 'Chọn danh mục sản phẩm').optional().meta({ description: 'Đổi danh mục sản phẩm (P6); SKU không đổi' });
 
 /** Không có biến thể: gửi kèm thì bỏ qua (AC-13). */
 export const UpdateProductBody = z
@@ -541,7 +542,7 @@ const blankAsMissing = <T extends z.ZodType>(schema: T) => z.preprocess((v) => (
 
 export const ProductListQuery = z.object({
   search: blankAsMissing(z.string('Chỉ gửi một từ khoá').trim().optional()),
-  groupId: blankAsMissing(z.uuid('Nhóm hàng không hợp lệ').optional()),
+  groupId: blankAsMissing(z.uuid('Danh mục sản phẩm không hợp lệ').optional()),
   /** `active`: còn SKU chưa lưu trữ; `archived`: mọi SKU đã lưu trữ (#204). */
   status: blankAsMissing(z.enum(['active', 'archived'], 'Trạng thái là active hoặc archived').default('active')),
   /** Có ít nhất một SKU ở trạng thái này; lọc lưu trữ dùng `status=archived` (#204). */
@@ -568,7 +569,7 @@ export const ProductGroup = z
     id: z.uuid(),
     name: z.string(),
     scope: Scope,
-    hidden: z.boolean().meta({ description: 'Công ty đã ẩn nhóm nền tảng này; nhóm của công ty luôn `false`' }),
+    hidden: z.boolean().meta({ description: 'Công ty đã ẩn danh mục mặc định này; danh mục của công ty luôn `false`' }),
     productCount: z.number().int().meta({ description: 'Số sản phẩm, kể cả đã lưu trữ' }),
     axes: z
       .array(z.object({ attributeId: z.uuid(), name: z.string(), platformKind: z.enum(PLATFORM_KINDS).nullable(), scope: Scope }))
@@ -641,7 +642,7 @@ export const GroupTemplate = z
         }),
       )
       .meta({ description: 'Thuộc tính biến thể được phép (21 mục 5.7): trục chuẩn, rồi dòng nền tảng, rồi dòng công ty' }),
-    version: z.number().int().meta({ description: '`version` của nhóm; nhóm nền tảng: của cài đặt công ty' }),
+    version: z.number().int().meta({ description: '`version` của danh mục; danh mục mặc định: của cài đặt công ty' }),
   })
   .meta({ id: 'GroupTemplate' });
 
@@ -755,8 +756,8 @@ const LabelCounts = z
     description: 'Số SKU theo nhãn chính, đủ 7 khoá, tính mọi SKU: trạng thái kinh doanh khác selling, không thì hiện diện trên sàn',
   });
 
-export const ProductListItem = z
-  .object({
+/** Trường chung của dòng danh sách và chi tiết sản phẩm. */
+const ProductSummary = z.object({
     id: z.uuid(),
     name: z.string(),
     code: z.string().meta({ description: 'Mã cha, cấp lúc tạo theo mẫu SKU của công ty, không sửa (#204 D5)' }),
@@ -770,10 +771,28 @@ export const ProductListItem = z
     status: z.enum(['active', 'archived']).meta({ description: '`archived` khi mọi SKU đã lưu trữ (suy từ SKU, không lưu)' }),
     updatedAt: z.string(),
     version: z.number().int(),
-  })
-  .meta({ id: 'ProductListItem' });
+  });
 
-export const ProductDetail = ProductListItem.extend({
+const ShopCoverage = z
+  .object({
+    shopId: z.uuid(),
+    shopName: z.string().meta({ description: 'Tên hiển thị của gian hàng nếu có, không thì tên trên sàn' }),
+    platform: z.string(),
+    listed: z.number().int().meta({
+      description: 'Số SKU chưa lưu trữ đã lên sàn ở gian hàng này (listing đang duyệt, đang bán, đang ẩn) hoặc đang đẩy, như `listed` của readiness',
+    }),
+    missing: z.number().int().meta({ description: 'Số SKU chưa lưu trữ chưa có ở gian hàng này; 0 là đủ ("✓")' }),
+  })
+  .meta({ id: 'ProductShopCoverage' });
+
+export const ProductListItem = ProductSummary.extend({
+  channelCoverage: z.array(ShopCoverage).meta({
+    description:
+      'Độ phủ sàn theo gian hàng chưa ngắt (cũ trước). Rỗng khi người xem không có `channel.shop.view` hoặc công ty chưa có gian hàng. `listed` + `missing` = `variantCount`',
+  }),
+}).meta({ id: 'ProductListItem' });
+
+export const ProductDetail = ProductSummary.extend({
   description: z.string(),
   images: z.array(
     z
@@ -829,7 +848,7 @@ export { BulkRowInput };
 
 export const BulkEditQuery = z.object({
   search: blankAsMissing(z.string('Chỉ gửi một từ khoá').trim().max(100, 'Từ khoá tối đa 100 ký tự').optional()),
-  groupId: blankAsMissing(z.uuid('Nhóm hàng không hợp lệ').optional()),
+  groupId: blankAsMissing(z.uuid('Danh mục sản phẩm không hợp lệ').optional()),
   incomplete: blankAsMissing(
     z
       .enum(['true', 'false'], 'incomplete là true hoặc false')
@@ -891,7 +910,20 @@ export const BulkEditPage = z
 
 export const BulkSaveResult = z
   .object({
-    saved: z.array(z.object({ variantId: z.string(), version: z.number().int().meta({ description: '`version` mới của SKU' }) })),
+    saved: z.array(
+      z.object({
+        variantId: z.string(),
+        version: z.number().int().meta({ description: '`version` mới của SKU' }),
+        reorderVersion: z
+          .number()
+          .int()
+          .nullable()
+          .meta({
+            description:
+              '`version` của dòng tồn sau khi lưu (dùng cho `reorderVersion` lần lưu sau, không cần đọc lại dòng); dòng không gửi `minQty` trả version hiện tại; null khi chưa có dòng tồn',
+          }),
+      }),
+    ),
     failed: z.array(
       z.object({
         variantId: z.string(),

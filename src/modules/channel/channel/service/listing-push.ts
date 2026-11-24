@@ -16,7 +16,6 @@ import {
   type ListingRow,
   markCreateAttempted,
 } from '../repository/listings.ts';
-import type { SyncError } from '../repository/schema.ts';
 import { markPushed } from '../repository/price-calculations.ts';
 import { findRemoteSkuRow } from '../repository/remote-skus.ts';
 import { lastPermissionCheck, upsertPermissions } from '../repository/product-specs.ts';
@@ -30,7 +29,6 @@ import {
   type MarketplaceAdapter,
   MarketplaceError,
   type NewProduct,
-  PRECHECK_CODES,
   type SalesAttribute,
   type SizeChartRule,
 } from './marketplaces/index.ts';
@@ -42,6 +40,7 @@ import { keepsPlatformContent, listingText, pushBlock, pushSpec } from './push-b
 import { type ListingPushJob, sendStockPush } from './shop-jobs.ts';
 import { loseShopAuth, shopSession } from './shops.ts';
 import { untrustedVariants } from './stock-trust.ts';
+import { errorOf, marketplacePushError } from './push-error.ts';
 
 /** Số lần gọi sàn tối đa của một lượt đẩy (Documents/21 §18.6.4), bằng `attempts` của hàng `channel.listing_push`. */
 export const PUSH_ATTEMPTS = 5;
@@ -49,7 +48,7 @@ export const PUSH_ATTEMPTS = 5;
 /** Lệch giờ cho phép giữa app và sàn khi so giờ sàn tạo sản phẩm có sẵn với giờ của lần gọi tạo trước (`create_attempted_at`, #399). */
 export const CLOCK_SKEW_MS = 5 * 60_000;
 
-export const errorOf = (code: string, message: string): SyncError => ({ code, message, at: new Date().toISOString() });
+export { errorOf } from './push-error.ts';
 
 /**
  * Chạy một việc đẩy. Listing không còn `pushing` (việc chạy lại sau khi đã xong, đồng bộ vừa `fail`) thì bỏ. Kết quả:
@@ -244,18 +243,18 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
       throw new HoldJob('gian hàng mất uỷ quyền');
     }
     const attempts = row.pushAttempts + 1;
+    // Dịch lỗi sàn thành mã, câu, chỗ sửa (#567); service không rẽ nhánh theo sàn, bảng nằm ở adapter.
+    const subject = { companyId: job.companyId, platform: shop.platform, productId: v.productId, externalCategoryId: map?.externalCategoryId ?? null, variantId };
     if (err.kind === 'unavailable') {
-      const pushError = errorOf('marketplace_unavailable', err.platformMessage ?? 'Sàn lỗi tạm, đang thử lại');
-      if (attempts >= PUSH_ATTEMPTS) return finish(job, row, 'fail', { pushError, pushAttempts: attempts }, err.platformCode);
+      const final = attempts >= PUSH_ATTEMPTS;
+      const pushError = await marketplacePushError(adapter, err, subject, final);
+      if (final) return finish(job, row, 'fail', { pushError, pushAttempts: attempts }, err.platformCode);
       const kept = await inCompany(() => updateListing(row.id, { version: row.version, status: 'pushing' }, { pushError, pushAttempts: attempts }));
       // Listing vừa đổi (đồng bộ `fail`, gian hàng ngắt): không thử lại nữa.
       if (kept) throw err;
       return;
     }
-    const message = err.platformMessage ?? (err.kind === 'unsupported' ? 'Sàn chưa hỗ trợ đăng bán sản phẩm' : 'Sàn từ chối sản phẩm');
-    // Bước kiểm trước khi tạo (#305) giữ mã riêng để FE báo đúng câu (Documents/21 §18.6.4).
-    const code = err.platformCode && PRECHECK_CODES.has(err.platformCode) ? err.platformCode : 'marketplace_rejected';
-    return finish(job, row, 'fail', { pushError: errorOf(code, message), pushAttempts: attempts }, err.platformCode);
+    return finish(job, row, 'fail', { pushError: await marketplacePushError(adapter, err, subject), pushAttempts: attempts }, err.platformCode);
   }
 }
 
@@ -266,6 +265,8 @@ export async function runListingPush(port: ProductPort, job: ListingPushJob): Pr
 export async function finish(job: Pick<ListingPushJob, 'companyId' | 'shopId'>, row: ListingRow, action: ListingAction, patch: ListingPatch, reason: string | null = null): Promise<void> {
   await withCompany(job.companyId, async () => {
     try {
+      // Lỗi của dòng nào (#567): bên gọi không ghi thì là biến thể của listing.
+      if (patch.pushError) patch = { ...patch, pushError: { ...patch.pushError, variantId: patch.pushError.variantId ?? row.variantId } };
       const reasonText = reason ?? (action === 'fail' ? (patch.pushError?.message ?? null) : null);
       // Lỗi của lượt ghi nội dung xuất phát từ `live`: về `live`, không `push_failed` (sản phẩm người bán vẫn đang bán).
       const failure = action === 'fail' ? await pushFailureOf(row) : { action, patch: {} };

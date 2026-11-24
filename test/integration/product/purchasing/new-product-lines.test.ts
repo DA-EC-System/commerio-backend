@@ -238,8 +238,8 @@ describe('cha mới', () => {
     expect(res.status).toBe(422);
     expect(res.body.errors).toEqual({
       'lines.0.newProduct.parentName': 'Đã có sản phẩm cùng tên',
-      'lines.1.newProduct.groupId': 'Chọn nhóm hàng',
-      'lines.3.newProduct.groupId': 'Các dòng cùng sản phẩm cha phải cùng nhóm hàng',
+      'lines.1.newProduct.groupId': 'Chọn danh mục sản phẩm',
+      'lines.3.newProduct.groupId': 'Các dòng cùng sản phẩm cha phải cùng danh mục sản phẩm',
     });
   });
 
@@ -429,13 +429,13 @@ describe('nhập kho sinh sản phẩm (Documents/21 mục 16.3)', () => {
 });
 
 describe('hình dạng newProduct', () => {
-  it('trường lạ (name), cả parentId lẫn parentName, cha mới thiếu nhóm, tên trục, giá trị quá dài, parentId rỗng → 422', async () => {
+  it('trường lạ (name), cả parentId lẫn parentName, cha mới thiếu nhóm, tên thuộc tính, giá trị quá dài, parentId rỗng → 422', async () => {
     const parent = await parentWithAxes(A, [['Đen', 'M']]);
     const res = await post(A, [
       { newProduct: { parentId: null, parentName: uniq('Áo'), groupId: A.groupId, optionValues: {}, name: 'x' }, quantity: 1, unitCost: 1000 },
       { newProduct: { parentId: parent.id, parentName: uniq('Áo'), groupId: null, optionValues: {} }, quantity: 1, unitCost: 1000 },
       { newProduct: { parentId: null, parentName: uniq('Áo'), groupId: null, optionValues: {} }, quantity: 1, unitCost: 1000 },
-      fresh(uniq('Áo'), { 'Tên trục rất là dài': 'Đen' }),
+      fresh(uniq('Áo'), { 'Tên thuộc tính rất là dài': 'Đen' }), // 25 ký tự > 20
       fresh(uniq('Áo'), { 'Màu sắc': 'Đen tuyền pha xanh rêu' }),
       { newProduct: { parentId: '', parentName: uniq('Áo'), groupId: A.groupId, optionValues: {} }, quantity: 1, unitCost: 1000 },
     ]);
@@ -443,7 +443,7 @@ describe('hình dạng newProduct', () => {
     const keys = Object.keys(res.body.errors);
     expect(keys.some((k) => k.startsWith('lines.0.newProduct'))).toBe(true);
     expect(res.body.errors['lines.1.newProduct.parentName']).toBe('Chọn sản phẩm cha có sẵn hoặc nhập tên sản phẩm cha mới');
-    expect(res.body.errors['lines.2.newProduct.groupId']).toBe('Chọn nhóm hàng');
+    expect(res.body.errors['lines.2.newProduct.groupId']).toBe('Chọn danh mục sản phẩm');
     expect(keys.some((k) => k.startsWith('lines.3.newProduct.optionValues'))).toBe(true);
     expect(keys.some((k) => k.startsWith('lines.4.newProduct.optionValues'))).toBe(true);
     expect(res.body.errors['lines.5.newProduct.parentId']).toBe('Chọn sản phẩm cha');

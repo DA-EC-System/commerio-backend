@@ -5,6 +5,7 @@ import type { LedgerKind } from '../../../../finance/index.ts';
 import type { RemoteState } from '../../domain/listing.ts';
 import type { PlatformAttribute, PlatformKind, VariantCapabilities } from '../../domain/product-spec.ts';
 import type { DeclaredCapabilities, ShopCapabilities } from '../../domain/shop.ts';
+import type { PlatformErrorDetail, PlatformErrorRule } from '../../domain/platform-error.ts';
 import type { ResponsibleOrg } from '../../../../core/index.ts';
 
 export type { DeclaredCapabilities, PlatformAttribute, ShopCapabilities };
@@ -461,7 +462,7 @@ export interface RemoteSku {
    * Sàn đang khoá tồn, giá của SKU do khuyến mãi (25 §6.5 bước 3, E32, #223): đồng bộ không ghi đè phần bị khoá, chỉ báo
    * (`promotion_locked`). Thiếu là không khoá. Lazada, TikTok không điền: không có API đọc trước được SKU nào đang bị khoá
    * (TikTok Promotion API `activities/search` không lọc theo sản phẩm, không gồm chiến dịch của sàn; chốt 12/11/2026 không
-   * đọc trước). Khoá do khuyến mãi về qua mã lỗi khi đẩy, adapter đổi thành `PROMOTION_LOCKED`.
+   * đọc trước). Khoá do khuyến mãi về qua mã lỗi khi đẩy, `errorMap` của adapter dịch thành `PROMOTION_LOCKED` (#571).
    */
   stockLocked?: boolean;
   priceLocked?: boolean;
@@ -701,7 +702,8 @@ export const INVALID_AMOUNT = 'invalid_amount';
  */
 export const PRECHECK_CODES: ReadonlySet<string> = new Set(['shop_not_eligible', 'listing_check_failed']);
 
-export type PartResult = { ok: true } | { ok: false; code: string; message: string };
+/** Lỗi theo SKU giữ mã, câu gốc của sàn (dịch ở `errorMap`, #571); `requestId` của lời gọi khi client đọc được. */
+export type PartResult = { ok: true } | { ok: false; code: string; message: string; requestId?: string | null };
 
 /**
  * Kết quả đẩy một SKU. `ok`/`code`/`message` gộp cả lời gọi (lỗi đầu tiên). Sàn đổi tồn và giá bằng hai lời gọi riêng
@@ -713,10 +715,11 @@ export type PerSkuResult = PartResult & { externalSkuId: string; stock?: PartRes
 /** Dựng `PerSkuResult` từ lỗi theo SKU của phần tồn và phần giá (adapter gọi hai lời gọi riêng). */
 export function partResults(
   items: readonly PriceQuantity[],
-  stockErrors: ReadonlyMap<string, { code: string; message: string }>,
-  priceErrors: ReadonlyMap<string, { code: string; message: string }>,
+  stockErrors: ReadonlyMap<string, { code: string; message: string; requestId?: string | null }>,
+  priceErrors: ReadonlyMap<string, { code: string; message: string; requestId?: string | null }>,
 ): PerSkuResult[] {
-  const part = (e: { code: string; message: string } | undefined): PartResult => (e ? { ok: false, code: e.code, message: e.message } : { ok: true });
+  const part = (e: { code: string; message: string; requestId?: string | null } | undefined): PartResult =>
+    e ? { ok: false, code: e.code, message: e.message, ...(e.requestId !== undefined && { requestId: e.requestId }) } : { ok: true };
   return items.map((i) => {
     const stock = i.quantity === undefined ? undefined : part(stockErrors.get(i.externalSkuId));
     const price = i.price === undefined ? undefined : part(priceErrors.get(i.externalSkuId));
@@ -1027,15 +1030,21 @@ export interface MarketplaceAdapter {
    * ảnh theo giá trị có một phần thì chặn đẩy trước khi gọi sàn. Không khai là sàn không đòi.
    */
   readonly requiresAllVariantImages?: boolean;
+  /**
+   * Bảng dịch lỗi đẩy của sàn (#567, Documents/21 §18.6.4): mã sàn → mã app, loại, câu tiếng Việt, chỗ sửa. Không khai thì
+   * mọi lỗi đẩy ra câu chung `marketplace_rejected`.
+   */
+  readonly errorMap?: readonly PlatformErrorRule[];
   /** Kiểu ảnh sàn nhận làm minh chứng khi từ chối yêu cầu trả (#437); không khai là sàn chưa nhận ảnh qua app. */
   readonly returnImageTypes?: readonly string[];
   /** Báo sàn kho đã nhận hàng trả lúc quét, chưa kiểm hàng (#202, §20.1; Lazada `confirmDelivery`). */
   confirmReturnReceived?(accessToken: string, externalReturnId: string, externalLineIds: readonly string[]): Promise<void>;
   /**
    * Báo sàn người bán đã kiểm hàng trả và đồng ý hoàn tiền, sau khi phiếu kiểm hàng hoàn ghi sổ (#392; TikTok
-   * `APPROVE_RECEIVED_PACKAGE`). Sàn đã qua bước này (người bán làm trên sàn, sàn tự hoàn khi quá hạn) thì coi là xong.
+   * `APPROVE_RECEIVED_PACKAGE` theo cả yêu cầu, Lazada `agreeRefund` theo mã dòng đơn ngược, #437). Sàn đã qua bước này
+   * (người bán làm trên sàn, sàn tự hoàn khi quá hạn) thì coi là xong.
    */
-  approveReturnRefund?(accessToken: string, externalReturnId: string): Promise<void>;
+  approveReturnRefund?(accessToken: string, externalReturnId: string, externalLineIds: readonly string[]): Promise<void>;
   /** Lịch sử đơn ngược phía sàn (#202, §20.1). */
   returnHistory?(
     accessToken: string,
@@ -1146,6 +1155,12 @@ export interface RemoteReturn extends RemoteAftersale {
    * chỉ giao hàng về (Lazada). App còn chờ hàng về mà sàn báo vậy thì hàng được xử lý ngoài app (#392). Thiếu là false.
    */
   sellerHandledReceipt?: boolean;
+  /**
+   * Sàn xác nhận hoàn tiền cho khách sau khi hàng trả về người bán (#437; Lazada `REFUND_PENDING`/`REFUND_SUCCESS` mọi
+   * món đã về, TikTok `…_SUCCESS`/`…_COMPLETE`). Yêu cầu đã đóng sau kiểm hàng chỉ ghi "Đã hoàn" và sổ tiền lúc này. Thiếu
+   * là false.
+   */
+  refundConfirmed?: boolean;
   /** Trạng thái vận chuyển chiều về của sàn (Lazada `ofc_status`), chỉ để hiện (#202). */
   ofcStatus?: string | null;
   /** Hàng trả về kho sàn hay về người bán (Lazada `return_to_type`/`is_rtm`). */
@@ -1178,6 +1193,16 @@ export class MarketplaceError extends Error {
   readonly platformMessage: string | null;
   /** `request_id` sàn trả trong phản hồi lỗi (#504): pino ghi cùng `err` ở các dòng log lỗi, đối chiếu ticket với sàn. */
   requestId: string | null = null;
+  /**
+   * Lý do có cấu trúc của sàn (#567): Lazada `detail[]`, TikTok `fail_reasons` của Check Product Listing. Việc đẩy dịch bằng
+   * `errorMap` của adapter, khớp mã chi tiết trước mã ngoài cùng.
+   */
+  details: PlatformErrorDetail[] = [];
+  /**
+   * Câu tiếng Việt cho người dùng khi adapter hiểu lỗi hơn câu chung (#437: Lazada từ chối thiếu ảnh, yêu cầu đã xử lý
+   * trên sàn); `toAppError` dùng thay "Sàn từ chối yêu cầu".
+   */
+  userMessage: string | null = null;
 
   constructor(kind: MarketplaceErrorKind, platformCode: string | null = null, platformMessage: string | null = null) {
     super(`Sàn trả lỗi ${kind}${platformCode ? ` (${platformCode})` : ''}`);

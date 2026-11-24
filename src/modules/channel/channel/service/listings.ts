@@ -40,21 +40,18 @@ import type { ProductPort } from './product-port.ts';
 import { insertConfirmed, type NewPriceCalculation } from '../repository/price-calculations.ts';
 import { countRemoteSkusOfProduct } from '../repository/remote-skus.ts';
 import { currentPrices, type ListingPrice, listingPrices } from './listing-prices.ts';
-import { firstPushCalculations } from './repricing.ts';
-import { evaluatePrices } from './price-inputs.ts';
-import type { PriceFilterResult } from '../domain/price-filter.ts';
 import { pushAttributes, specChecks, specStatusOf } from './product-specs.ts';
-import { keepsPlatformContent, listingText, pushBlock, pushSpec, specBlock, variantImageGaps } from './push-block.ts';
 import { PUSH_IMAGE_MAX, sendListingPush, sendProductPush } from './shop-jobs.ts';
+import { checkVariant, loadPushContext } from './push-check.ts';
+import { type Blocker, byDisplayOrder, firstBlock, groupBlockers, listingText, pushBlock, specBlock } from './push-block.ts';
 import { findAppShopProduct, findShopProduct, insertAppShopProduct, matchShopProductsOf, setShopProductPushStarted } from '../repository/shop-products.ts';
 import { MarketplaceError } from './marketplaces/index.ts';
 import { type Actor, onMarketplace, ownShop, platformOf, shopSession } from './shops.ts';
+import { pushErrorView, type PushErrorView } from './push-error.ts';
 
 export const ENTITY = 'listings';
 /** Mỗi lần đẩy tối đa 20 biến thể (`PushBody`). */
 export const PUSH_LIMIT = 20;
-/** Trạng thái đã có trên sàn: đẩy nữa là `already_listed` (sửa nội dung listing đang bán là #293). */
-const LISTED: readonly ListingStatus[] = ['under_review', 'live', 'hidden'];
 
 export interface ChannelListing {
   id: string;
@@ -63,14 +60,14 @@ export interface ChannelListing {
   sellerSku: string | null;
   status: ListingStatus;
   rejectReason: string | null;
-  pushError: SyncError | null;
+  pushError: PushErrorView | null;
   pushAttempts: number;
   hiddenBy: ListingRow['hiddenBy'];
   stockSync: ListingRow['stockSync'];
   priceSync: ListingRow['priceSync'];
   platformStock: number | null;
-  stockSyncError: SyncError | null;
-  priceSyncError: SyncError | null;
+  stockSyncError: PushErrorView | null;
+  priceSyncError: PushErrorView | null;
   /** Cảnh báo QC (§18.4): chưa đọc từ sàn, luôn null. */
   qcAlert: null;
   lastPushedAt: Date | null;
@@ -124,6 +121,14 @@ export interface ListingRowView extends ListingPrice {
   /** Số tồn lần đẩy tới sẽ gửi (21 §18.9 R3, `domain/stock-to-push.ts`); null khi chưa đẩy được tồn. */
   stockToPush: number | null;
   stockHeldReason: StockHeldReason | null;
+  /** Giờ lần đẩy lỗi hoặc bị giữ gần nhất (21 §18 "Kết quả lượt đồng bộ"); null khi không có lỗi. */
+  lastSyncFailedAt: Date | null;
+}
+
+/** Lần thử lỗi gần nhất: `at` mới hơn của hai lỗi đồng bộ còn hiệu lực. */
+export function lastSyncFailedAt(row: { stockSyncError: SyncError | null; priceSyncError: SyncError | null } | undefined): Date | null {
+  const ats = [row?.stockSyncError?.at, row?.priceSyncError?.at].flatMap((a) => (a ? [Date.parse(a)] : [])).filter((t) => !Number.isNaN(t));
+  return ats.length ? new Date(Math.max(...ats)) : null;
 }
 
 /**
@@ -136,6 +141,8 @@ export interface PushResult {
   status: ListingStatus | null;
   code: string | null;
   message: string | null;
+  /** Dòng bị chặn: mọi mục chặn kèm chỗ sửa, như readiness (be#564, 21 §18.11). `code`, `message` là mục đầu. */
+  blockers?: Blocker[];
 }
 
 /** Họ tên người xin ghép của các dòng đang chờ CEO duyệt, cho `pendingMapping.requestedBy`. Gọi trong `withCompany`. */
@@ -153,14 +160,14 @@ export function toListing(r: ListingRow, names: ReadonlyMap<string, string> = ne
     sellerSku: r.sellerSku,
     status: r.status,
     rejectReason: r.rejectReason,
-    pushError: r.pushError,
+    pushError: pushErrorView(r.pushError),
     pushAttempts: r.pushAttempts,
     hiddenBy: r.hiddenBy,
     stockSync: r.stockSync,
     priceSync: r.priceSync,
     platformStock: r.platformStock,
-    stockSyncError: r.stockSyncError,
-    priceSyncError: r.priceSyncError,
+    stockSyncError: pushErrorView(r.stockSyncError),
+    priceSyncError: pushErrorView(r.priceSyncError),
     qcAlert: null,
     lastPushedAt: r.lastPushedAt,
     lastPushedPrice: r.listedPrice === null ? null : Number(r.listedPrice),
@@ -279,6 +286,7 @@ async function shopListingRows(port: ProductPort, shop: ShopRow, catalog: readon
       externalCategoryPath: listing?.externalCategoryId ? (categoryPaths.get(listing.externalCategoryId) ?? null) : null,
       categoryChange: listing ? toCategoryChange(listing.categoryChange) : null,
       ...stockToPushView(listing, { holdStock, counted: counted.has(v.id), available: available.get(v.id) }),
+      lastSyncFailedAt: lastSyncFailedAt(listing),
     };
   });
 }
@@ -287,7 +295,7 @@ async function shopListingRows(port: ProductPort, shop: ShopRow, catalog: readon
  * Cột "Tồn sẽ đẩy" (21 §18.9 R3). Listing "không quản tồn", hoặc sàn đổi ngoài app chờ CEO quyết (trừ ẩn bằng tồn 0)
  * thì không đẩy tồn và không có lý do giữ của hợp đồng: `null`, `null`. Chưa có listing: số lần đăng đầu sẽ đẩy.
  */
-function stockToPushView(
+export function stockToPushView(
   listing: ListingRow | undefined,
   input: { holdStock: boolean; counted: boolean; available: number | undefined },
 ): { stockToPush: number | null; stockHeldReason: StockHeldReason | null } {
@@ -369,8 +377,11 @@ const inProgress = (variantId: string, existing: ListingRow | undefined) =>
 
 /**
  * Xếp việc đẩy các biến thể lên gian hàng (Documents/21 §18.6.4). Kiểm cả request trước (gian hàng gọi được sàn, không
- * chờ kiểm kê), rồi từng dòng: `not_found`, `push_in_progress`, `already_listed`, `sku_not_ready`, `price_missing`,
- * `category_unmapped`, `dimensions_missing`, `images_missing`, `size_chart_missing`. Dòng hợp lệ: mỗi dòng một giao dịch chuyển `pushing`,
+ * chờ kiểm kê), rồi từng dòng: `not_found`, `push_in_progress`, `mapping_pending` (listing chờ CEO duyệt liên kết SKU sàn),
+ * `already_listed`, `fee_not_configured` (21 §18.9 R5: lần đăng đầu, đăng lại sau gỡ hay sau `push_failed` do app soạn nội
+ * dung mà gian hàng chưa có phí đang áp dụng; `push_failed` với `content_source = platform` và `rejected` không chặn), rồi
+ * `pushBlock`: `sku_not_ready`, `price_missing`, `category_unmapped`, `dimensions_missing`, `images_missing`,
+ * `size_chart_missing`; cuối cùng `below_floor` (giá theo bộ lọc hoặc giá gõ tay có thực nhận dưới giá thấp nhất). Dòng hợp lệ: mỗi dòng một giao dịch chuyển `pushing`,
  * ghi lịch sử, xếp việc; hai request đua cùng SKU thì dòng thua ra `push_in_progress` (unique của bảng, `version`).
  * Listing đã gỡ thì tạo bản ghi mới trỏ bản cũ (`replaces_listing_id`), chép mã sàn, SellerSku, ảnh của bản cũ: gỡ chỉ
  * tắt sản phẩm trên sàn nên đẩy lại là bật lại đúng sản phẩm đó.
@@ -392,85 +403,22 @@ export async function pushListings(
     throw new AppError(409, 'shop_not_connected', 'Gian hàng chưa kết nối hoặc cần kết nối lại', { current: shop.status });
   }
   const ids = [...new Set(input.variantIds)];
-  const { adapter } = platformOf(shop.platform);
-  const { variants, prices, specs, siblings, gaps, current, images, sizeCharts } = await inCompany(async () => {
-    const variants = new Map((await port.variants(ids)).map((v) => [v.id, v]));
-    const productIds = [...new Set([...variants.values()].map((v) => v.productId))];
-    const siblings = await port.variants(undefined, { productIds });
-    return {
-      variants,
-      prices: await port.standardPrices(ids),
-      specs: await specChecks(port, shop, adapter, siblings),
-      siblings,
-      // Ảnh theo giá trị có một phần, chỉ khi sàn đòi đủ ảnh (21 §18.5 `variant_images_missing`).
-      gaps: variantImageGaps(adapter, siblings),
-      current: new Map(await Promise.all(ids.map(async (id) => [id, await findListingRow(shop.id, id)] as const))),
-      images: await port.productImageUrls(productIds, PUSH_IMAGE_MAX),
-      sizeCharts: (await port.productSizeChartUrls?.(productIds)) ?? new Map<string, string>(),
-    };
-  });
-  // Giá người bán gõ lúc đăng (21 §18.9 R1) là giá ghi đè tay (25 §6.2 bước 6): áp ngay, không thành giá chờ, vẫn qua bước 5.
-  const manual = new Map(ids.flatMap((id) => (input.listPrices?.[id] === undefined ? [] : [[id, String(input.listPrices[id])] as const])));
-  // Lần đẩy đầu dùng giá bộ lọc của gian hàng (#225 phần 2); listing đã có giá ghi đè hay giá gian hàng giữ giá đó.
-  const firstPush = ids.filter((id) => {
-    const l = current.get(id);
-    return !manual.has(id) && (!l || l.status === 'delisted' || (l.manualPrice === null && l.priceCalcId === null));
-  });
-  const [calcs, manualChecks] = await inCompany(async () => [
-    await firstPushCalculations(shop.id, firstPush),
-    manual.size ? (await evaluatePrices(shop.id, manual)).results : new Map<string, PriceFilterResult>(),
-  ] as const);
+  // Cùng hàm kiểm với readiness và push-preview (be#564, 21 §18.10, §18.11): hai lối đăng không lệch mã chặn.
+  const ctx = await inCompany(() => loadPushContext(port, shop, ids, input.listPrices));
   const results: PushResult[] = [];
   // SKU chưa có sản phẩm trên sàn gom theo cha (#295, §18.8.4): một sản phẩm sàn nhiều phân loại mỗi gian hàng.
   const groups = new Map<string, NewSku[]>();
   for (const variantId of ids) {
-    const v = variants.get(variantId);
-    const existing = current.get(variantId);
-    if (!v || v.archived) {
-      results.push(blocked(variantId, existing, 'not_found', 'Biến thể không còn bán'));
+    const { items, existing } = checkVariant(ctx, variantId);
+    const first = firstBlock(items);
+    if (first) {
+      results.push({ ...blocked(variantId, existing, first.code, first.message), blockers: groupBlockers([{ variantId, items }]).sort(byDisplayOrder) });
       continue;
     }
-    if (existing?.status === 'pushing') {
-      results.push(inProgress(variantId, existing));
-      continue;
-    }
-    // CHECK `listings_pending_external`: SKU sàn chờ ghép chỉ nằm trên listing `push_failed` (#346).
-    if (existing?.pendingExternalSkuId) {
-      results.push(blocked(variantId, existing, 'mapping_pending', 'Listing đang chờ CEO duyệt liên kết SKU sàn có sẵn; duyệt hoặc từ chối trước khi đăng bán lại'));
-      continue;
-    }
-    if (existing && LISTED.includes(existing.status)) {
-      results.push(blocked(variantId, existing, 'already_listed', 'Đã có trên sàn: giá và tồn cập nhật bằng Đồng bộ'));
-      continue;
-    }
-    const imageUrls = images.get(v.productId) ?? [];
-    const sizeChartUrl = sizeCharts.get(v.productId) ?? null;
-    const calc = calcs.get(v.id);
-    const manualPrice = manual.get(v.id);
-    const block = pushBlock(
-      v,
-      manualPrice ? new Decimal(manualPrice) : calc ? new Decimal(calc.roundedPrice) : (prices.get(v.id) ?? null),
-      // Đẩy lại SKU người bán chỉ bật lại trên sàn: không xét spec (cùng vị từ với việc nền).
-      pushSpec(keepsPlatformContent(existing), specs.get(v.productId)),
-      Boolean(existing?.externalImageUrls?.length || imageUrls.length),
-      Boolean(sizeChartUrl),
-      keepsPlatformContent(existing) ? null : (gaps.get(v.productId) ?? null),
-    );
-    if (block) {
-      results.push(blocked(variantId, existing, block.code, block.message));
-      continue;
-    }
-    if (calc?.belowFloor) {
-      results.push(blocked(variantId, existing, 'below_floor', 'Giá theo bộ lọc giá của gian hàng có thực nhận dưới giá thấp nhất; sửa giá muốn bán hoặc cấu hình phí'));
-      continue;
-    }
-    // Như `assertAboveFloor` của `PUT .../price`: tổng phí từ 100% trở lên cũng là dưới giá thấp nhất.
-    const check = manualChecks.get(v.id);
-    if (check && (!check.ok || check.belowFloor)) {
-      results.push(blocked(variantId, existing, 'below_floor', 'Giá niêm yết có thực nhận dưới giá thấp nhất; nhập giá cao hơn'));
-      continue;
-    }
-    const price = { calc, manualPrice };
+    const v = ctx.variants.get(variantId)!;
+    const imageUrls = ctx.images.get(v.productId) ?? [];
+    const sizeChartUrl = ctx.sizeCharts.get(v.productId) ?? null;
+    const price = { calc: ctx.calcs.get(v.id), manualPrice: ctx.manual.get(v.id) };
     if (!existing?.externalProductId) {
       groups.set(v.productId, [...(groups.get(v.productId) ?? []), { variantId: v.id, sku: v.sku, existing, ...price }]);
       continue;
@@ -478,8 +426,8 @@ export async function pushListings(
     results.push(await enqueue(actor, shop.id, v.id, v.sku, existing, imageUrls, sizeChartUrl, price));
   }
   for (const [productId, rows] of groups) {
-    const siblingIds = siblings.filter((v) => v.productId === productId).map((v) => v.id);
-    results.push(...(await enqueueProduct(actor, shop.id, productId, rows, images.get(productId) ?? [], sizeCharts.get(productId) ?? null, siblingIds)));
+    const siblingIds = ctx.siblings.filter((v) => v.productId === productId).map((v) => v.id);
+    results.push(...(await enqueueProduct(actor, shop.id, productId, rows, ctx.images.get(productId) ?? [], ctx.sizeCharts.get(productId) ?? null, siblingIds)));
   }
   return { results };
 }
@@ -579,7 +527,7 @@ const WAITING_MESSAGE = {
  * `shop_awaiting_stocktake` (§18.6.2); lượt kéo đơn còn mở chưa xong hoặc chờ phân hàng 409 `shop_awaiting_allocation`
  * kèm `waitingFor` (§18.6.11). `shopSession` chung không đổi (ghép danh mục vẫn gọi được khi `connecting`).
  */
-function assertPushable(shop: ShopRow): void {
+export function assertPushable(shop: ShopRow): void {
   if (shop.status !== 'active') {
     throw new AppError(409, 'shop_not_active', 'Hoàn tất thiết lập gian hàng trước khi đăng bán', { current: shop.status });
   }

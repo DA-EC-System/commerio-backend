@@ -33,6 +33,9 @@ import type {
   SpecCategoryStatus,
 } from '../domain/product-spec.ts';
 import type { RemoteSkusFullError } from '../domain/remote-skus-refresh.ts';
+import type { SetupDraft } from '../domain/setup-draft.ts';
+import type { BlockerTarget } from '../domain/blocker.ts';
+import type { PushErrorKind } from '../domain/platform-error.ts';
 
 // Mọi bảng của module con `channel` khai báo trong schema của module lớn `channel` (Documents/19 D1).
 export const channelSchema = pgSchema('channel');
@@ -47,8 +50,23 @@ export const marketplaces = channelSchema.table('marketplaces', {
   code: text('code').primaryKey(),
   /** `false`: sàn không mở cho người dùng ở môi trường này (sàn chưa có adapter, sàn giả lập `mock`). */
   enabled: boolean('enabled').notNull().default(true),
+  /**
+   * Trạng thái lượt đồng bộ cây category của sàn (#569, Documents/21 §18.5 "Đồng bộ category khi nối gian hàng"): việc nền
+   * `channel.category_sync` ghi, route `GET /shops/:id/category-sync` đọc (không đọc bảng của pg-boss). `unsupported`: adapter
+   * không đọc được cây. Ghi bằng role chủ bảng ngoài `withCompany` (`commerio_app` chỉ `SELECT`).
+   */
+  categorySyncState: text('category_sync_state').$type<CategoryTreeSyncState>().notNull().default('idle'),
+  /** Lỗi đã chuẩn hoá của lượt hỏng (không chứa token); xoá khi lượt sau chạy xong. */
+  categorySyncError: text('category_sync_error'),
+  /** Lần đổi trạng thái gần nhất. */
+  categorySyncAt: timestamp('category_sync_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => [
+  check('marketplaces_category_sync_state', sql`${t.categorySyncState} in ('idle', 'queued', 'running', 'failed', 'unsupported')`),
+]);
+
+export type CategoryTreeSyncState = 'idle' | 'queued' | 'running' | 'failed' | 'unsupported';
+export type CategoryPermissionsState = 'queued' | 'running' | 'ready' | 'failed';
 
 /**
  * Mã sàn, khoá của `channel.marketplaces`. Khoá ngoại của mọi cột `platform` viết tay ở migration `*_bang-san-fk`
@@ -72,6 +90,11 @@ export const shops = channelSchema.table(
     platform: text('platform').notNull(),
     externalShopId: text('external_shop_id').notNull(),
     shopName: text('shop_name').notNull(),
+    /**
+     * Tên người dùng đặt ở trang Gian hàng (#565, Documents/21 §18.7.1), 1–60 ký tự; null thì hiện `shop_name` (tên sàn trả,
+     * ghi đè mỗi lần nối lại).
+     */
+    displayName: text('display_name'),
     region: text('region'),
     accessTokenEnc: bytea('access_token_enc'),
     refreshTokenEnc: bytea('refresh_token_enc'),
@@ -135,6 +158,23 @@ export const shops = channelSchema.table(
      * được cập nhật tồn lên mọi gian hàng của công ty (`domain/shop.ts` `ordersStale`; Documents/19 `shops`, 21 §18.6.6).
      */
     ordersPulledOkAt: timestamp('orders_pulled_ok_at', { withTimezone: true }),
+    /**
+     * Lượt đọc quyền category của gian hàng (#569, Documents/21 §18.5; chỉ sàn có quyền theo gian hàng, TikTok): việc nền
+     * `channel.shop_category_permissions_sync` ghi. Null: chưa từng xếp (gian hàng nối trước #569, hay sàn không có quyền
+     * theo gian hàng).
+     */
+    categoryPermissionsState: text('category_permissions_state').$type<CategoryPermissionsState>(),
+    /** Lỗi đã chuẩn hoá của lượt hỏng (không chứa token). */
+    categoryPermissionsError: text('category_permissions_error'),
+    /** Lần đọc quyền xong gần nhất. */
+    categoryPermissionsCheckedAt: timestamp('category_permissions_checked_at', { withTimezone: true }),
+    /**
+     * Bản nháp thiết lập (#569, Documents/21 §18.7.5): lựa chọn từng SKU sàn, danh mục theo sản phẩm sàn, cách đẩy tồn,
+     * mốc xác nhận từng bước. Xoá khi hoàn tất thiết lập hoặc ngắt gian hàng. `POST /setup` chỉ đọc từ đây.
+     */
+    setupDraft: jsonb('setup_draft').$type<SetupDraft>(),
+    /** Bộ đếm của nháp (`draftVersion`), dùng chung cho `PUT /setup/draft` và `POST sku-links`; tách khỏi `version` của gian hàng. */
+    setupDraftVersion: integer('setup_draft_version').notNull().default(0),
     ...timestamps,
     ...version,
   },
@@ -146,6 +186,7 @@ export const shops = channelSchema.table(
       .where(sql`${t.status} <> 'disconnected'`),
     check('shops_active_cutoff', sql`${t.status} <> 'active' or ${t.orderCutoffAt} is not null`),
     check('shops_return_window_days', sql`${t.returnWindowDays} between 1 and 60`),
+    check('shops_display_name', sql`char_length(${t.displayName}) between 1 and 60`),
     check(
       'shops_opening_stocktake',
       sql`(${t.openingStocktakeId} is null) = (${t.openingStocktakeNumber} is null) and (${t.openingStocktakeId} is null or ${t.orderCutoffAt} is not null)`,
@@ -168,6 +209,7 @@ export const shops = channelSchema.table(
       sql`${t.allocationStocktakeId} is null or (${t.openingStocktakeId} is null and ${t.orderCutoffAt} is not null)`,
     ),
     check('shops_orders_pulled_ok_at', sql`${t.ordersPulledOkAt} is null or ${t.orderCutoffAt} is not null`),
+    check('shops_category_permissions_state', sql`${t.categoryPermissionsState} in ('queued', 'running', 'ready', 'failed')`),
     // Mất uỷ quyền thì xoá mốc: nối lại là "đơn chưa cập nhật" tới khi lấy đơn xong trọn (25 E28, #223).
     check('shops_reauth_orders_pulled', sql`${t.status} <> 'needs_reauth' or ${t.ordersPulledOkAt} is null`),
     // Một công ty một kho: hai phiếu đếm toàn kho có thể áp chênh lệch hai lần (#198 A12).
@@ -190,10 +232,20 @@ export const listingStatus = channelSchema.enum('listing_status', [
 ]);
 /** `unmanaged`: SKU sàn ghép vào "không quản tồn" (combo), CEO duyệt; không trừ tồn, không đẩy tồn. */
 export const listingMode = channelSchema.enum('listing_mode', ['mapped', 'unmanaged']);
+/**
+ * Lỗi lần đẩy, đồng bộ gần nhất (jsonb). Trường sau `at` có từ #567 (Documents/21 §18.6.4): lỗi đẩy listing (#567) và lỗi sàn
+ * của đồng bộ tồn, giá (#571) ghi; bản cũ và lỗi do app giữ (`price_missing`, `stock_not_counted`…) không có (API trả `null`).
+ */
 export interface SyncError {
   code: string;
   message: string;
   at: string;
+  kind?: PushErrorKind;
+  target?: BlockerTarget | null;
+  variantId?: string | null;
+  platformCode?: string | null;
+  platformMessage?: string | null;
+  requestId?: string | null;
 }
 export const syncState = channelSchema.enum('sync_state', ['synced', 'pending', 'error']);
 export const hiddenBy = channelSchema.enum('hidden_by', ['platform', 'zero_stock']);
@@ -489,6 +541,23 @@ export const platformCategories = channelSchema.table(
 );
 
 /**
+ * Ánh xạ category sàn sang danh mục chuẩn (#569, Documents/21 §18.5, Documents/19 mục 3.3): dữ liệu chuẩn dùng chung mọi công
+ * ty, chỉ migration ghi (`commerio_app` chỉ `SELECT`), không `company_id`, không RLS. `external_category_id` thường là category
+ * cấp 1, thêm cấp sâu hơn khi một nhánh phải chia sang nhiều danh mục; tra từ leaf lên gốc, lấy dòng sâu nhất. `group_id` là
+ * dòng nền tảng của `product.product_groups`, **không khoá ngoại chéo schema** (như `spec_field_mappings.field_id`): dòng không
+ * còn thì coi như không ánh xạ.
+ */
+export const platformCategoryGroupMaps = channelSchema.table(
+  'platform_category_group_maps',
+  {
+    platform: text('platform').notNull(),
+    externalCategoryId: text('external_category_id').notNull(),
+    groupId: uuid('group_id').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.platform, t.externalCategoryId] })],
+);
+
+/**
  * Attribute của một leaf category (#400, Documents/19 mục 3.3). Lấy khi có người mở leaf (route chi tiết, `PUT` spec, việc
  * nền), dùng lại 7 ngày; mỗi lần lấy thay cả tập của leaf (`replaceLeaf`). `code`: Lazada `name`, TikTok id attribute.
  * Không `company_id`, không RLS, `commerio_app` chỉ `SELECT` như `platform_categories`.
@@ -553,7 +622,8 @@ export type SpecSource = 'push' | 'match';
  * bảng spec cũ của catalog và ghép danh mục Commerio (xoá ở BE3, migration `*_bo-ghep-danh-muc`). `product_id` là uuid
  * thường (không khoá ngoại chéo schema).
  * `attributes` chỉ giữ attribute `tier = 'category'` (xuất xứ, thương hiệu ở catalog). `axis_map`: attributeId của trục
- * Commerio → mã sales attribute của sàn hoặc `__custom`; `value_map`: attributeValueId → mã lựa chọn của sàn.
+ * Commerio → mã sales attribute của sàn hoặc `__custom`; nhiều trục cùng mã là thuộc tính biến thể ghép, giá trị nối " - "
+ * (#568; `__custom` không ghép); `value_map`: attributeValueId → mã lựa chọn của sàn, không có trên trục ghép.
  * `version = 0` là bản chép từ ghép danh mục cũ chưa ai lưu lại (#400 A18, migration `*_chep-spec-lan-cuoi`); `PUT` spec luôn
  * ra `version ≥ 1`. RLS.
  */
@@ -778,6 +848,15 @@ export const remoteSkus = channelSchema.table(
     title: text('title').notNull(),
     /** Tên tiếng Anh trên sàn (Lazada `name_en`, #396); null khi sàn không có. */
     titleEn: text('title_en'),
+    /**
+     * Nhãn biến thể sàn trả (giá trị thuộc tính bán, vd "Đỏ, M"; TikTok `sales_attributes[].value_name`, Lazada `saleProp`),
+     * null khi sàn không có (#565, Documents/21 §18.12): lõi gợi ý ghép theo tên cần nhãn để phân biệt SKU anh em.
+     */
+    variantLabel: text('variant_label'),
+    /** Ảnh đầu tiên của sản phẩm trên sàn (#565, `RemoteProduct.imageUrl`); null khi sàn chưa trả. */
+    imageUrl: text('image_url'),
+    /** Category lá của sản phẩm trên sàn (#565, `RemoteProduct.externalCategoryId`); null khi sàn chưa trả. */
+    externalCategoryId: text('external_category_id'),
     state: text('state').notNull().$type<'review' | 'live' | 'rejected' | 'hold' | 'inactive'>(),
     quantity: integer('quantity').notNull(),
     /**
@@ -877,5 +956,64 @@ export const shopReauthMails = channelSchema.table(
     check('shop_reauth_mails_attempts', sql`${t.attempts} between 1 and 8`),
     // Việc nền tìm thư chưa xong.
     index('shop_reauth_mails_pending_idx').on(t.queuedAt).where(sql`${t.outcome} is null`),
+  ],
+);
+
+/** Một dòng lỗi của lượt đồng bộ (Documents/21 §18 "Kết quả lượt đồng bộ", `SyncRunError`). */
+export interface SyncRunErrorRow {
+  listingId: string;
+  variantId: string | null;
+  productId: string | null;
+  productName: string | null;
+  attributesLabel: string | null;
+  sku: string | null;
+  code: string;
+  message: string;
+  /** Có từ #571; dòng ghi trước không có (đọc ra `null`). */
+  kind?: PushErrorKind | null;
+  target?: BlockerTarget | null;
+  platformCode?: string | null;
+  platformMessage: string | null;
+  at: string;
+  fix: 'variant_price' | 'stocktake' | 'platform' | 'shop_reconnect' | null;
+}
+
+/**
+ * Lượt đồng bộ do người bấm (Documents/21 §18 "Kết quả lượt đồng bộ", thiết kế `trang-san-pham-tab/design/v2.html` Màn 2).
+ * Lượt định kỳ 15 phút không ghi. `queued` lúc bấm; việc `channel.listing_sync` bắt đầu thì nhận mọi lượt `queued` của gian
+ * hàng (`running`, `started_at`), mỗi lô đẩy xong tăng `processed`, `succeeded`, `failed` và nối `errors` (tối đa 200 dòng),
+ * xong thì `done` hoặc `failed` kèm `error`. `total` null khi chưa biết (đang đọc sàn). Một lượt `queued` mỗi gian hàng
+ * (`listing_sync_runs_one_queued_uq`): bấm khi đang có lượt chờ thì dùng lại lượt đó.
+ */
+export const listingSyncRuns = channelSchema.table(
+  'listing_sync_runs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    companyId: uuid('company_id').notNull(),
+    shopId: uuid('shop_id')
+      .notNull()
+      .references(() => shops.id, { onDelete: 'cascade' }),
+    status: text('status').$type<'queued' | 'running' | 'done' | 'failed'>().notNull().default('queued'),
+    requestedBy: uuid('requested_by'),
+    requestedAt: timestamp('requested_at', { withTimezone: true }).notNull().defaultNow(),
+    startedAt: timestamp('started_at', { withTimezone: true }),
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
+    total: integer('total'),
+    processed: integer('processed').notNull().default(0),
+    succeeded: integer('succeeded').notNull().default(0),
+    failed: integer('failed').notNull().default(0),
+    errors: jsonb('errors').$type<SyncRunErrorRow[]>().notNull().default([]),
+    /** Lỗi cả lượt `{ code, message }` (sàn lỗi cả lô, mất uỷ quyền, gian hàng ngắt). */
+    error: jsonb('error').$type<{ code: string; message: string }>(),
+  },
+  (t) => [
+    check('listing_sync_runs_status', sql`${t.status} in ('queued', 'running', 'done', 'failed')`),
+    check('listing_sync_runs_counts', sql`${t.processed} >= 0 and ${t.succeeded} >= 0 and ${t.failed} >= 0 and ${t.succeeded} + ${t.failed} = ${t.processed}`),
+    check('listing_sync_runs_total', sql`${t.total} is null or ${t.processed} <= ${t.total}`),
+    check('listing_sync_runs_started', sql`(${t.status} = 'queued') = (${t.startedAt} is null)`),
+    check('listing_sync_runs_finished', sql`(${t.status} in ('done', 'failed')) = (${t.finishedAt} is not null)`),
+    check('listing_sync_runs_error', sql`${t.error} is null or ${t.status} = 'failed'`),
+    uniqueIndex('listing_sync_runs_one_queued_uq').on(t.shopId).where(sql`${t.status} = 'queued'`),
+    index('listing_sync_runs_shop_idx').on(t.shopId, t.requestedAt),
   ],
 );

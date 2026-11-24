@@ -38,7 +38,7 @@ export {
 export { InsufficientStock, moveSupplierReturn, type ReceivedLine, receiveGoods, type ReturnLine } from './service/posting.ts';
 // Số phiếu kho cho chứng từ của purchasing (nguồn, phiếu sinh tiếp của phiếu trả NCC, #210).
 export { docRefsOf as stockDocumentRefs, docsFromSource as stockDocumentsFrom } from './repository/documents.ts';
-// Phiếu kiểm hàng hoàn có phần thiếu (`claim_flag`): sales không báo sàn đồng ý hoàn tiền (commerio-backend#392).
+// Phiếu kiểm hàng hoàn có dòng thiếu, sai mẫu hoặc hỏng: sales không báo sàn đồng ý hoàn tiền (commerio-backend#392, #437).
 export { returnInspectionClaimed } from './service/return-claim.ts';
 // Phiếu kho có duyệt (#208): xuất huỷ chờ xử lý cho phiếu trả NCC bị huỷ (#210), kiểm kê đầu kỳ cho channel (#245).
 export { createOpeningStocktake, createQuarantineWriteOff } from './service/documents.ts';
@@ -54,6 +54,6 @@ export { recheckThresholds, setIncomingSource } from './service/thresholds.ts';
 export { deleteStockLevels, stockArchiveBlockers, stockInUse } from './service/archive-blockers.ts';
 // Ngưỡng tồn cho sửa hàng loạt của catalog (#242), trong giao dịch của bên gọi.
 export { applyReorderRule, minQtyOf, reorderRulesOf } from './service/stock.ts';
-export type { IncomingLookup, InventoryContext } from './service/views.ts';
+export type { IncomingLookup, InventoryContext, PlatformStockLookup } from './service/views.ts';
 // Xoá gian hàng đã ngắt (#398): channel xoá phiếu nháp, chờ duyệt và tách phiếu đã ghi sổ khỏi gian hàng.
 export { detachShopStockDocuments, type ShopDocumentScope } from './service/shop-detach.ts';

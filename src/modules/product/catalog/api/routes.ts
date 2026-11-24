@@ -100,10 +100,10 @@ export function catalogRouter(ctx: CatalogContext): Router {
   router.post('/groups', quickGroup, validate({ body: GroupBody }), async (_req, res) => {
     const input = validated<typeof GroupBody>(res, 'body');
     if (input.suggest !== undefined && !can(res, SETUP)) {
-      throw new AppError(403, 'forbidden', 'Bạn không có quyền đặt gợi ý của nhóm hàng');
+      throw new AppError(403, 'forbidden', 'Bạn không có quyền đặt gợi ý của danh mục sản phẩm');
     }
     if (input.copyTemplateFromGroupId !== undefined && !can(res, SETUP)) {
-      throw new AppError(403, 'forbidden', 'Bạn không có quyền chép mẫu thông số của nhóm hàng');
+      throw new AppError(403, 'forbidden', 'Bạn không có quyền chép mẫu thông số của danh mục sản phẩm');
     }
     res.status(201).json(await groups.createGroup(caller(res), input));
   });
@@ -222,7 +222,11 @@ export function catalogRouter(ctx: CatalogContext): Router {
   });
 
   router.get('/products', view, validate({ query: ProductListQuery }), async (_req, res) => {
-    res.json(await products.listProducts(ctx, caller(res).companyId, validated<typeof ProductListQuery>(res, 'query')));
+    res.json(
+      await products.listProducts(ctx, caller(res).companyId, validated<typeof ProductListQuery>(res, 'query'), {
+        channel: can(res, 'channel.shop.view'),
+      }),
+    );
   });
 
   router.get('/products/:id', view, validate({ params: IdParams }), async (_req, res) => {

@@ -218,7 +218,9 @@ describe('Lazada: đẩy tồn bằng UpdateSellableQuantity, giá bằng Update
       ok: false,
       code: 'E0501',
       message: 'lỗi tồn',
-      stock: { ok: false, code: 'E0501', message: 'lỗi tồn' },
+      // Phản hồi giả không có `request_id`: null (#571).
+      requestId: null,
+      stock: { ok: false, code: 'E0501', message: 'lỗi tồn', requestId: null },
       price: { ok: true },
     });
   });
@@ -242,11 +244,12 @@ describe('Lazada: đẩy tồn bằng UpdateSellableQuantity, giá bằng Update
 });
 
 describe('Lazada: tồn bị khoá do chiến dịch (#223, 25 §6.5 bước 3)', () => {
-  it('mã 4170 (chiến dịch cấm giảm tồn) → promotion_locked, giữ câu của sàn', async () => {
+  it('mã 4170 (chiến dịch cấm giảm tồn) trả nguyên mã, câu, request_id của sàn; dịch ở errorMap (#571)', async () => {
     const message =
       'During the Bday Mega campaign, there are restrictions for stock adjustments in effect between 2026-11-10 00:00:00 - 2026-11-12 23:59:59. Sellers can increase stocks, but may not decrease stocks.';
-    const fn = fakeFetch(warehouses, { code: '501', type: 'ISP', message: 'E501: Update product failed', detail: [{ code: '4170', message }] });
+    const fn = fakeFetch(warehouses, { code: '501', type: 'ISP', message: 'E501: Update product failed', request_id: 'rq-4170', detail: [{ code: '4170', message }] });
     const [r] = await createLazadaAdapter(config, fn).updatePriceQuantity('t', [{ externalProductId: 'I1', externalSkuId: 'S1', quantity: 1 }]);
-    expect(r).toEqual({ externalSkuId: 'S1', ok: false, code: 'promotion_locked', message, stock: { ok: false, code: 'promotion_locked', message } });
+    const part = { ok: false, code: '4170', message, requestId: 'rq-4170' };
+    expect(r).toEqual({ externalSkuId: 'S1', ...part, stock: part });
   });
 });

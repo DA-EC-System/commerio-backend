@@ -1,6 +1,10 @@
 import type { OpenAPIRegistry } from '@asteasolutions/zod-to-openapi';
 import { problemResponse } from '../../../../shared/http/openapi.ts';
 import {
+  RemoteProductList,
+  RemoteProductsQuery,
+  SkuLinksBody,
+  SkuLinksResult,
   AuthorizeUrl,
   AuthorizeUrlQuery,
   CallbackBody,
@@ -11,6 +15,7 @@ import {
   CategorySuggestionsQuery,
   CategorySuggestionsView,
   ShopWarehousesView,
+  CategorySyncView,
   CategorySyncBody,
   ApplyCategoryBody,
   AxisMappingBody,
@@ -41,6 +46,8 @@ import {
   TakeOverContentParams,
   ListingList,
   ProductListingsParams,
+  ProductReadiness,
+  ReadinessQuery,
   ProductListingListWithSeparate,
   RegroupParams,
   RegroupQueued,
@@ -59,6 +66,8 @@ import {
   RemoteSkusQuery,
   OrderPullResult,
   PushBody,
+  PushPreview,
+  PushPreviewBody,
   MatchBulkBody,
   MatchBulkResult,
   CreateVariantBody,
@@ -83,6 +92,8 @@ import {
   ShopList,
   ShopDisconnectConflict,
   ShopParams,
+  SyncRun,
+  SyncRunParams,
   ShopPlatformList,
   TokenBody,
   ConfirmPriceBody,
@@ -280,14 +291,15 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/platforms/:platform/categories/sync',
     summary: 'Đồng bộ ngay cây category của sàn (#400)',
     description:
-      'Cần `channel.shop.sync`. Xếp một lượt `channel.category_sync` (cùng việc chạy mỗi đêm) rồi trả 202; đã có lượt chờ thì `queued: false`. Category sàn bỏ thì `status = removed`, spec trỏ tới sang `categoryStatus = removed`. Sàn cần token để đọc cây thì mượn token gian hàng `active` nối sớm nhất trên sàn; không có thì lượt bỏ qua. Sàn trả cây thiếu quá ngưỡng (từ 100 node đang dùng, bỏ hơn 5%) thì lượt không ghi gì, log `error` kèm số node sắp bỏ và tổng node; quản trị nền tảng (`is_platform_admin`) gửi `allowShrink: true` để lượt đó vẫn ghi (khoá lượt chờ riêng, không gộp vào lượt thường).',
+      'Cần `channel.shop.sync`. Xếp một lượt `channel.category_sync` (cùng việc chạy mỗi đêm) rồi trả 202; đã có lượt chờ thì `queued: false`. Category sàn bỏ thì `status = removed`, spec trỏ tới sang `categoryStatus = removed`. Sàn cần token để đọc cây thì mượn token gian hàng `active` nối sớm nhất trên sàn, rồi gian hàng `shopId` gửi kèm (gian hàng đang thiết lập, #569; lượt mang `shopId` khoá chờ riêng); sàn từ chối token thì thử gian hàng kế, hết thì lượt `failed` (xem `GET /shops/:id/category-sync`). Sàn trả cây thiếu quá ngưỡng (từ 100 node đang dùng, bỏ hơn 5%) thì lượt không ghi gì, log `error` kèm số node sắp bỏ và tổng node; quản trị nền tảng (`is_platform_admin`) gửi `allowShrink: true` để lượt đó vẫn ghi (khoá lượt chờ riêng, không gộp vào lượt thường).',
     security: bearer,
     request: { params: PlatformParams, body: { required: false, content: { 'application/json': { schema: CategorySyncBody } } } },
     responses: {
       202: { description: 'Đã xếp hoặc đã có lượt chờ', ...json(CategorySyncResult) },
       ...auth,
       403: problemResponse('`forbidden`: thiếu `channel.shop.sync`, hoặc gửi `allowShrink: true` mà không phải quản trị nền tảng'),
-      422: problemResponse('`marketplace_unsupported`: sàn không có adapter hoặc chưa đọc được cây'),
+      404: problemResponse('`not_found`: `shopId` không phải gian hàng của công ty trên sàn này'),
+      422: problemResponse('`marketplace_unsupported`: sàn không có adapter hoặc chưa đọc được cây; `validation_failed` (`errors.shopId`)'),
     },
   });
   registry.registerPath({
@@ -328,6 +340,36 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
   });
   registry.registerPath({
     method: 'get',
+    path: '/shops/:id/category-sync',
+    summary: 'Trạng thái đồng bộ category khi nối gian hàng (#569)',
+    description:
+      'Cần `channel.shop.view`. Chỉ đọc DB. Nối gian hàng xong, BE tự xếp lượt đọc cây category của sàn (khi sàn chưa có cây) và, với sàn có quyền category theo gian hàng (TikTok), lượt đọc quyền bằng token của gian hàng. FE hỏi lại khi `queued`, `running`.',
+    security: bearer,
+    request: { params: ShopParams },
+    responses: {
+      200: { description: 'Trạng thái cây và quyền', ...json(CategorySyncView) },
+      ...auth,
+      404: problemResponse('`not_found`: gian hàng không có hoặc của công ty khác'),
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/shops/:id/category-permissions/refresh',
+    summary: 'Thử lại lượt đọc quyền category của gian hàng (#569)',
+    description:
+      'Cần `channel.shop.sync`. Xếp lại lượt đọc quyền category bằng token của gian hàng (sàn có quyền theo gian hàng, TikTok), không gọi sàn trong request; đã có lượt chờ thì không xếp thêm. Trả trạng thái như `GET /shops/:id/category-sync`.',
+    security: bearer,
+    request: { params: ShopParams },
+    responses: {
+      202: { description: 'Đã xếp, trạng thái hiện tại', ...json(CategorySyncView) },
+      ...auth,
+      404: problemResponse('`not_found`: gian hàng không có hoặc của công ty khác'),
+      409: problemResponse('`shop_not_connected` (kèm `current`): gian hàng không `connecting`/`active` hoặc hết token'),
+      422: problemResponse('`marketplace_unsupported`: sàn không có quyền category theo gian hàng'),
+    },
+  });
+  registry.registerPath({
+    method: 'get',
     path: '/shops/:id/warehouses',
     summary: 'Kho của gian hàng trên sàn (#430)',
     description:
@@ -347,7 +389,7 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/shops/:id/category-suggestions',
     summary: 'Gợi ý category của sàn cho một sản phẩm (#400)',
     description:
-      'Cần `channel.listing.manage`. Gọi sàn bằng token gian hàng theo tên và ảnh đầu của sản phẩm: sàn trả tối đa 5 gợi ý theo thứ tự của sàn; sàn có quyền category theo gian hàng thì kèm `permission` và ghi vào `shop_category_permissions`, không thì `permission: null`. `path` lấy từ cây đã đồng bộ khi có, không thì đường dẫn sàn trả. Sàn `unavailable` thì gọi lại một lần. Chưa có cache: `cached` luôn false. `group` (category của sản phẩm cùng nhóm hàng) và `recent` (công ty dùng gần đây) đọc từ DB, luôn trả (#448). Không gọi được sàn thì 200 `items: []` kèm `suggestError` (`product_name_too_short` kèm `min`, `images_missing`, `marketplace_unavailable`), hai lỗi đầu không gọi sàn; adapter có thể gửi thêm mô tả sản phẩm.',
+      'Cần `channel.listing.manage`. Gọi sàn bằng token gian hàng theo tên và ảnh đầu của sản phẩm: sàn trả tối đa 5 gợi ý theo thứ tự của sàn; sàn có quyền category theo gian hàng thì kèm `permission` và ghi vào `shop_category_permissions`, không thì `permission: null`. `path` lấy từ cây đã đồng bộ khi có, không thì đường dẫn sàn trả. Sàn `unavailable` thì gọi lại một lần. Chưa có cache: `cached` luôn false. `group` (category của sản phẩm cùng danh mục sản phẩm) và `recent` (công ty dùng gần đây) đọc từ DB, luôn trả (#448). Không gọi được sàn thì 200 `items: []` kèm `suggestError` (`product_name_too_short` kèm `min`, `images_missing`, `marketplace_unavailable`), hai lỗi đầu không gọi sàn; adapter có thể gửi thêm mô tả sản phẩm.',
     security: bearer,
     request: { params: ShopParams, query: CategorySuggestionsQuery },
     responses: {
@@ -478,6 +520,21 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
   });
   registry.registerPath({
     method: 'get',
+    path: '/products/:productId/readiness',
+    summary: 'Readiness đăng của sản phẩm theo từng gian hàng (21 §18.10, be#564)',
+    description:
+      'Cần `channel.shop.view`. Mỗi gian hàng chưa `disconnected` một phần tử (hoặc chỉ `shopId`). Mục chặn cùng hàm với `listings/push` và `push-preview`. Không ghi, không gọi sàn.',
+    security: bearer,
+    request: { params: ProductListingsParams, query: ReadinessQuery },
+    responses: {
+      200: { description: 'Readiness theo gian hàng', ...json(ProductReadiness) },
+      ...auth,
+      404: problemResponse('`not_found`: sản phẩm, hoặc `shopId`, không có, của công ty khác, hay gian hàng đã ngắt'),
+      422: problemResponse('`validation_failed`: `shopId` sai dạng'),
+    },
+  });
+  registry.registerPath({
+    method: 'get',
     path: '/products/:productId/listings',
     summary: 'Listing của một sản phẩm ở mọi gian hàng chưa ngắt (21 §18.5, #467)',
     description:
@@ -511,6 +568,21 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
       200: { description: 'Kết quả theo biến thể', ...json(PushResults) },
       ...onShop,
       409: problemResponse('`shop_not_active`, `shop_awaiting_stocktake`, `shop_awaiting_allocation` kèm `waitingFor`, `shop_not_connected`; `marketplace_rejected` kèm `platformCode`, `platformMessage`'),
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/shops/:id/listings/push-preview',
+    summary: 'Kiểm trước khi đăng hàng loạt (21 §18.11)',
+    description:
+      'Cần `channel.listing.manage`. Không ghi, không gọi sàn. Mỗi biến thể một dòng: `status`, `blockers` từ cùng hàm với readiness (18.10) và `push`, kể cả phần gom biến thể (`axis_shape`, `axis_unmapped`); giá lần đăng sẽ gửi, `rounding` (null khi giá gõ tay), tồn sẽ đẩy, thực nhận, `feePct`. Người gọi thiếu `inventory.cost.view` không nhận `below_floor` (R4); `push` vẫn chặn. `push` chạy lại kiểm từng dòng lúc nhận, không dùng kết quả xem trước. Lỗi cả request như `push`: 409 `shop_not_active`, `shop_awaiting_stocktake`, `shop_awaiting_allocation`, `shop_not_connected`. `variantIds` rỗng, quá 200 (đếm cả id trùng, trước khi bỏ trùng): 422 `errors.variantIds`; biến thể không có hay của công ty khác: 422 `errors["variantIds.<i>"]`.',
+    security: bearer,
+    request: { params: ShopParams, body: json(PushPreviewBody) },
+    responses: {
+      200: { description: 'Kết quả theo biến thể, cùng thứ tự `variantIds` (bỏ trùng)', ...json(PushPreview) },
+      ...onShop,
+      409: problemResponse('`shop_not_active`, `shop_awaiting_stocktake`, `shop_awaiting_allocation` kèm `waitingFor`, `shop_not_connected`'),
+      422: problemResponse('`errors.variantIds`, `errors["variantIds.<i>"]`, `errors["listPrices.<id>"]`'),
     },
   });
   registry.registerPath({
@@ -579,6 +651,34 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
       202: { description: 'Chờ CEO duyệt: listing có `pendingMapping`', ...json(ChannelListing) },
       ...onShop,
       409: problemResponse('`shop_not_active`, `mapping_pending`, `invalid_transition`, `version_conflict` kèm `current`'),
+    },
+  });
+  registry.registerPath({
+    method: 'get',
+    path: '/shops/:id/remote-products',
+    summary: 'SKU sàn gom theo sản phẩm sàn (21 §18.12)',
+    description:
+      'Cần `channel.listing.match`. Đọc bản sao SKU sàn, không gọi sàn; chưa có bản sao thì xếp lượt tải nền như `remote-skus`. Phân trang theo sản phẩm sàn (mỗi sản phẩm kèm đủ SKU khớp lọc), xếp theo tên rồi mã sản phẩm sàn. `search` bỏ dấu, không phân biệt hoa thường. `counts` đếm SKU cả gian hàng. Gợi ý chỉ cho SKU `unlinked` của trang: trùng SKU người bán (`high`), rồi giống tên (tên sản phẩm cộng nhãn biến thể, bỏ dấu; pg_trgm từ 0,4; `medium` từ 0,7, còn lại `low`). `decision`, `suggestedGroupId` luôn null tới be#569.',
+    security: bearer,
+    request: { params: ShopParams, query: RemoteProductsQuery },
+    responses: {
+      200: { description: 'Một trang sản phẩm sàn', ...json(RemoteProductList) },
+      ...onShop,
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/shops/:id/sku-links',
+    summary: 'Liên kết SKU sàn hàng loạt (21 §18.12)',
+    description:
+      'Cần `channel.listing.match`; có dòng `create` thì thêm `catalog.product.manage` (thiếu: 403). Gian hàng `active` áp ngay: `link`, `unmanaged` mỗi dòng một giao dịch theo luật `listings/match`; các dòng `create` cùng sản phẩm sàn chung một giao dịch (một dòng lỗi thì cả nhóm không tạo), thêm biến thể vào sản phẩm kho có sẵn khi SKU anh em đã liên kết vào một sản phẩm một trục, ở nhiều sản phẩm kho thì `platform_product_split`. HTTP 200 kể cả khi có dòng lỗi. Lỗi cả request: 422 trùng `externalSkuId` / `externalProductId`, `link` thiếu `variantId` → 404 → 409 `shop_not_connected` (`needs_reauth`, `disconnected`) → 501 `not_implemented` cho gian hàng `connecting` (ghi nháp, be#569) → 403 → 422 `skip` ở gian hàng `active`, `errors.groups` kèm `externalProductIds` (sản phẩm sàn có dòng `create` mà thiếu danh mục), `errors["groups.N.groupId"]`.',
+    security: bearer,
+    request: { params: ShopParams, body: json(SkuLinksBody) },
+    responses: {
+      200: { description: 'Kết quả theo dòng, theo thứ tự `items`', ...json(SkuLinksResult) },
+      ...onShop,
+      409: problemResponse('`shop_not_connected`'),
+      501: problemResponse('`not_implemented`: gian hàng đang thiết lập, chờ commerio-backend#569'),
     },
   });
   registry.registerPath({
@@ -674,10 +774,33 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/shops/:id/listings/sync',
     summary: 'Xếp một lượt đồng bộ listing với sàn (#104, #223)',
     description:
-      'Cần `channel.shop.sync`. Không gọi sàn trong request: xếp một lượt `channel.listing_sync` (cùng việc chạy mỗi 15 phút) rồi trả 202. Lượt đó lấy đơn mới, đọc trạng thái sàn của listing mình (duyệt, từ chối, khoá, gỡ khoá, xoá), đối chiếu tồn, đẩy giá chuẩn và số có thể bán của listing `stockSync`/`priceSync` khác `synced`; kết quả xem ở danh sách listing. Đã có lượt chờ thì `queued: false`, không xếp thêm. Gian hàng không `active` hoặc mất token: 409 `shop_not_connected` kèm `current`.',
+      'Cần `channel.shop.sync`. Không gọi sàn trong request: xếp một lượt `channel.listing_sync` (cùng việc chạy mỗi 15 phút) rồi trả 202. Lượt đó lấy đơn mới, đọc trạng thái sàn của listing mình (duyệt, từ chối, khoá, gỡ khoá, xoá), đối chiếu tồn, đẩy giá chuẩn và số có thể bán của listing `stockSync`/`priceSync` khác `synced`; kết quả xem ở danh sách listing. Đã có lượt chờ thì `queued: false`, không xếp thêm. Trả `runId` để hỏi kết quả ở `GET …/sync-runs/:runId`. Gian hàng không `active` hoặc mất token: 409 `shop_not_connected` kèm `current`. Đua với việc đồng bộ đang nhận lượt mà không tạo được lượt mới: 503 `sync_run_busy`, bấm lại sau ít giây.',
     security: bearer,
     request: { params: ShopParams },
-    responses: { 202: { description: 'Đã xếp hoặc đã có lượt chờ', ...json(ListingSyncResult) }, ...onShop },
+    responses: {
+      202: { description: 'Đã xếp hoặc đã có lượt chờ', ...json(ListingSyncResult) },
+      ...onShop,
+      503: problemResponse('`sync_run_busy`: không tạo được lượt đồng bộ vì đua với việc đồng bộ, bấm lại sau ít giây'),
+    },
+  });
+  registry.registerPath({
+    method: 'get',
+    path: '/shops/:id/listings/sync-runs/latest',
+    summary: 'Lượt đồng bộ người bấm gần nhất của gian hàng (Documents/21 §18)',
+    description: 'Cần `channel.shop.view`. Quay lại trang vẫn thấy kết quả; chưa bấm lần nào thì `null`.',
+    security: bearer,
+    request: { params: ShopParams },
+    responses: { 200: { description: 'Lượt gần nhất hoặc null', ...json(SyncRun.nullable()) }, ...onShop },
+  });
+  registry.registerPath({
+    method: 'get',
+    path: '/shops/:id/listings/sync-runs/:runId',
+    summary: 'Kết quả một lượt đồng bộ (Documents/21 §18)',
+    description:
+      'Cần `channel.shop.view`. FE hỏi lại tới khi `done` hoặc `failed`. Tiến độ theo lô (≤ 20 listing), dòng lỗi kèm chỗ sửa (`fix`). Lượt quá 30 phút chưa xong đọc ra `failed` `run_stale`. Lượt của gian hàng khác, id sai dạng: 404.',
+    security: bearer,
+    request: { params: SyncRunParams },
+    responses: { 200: { description: 'Lượt đồng bộ', ...json(SyncRun) }, ...onShop },
   });
   registry.registerPath({
     method: 'post',

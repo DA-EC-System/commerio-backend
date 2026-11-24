@@ -7,7 +7,7 @@ import { StatusChangeSchema } from '../../../../shared/http/status-change.ts';
 // `kind` ở service (domain/config-version.ts), lỗi trả dưới ô `payload.<trường>`.
 
 const day = (label: string) => z.iso.date(`${label} dạng yyyy-mm-dd`);
-const kind = z.enum(CONFIG_KINDS, 'Loại cấu hình là fee, tax_regime, tax_rules, mismatch_threshold hoặc min_margin');
+const kind = z.enum(CONFIG_KINDS, 'Loại cấu hình là fee, tax_regime, tax_rules, mismatch_threshold, min_margin hoặc account_map');
 const status = z.enum(CONFIG_STATUSES, 'Trạng thái không hợp lệ');
 const payload = z.record(z.string(), z.unknown(), 'Nội dung cấu hình là một object').meta({
   description:
@@ -17,7 +17,9 @@ const payload = z.record(z.string(), z.unknown(), 'Nội dung cấu hình là m�
     "`{ regime: 'company' | 'household' | 'individual' }`; `tax_rules` `{ vatPct, pitPct, outputVatPct, milestones }` " +
     '(`vatPct`, `pitPct`: thuế sàn khấu trừ của hộ kinh doanh, cá nhân trên doanh thu; `outputVatPct`: thuế suất GTGT ' +
     'đầu ra của doanh nghiệp, doanh thu trong lãi = giá bán / (1 + outputVatPct/100)); `mismatch_threshold` ' +
-    '`{ abs, pct, resolveLimit }`; `min_margin` `{ pct }`. Phần trăm 0–100, tối đa hai chữ số thập phân; số đồng nguyên không âm.',
+    '`{ abs, pct, resolveLimit }`; `min_margin` `{ pct }`; `account_map` `{ accounts: { platformReceivable, customerReceivable, revenue, ' +
+    'outputVat, otherIncome, sellingExpense, adminExpense, otherExpense, withheldTax, cogs, inventory, bank, cash, supplierPayable }, ' +
+    'shopObjects?: { <shopId>: <mã đối tượng> } }` (số hiệu tài khoản chi tiết 3–10 chữ số; xuất sổ cho MISA, #232). Phần trăm 0–100, tối đa hai chữ số thập phân; số đồng nguyên không âm.',
 });
 
 export const ConfigListQuery = z.object({

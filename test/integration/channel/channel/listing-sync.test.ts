@@ -13,7 +13,7 @@ import { withCompany } from '#src/shared/db/client.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
-import { activateShop, fakeAdapter, seedSpecs } from './helpers.ts';
+import { activateShop, fakeAdapter, seedFeeConfig, seedSpecs } from './helpers.ts';
 
 const variant = (sku: string): ListingVariant => ({
   id: randomUUID(),
@@ -119,6 +119,7 @@ beforeAll(async () => {
   });
   shopId = res.body.shop.id;
   await activateShop(shopId);
+  await seedFeeConfig(company.companyId, shopId);
   await seedSpecs(company.companyId, 'lazada', '1', [a, b, c]);
   const imageUrls = Object.fromEntries([a, b, c].map((v) => [v.productId, ['https://img.test/x.png']]));
   const pushed = await auth(app().post(`/api/v1/channel/shops/${shopId}/listings/push`)).send({
@@ -226,7 +227,16 @@ describe('đồng bộ tồn và giá', () => {
     const rowA = await listing(a.id);
     // Đẩy lỗi giữ pending kèm lỗi (Documents/21 mục 18.6.6); `error` dành cho Lệch tồn.
     expect(rowA).toMatchObject({ stock_sync: 'pending', price_sync: 'error' });
-    expect(rowA.stock_sync_error).toMatchObject({ code: 'E0501', message: 'Update product failed' });
+    // Sàn giả không có bảng dịch: mã gốc nằm ở `platformCode`, câu chung kèm câu sàn (#571).
+    expect(rowA.stock_sync_error).toMatchObject({
+      code: 'marketplace_rejected',
+      kind: 'platform',
+      message: 'Sàn giả không nhận cập nhật tồn: Update product failed',
+      platformCode: 'E0501',
+      platformMessage: 'Update product failed',
+      variantId: a.id,
+    });
+    expect(rowA.price_sync_error).toMatchObject({ code: 'marketplace_rejected', message: 'Sàn giả không nhận cập nhật giá: Update product failed' });
     expect(await listing(b.id)).toMatchObject({ stock_sync: 'synced', stock_sync_error: null });
     skuErrors.clear();
   });
@@ -258,7 +268,7 @@ describe('đồng bộ tồn và giá', () => {
     const row = await listing(b.id);
     expect(row).toMatchObject({ stock_sync: 'pending', price_sync: 'error' });
     expect(row.stock_sync_error).toMatchObject({ code: 'variant_missing' });
-    expect(row.price_sync_error).toMatchObject({ code: 'E0501' });
+    expect(row.price_sync_error).toMatchObject({ code: 'marketplace_rejected', platformCode: 'E0501' });
     skuErrors.clear();
     available.set(b.id, 5);
     await sync();
@@ -315,9 +325,9 @@ describe('nút Đồng bộ chỉ xếp việc (POST /listings/sync, 202, #223)'
     const first = await press();
     const second = await press();
     expect(first.status).toBe(202);
-    expect(ListingSyncResult.parse(first.body)).toEqual({ queued: true });
+    expect(ListingSyncResult.parse(first.body)).toEqual({ queued: true, runId: expect.any(String) });
     expect(second.status).toBe(202);
-    expect(second.body).toEqual({ queued: false });
+    expect(second.body).toEqual({ queued: false, runId: first.body.runId });
     expect(await jobs()).toBe(1);
     expect(getSkusCalls).toBe(0);
     expect(updatePriceQuantity).not.toHaveBeenCalled();

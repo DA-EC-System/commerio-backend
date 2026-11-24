@@ -1023,6 +1023,76 @@
       "when": 1795261838907,
       "tag": "20261121115038_bang-san-fk",
       "breakpoints": true
+    },
+    {
+      "idx": 146,
+      "version": "7",
+      "when": 1795267657738,
+      "tag": "20261121132737_luot-dong-bo",
+      "breakpoints": true
+    },
+    {
+      "idx": 147,
+      "version": "7",
+      "when": 1795267680008,
+      "tag": "20261121132759_luot-dong-bo-rls",
+      "breakpoints": true
+    },
+    {
+      "idx": 148,
+      "version": "7",
+      "when": 1795516258691,
+      "tag": "20261124103058_onboarding-trang-thai",
+      "breakpoints": true
+    },
+    {
+      "idx": 149,
+      "version": "7",
+      "when": 1795518376499,
+      "tag": "20261124110616_lien-ket-sku-565",
+      "breakpoints": true
+    },
+    {
+      "idx": 150,
+      "version": "7",
+      "when": 1795521024769,
+      "tag": "20261124115024_phi-moi-mon",
+      "breakpoints": true
+    },
+    {
+      "idx": 151,
+      "version": "7",
+      "when": 1795524948992,
+      "tag": "20261124125548_dong-bo-category",
+      "breakpoints": true
+    },
+    {
+      "idx": 152,
+      "version": "7",
+      "when": 1795524951855,
+      "tag": "20261124125551_dong-bo-category-du-lieu",
+      "breakpoints": true
+    },
+    {
+      "idx": 153,
+      "version": "7",
+      "when": 1795525991106,
+      "tag": "20261124131311_ten-thuoc-tinh-20",
+      "breakpoints": true
+    },
+    {
+      "idx": 154,
+      "version": "7",
+      "when": 1795535668509,
+      "tag": "20261124155428_nguon-so-dem",
+      "breakpoints": true
+    },
+    {
+      "idx": 155,
+      "version": "7",
+      "when": 1795536176595,
+      "tag": "20261124160256_cau-hinh-tai-khoan-ke-toan",
+      "breakpoints": true
     }
   ]
 }
