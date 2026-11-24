@@ -319,6 +319,8 @@ export const ledgerKind = financeSchema.enum('ledger_kind', [
   'fee_transaction',
   'fee_service',
   'fee_optional',
+  // Phí cố định mỗi món (#381): `perItemFee` của cấu hình phí × số món của kiện.
+  'fee_per_item',
   'withholding_tax',
   'customer_refund',
   'return_fee',
