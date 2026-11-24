@@ -283,14 +283,15 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/platforms/:platform/categories/sync',
     summary: 'Đồng bộ ngay cây category của sàn (#400)',
     description:
-      'Cần `channel.shop.sync`. Xếp một lượt `channel.category_sync` (cùng việc chạy mỗi đêm) rồi trả 202; đã có lượt chờ thì `queued: false`. Category sàn bỏ thì `status = removed`, spec trỏ tới sang `categoryStatus = removed`. Sàn cần token để đọc cây thì mượn token gian hàng `active` nối sớm nhất trên sàn; không có thì lượt bỏ qua. Sàn trả cây thiếu quá ngưỡng (từ 100 node đang dùng, bỏ hơn 5%) thì lượt không ghi gì, log `error` kèm số node sắp bỏ và tổng node; quản trị nền tảng (`is_platform_admin`) gửi `allowShrink: true` để lượt đó vẫn ghi (khoá lượt chờ riêng, không gộp vào lượt thường).',
+      'Cần `channel.shop.sync`. Xếp một lượt `channel.category_sync` (cùng việc chạy mỗi đêm) rồi trả 202; đã có lượt chờ thì `queued: false`. Category sàn bỏ thì `status = removed`, spec trỏ tới sang `categoryStatus = removed`. Sàn cần token để đọc cây thì mượn token gian hàng `active` nối sớm nhất trên sàn, rồi gian hàng `shopId` gửi kèm (gian hàng đang thiết lập, #569; lượt mang `shopId` khoá chờ riêng); sàn từ chối token thì thử gian hàng kế, hết thì lượt `failed` (xem `GET /shops/:id/category-sync`). Sàn trả cây thiếu quá ngưỡng (từ 100 node đang dùng, bỏ hơn 5%) thì lượt không ghi gì, log `error` kèm số node sắp bỏ và tổng node; quản trị nền tảng (`is_platform_admin`) gửi `allowShrink: true` để lượt đó vẫn ghi (khoá lượt chờ riêng, không gộp vào lượt thường).',
     security: bearer,
     request: { params: PlatformParams, body: { required: false, content: { 'application/json': { schema: CategorySyncBody } } } },
     responses: {
       202: { description: 'Đã xếp hoặc đã có lượt chờ', ...json(CategorySyncResult) },
       ...auth,
       403: problemResponse('`forbidden`: thiếu `channel.shop.sync`, hoặc gửi `allowShrink: true` mà không phải quản trị nền tảng'),
-      422: problemResponse('`marketplace_unsupported`: sàn không có adapter hoặc chưa đọc được cây'),
+      404: problemResponse('`not_found`: `shopId` không phải gian hàng của công ty trên sàn này'),
+      422: problemResponse('`marketplace_unsupported`: sàn không có adapter hoặc chưa đọc được cây; `validation_failed` (`errors.shopId`)'),
     },
   });
   registry.registerPath({
@@ -341,6 +342,22 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
       200: { description: 'Trạng thái cây và quyền', ...json(CategorySyncView) },
       ...auth,
       404: problemResponse('`not_found`: gian hàng không có hoặc của công ty khác'),
+    },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/shops/:id/category-permissions/refresh',
+    summary: 'Thử lại lượt đọc quyền category của gian hàng (#569)',
+    description:
+      'Cần `channel.shop.sync`. Xếp lại lượt đọc quyền category bằng token của gian hàng (sàn có quyền theo gian hàng, TikTok), không gọi sàn trong request; đã có lượt chờ thì không xếp thêm. Trả trạng thái như `GET /shops/:id/category-sync`.',
+    security: bearer,
+    request: { params: ShopParams },
+    responses: {
+      202: { description: 'Đã xếp, trạng thái hiện tại', ...json(CategorySyncView) },
+      ...auth,
+      404: problemResponse('`not_found`: gian hàng không có hoặc của công ty khác'),
+      409: problemResponse('`shop_not_connected` (kèm `current`): gian hàng không `connecting`/`active` hoặc hết token'),
+      422: problemResponse('`marketplace_unsupported`: sàn không có quyền category theo gian hàng'),
     },
   });
   registry.registerPath({

@@ -9,6 +9,7 @@ import { logger } from '../../../../shared/logger.ts';
 import { borrowCandidates, setTreeSyncState } from '../repository/category-sync-state.ts';
 import { CategoryTreeShrunkError, syncTree, treeSyncedAt } from '../repository/platform-categories.ts';
 import { appOnly, getAdapter, MarketplaceError, type PlatformCategoryNode, registeredPlatforms } from './marketplaces/index.ts';
+import { findShopRow } from '../repository/shops.ts';
 import { platformOf, shopSession, toAppError } from './shops.ts';
 
 export const CategorySyncJobSchema = z.object({
@@ -42,7 +43,7 @@ const CATEGORY_SYNC_CRON = '30 2 * * *';
  */
 export async function requestCategorySync(
   raw: string,
-  opts: { allowShrink?: boolean; accountId?: string } = {},
+  opts: { allowShrink?: boolean; accountId?: string; companyId?: string; shopId?: string } = {},
 ): Promise<{ queued: boolean }> {
   // Cờ quản trị nền tảng đọc từ DB mỗi lần (gỡ cờ là chặn ngay, như router `platform`); kiểm trước sàn, trước xếp việc.
   if (opts.allowShrink && !(opts.accountId && (await findAccountById(opts.accountId))?.isPlatformAdmin)) {
@@ -50,8 +51,14 @@ export async function requestCategorySync(
   }
   const { platform, adapter } = platformOf(raw);
   if (!adapter.categoryTree) throw new AppError(422, 'marketplace_unsupported', 'Sàn này chưa hỗ trợ đọc category từ app');
-  const job: CategorySyncJob = opts.allowShrink ? { platform, allowShrink: true } : { platform };
-  const queued = (await sendJob(categorySyncQueue, job, { key: opts.allowShrink ? `${platform}:allow-shrink` : platform })) !== null;
+  // Nút Thử lại của trình thiết lập (#569): gian hàng đang nối cho mượn token khi sàn chưa có gian hàng `active`.
+  if (opts.shopId) {
+    const shopId = opts.shopId;
+    const shop = opts.companyId ? await withCompany(opts.companyId, () => findShopRow(shopId)) : undefined;
+    if (!shop || shop.platform !== platform) throw new AppError(404, 'not_found', 'Không tìm thấy gian hàng');
+  }
+  const job: CategorySyncJob = { platform, ...(opts.allowShrink && { allowShrink: true }), ...(opts.shopId && { shopId: opts.shopId }) };
+  const queued = (await sendJob(categorySyncQueue, job, { key: syncKey(platform, opts) })) !== null;
   if (queued) await setTreeSyncState(platform, 'queued');
   return { queued };
 }
@@ -68,8 +75,17 @@ export async function ensureCategoryTree(platform: string, shopId: string): Prom
     return;
   }
   if (await treeSyncedAt(platform)) return;
-  const queued = (await sendJob(categorySyncQueue, { platform, shopId }, { key: platform })) !== null;
+  const queued = (await sendJob(categorySyncQueue, { platform, shopId }, { key: syncKey(platform, { shopId }) })) !== null;
   if (queued) await setTreeSyncState(platform, 'queued');
+}
+
+/**
+ * Khoá lượt chờ: lượt thường một khoá mỗi sàn; lượt `allowShrink` và lượt mang gian hàng khoá riêng để không bị nuốt vào
+ * lượt thường đang chờ (lượt thường không mang cờ, không mang `shopId`; review #582).
+ */
+function syncKey(platform: string, opts: { allowShrink?: boolean; shopId?: string }): string {
+  if (opts.allowShrink) return `${platform}:allow-shrink`;
+  return opts.shopId ? `${platform}:shop:${opts.shopId}` : platform;
 }
 
 /** Lịch đêm cho mọi sàn có adapter đọc được cây (worker gọi lúc khởi động). */

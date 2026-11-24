@@ -17,7 +17,7 @@ export interface CategorySyncStatus {
 /** Sàn rảnh mà chưa từng có cây (lượt đầu bị mất, hay đồng bộ trước #569): báo lỗi để FE hiện nút Thử lại. */
 export const TREE_MISSING = 'Chưa có cây category của sàn. Bấm Thử lại để đồng bộ.';
 /** Gian hàng chưa có lượt đọc quyền nào (nối trước #569, hoặc lượt bị mất). */
-export const PERMISSIONS_MISSING = 'Chưa đọc quyền category của gian hàng. Kết nối lại gian hàng để đọc lại.';
+export const PERMISSIONS_MISSING = 'Chưa đọc quyền category của gian hàng. Bấm Thử lại để đọc.';
 
 export async function categorySyncStatus(companyId: string, shopId: string): Promise<CategorySyncStatus> {
   return withCompany(companyId, async () => {

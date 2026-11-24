@@ -9,7 +9,9 @@ import { logger } from '../../../../shared/logger.ts';
 import { permissionOf } from '../domain/product-spec.ts';
 import { setPermissionsState, shopOwnerOf } from '../repository/category-sync-state.ts';
 import { upsertPermissions } from '../repository/product-specs.ts';
+import { findShopRow } from '../repository/shops.ts';
 import { ensureCategoryTree } from './category-sync.ts';
+import { type CategorySyncStatus, categorySyncStatus } from './category-sync-status.ts';
 import { getAdapter, MarketplaceError } from './marketplaces/index.ts';
 import { shopSession, toAppError } from './shops.ts';
 
@@ -39,6 +41,27 @@ export async function onShopConnecting(payload: { shopId: string; to: string }):
   if ((await sendJob(permissionsSyncQueue, job, { key: payload.shopId })) !== null) {
     await withCompany(owner.companyId, () => setPermissionsState(payload.shopId, 'queued'));
   }
+}
+
+/**
+ * Nút Thử lại của quyền category (`POST /shops/:id/category-permissions/refresh`, #569, Documents/21 §18.5): xếp lại lượt đọc
+ * quyền, trả trạng thái như `GET …/category-sync`. 404 → 422 `marketplace_unsupported` (sàn không có quyền theo gian hàng) →
+ * 409 `shop_not_connected` (gian hàng không `connecting`/`active` hoặc hết token). Đã có lượt chờ thì không xếp thêm.
+ */
+export async function requestPermissionsRefresh(companyId: string, shopId: string): Promise<CategorySyncStatus> {
+  const shop = await withCompany(companyId, () => findShopRow(shopId));
+  if (!shop) throw new AppError(404, 'not_found', 'Không tìm thấy gian hàng');
+  const adapter = getAdapter(shop.platform);
+  if (!adapter?.categoryPermissionsPerShop || !adapter.categoryTree) {
+    throw new AppError(422, 'marketplace_unsupported', 'Sàn này không có quyền category theo gian hàng');
+  }
+  if ((shop.status !== 'connecting' && shop.status !== 'active') || !shop.accessTokenEnc) {
+    throw new AppError(409, 'shop_not_connected', 'Gian hàng chưa kết nối hoặc cần kết nối lại', { current: shop.status });
+  }
+  if ((await sendJob(permissionsSyncQueue, { shopId, companyId }, { key: shopId })) !== null) {
+    await withCompany(companyId, () => setPermissionsState(shopId, 'queued'));
+  }
+  return categorySyncStatus(companyId, shopId);
 }
 
 function errorText(err: unknown): string {

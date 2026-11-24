@@ -8,6 +8,7 @@ import type { ModuleContext } from '../../../../shared/module.ts';
 import { suggestCategories } from '../service/category-suggestions.ts';
 import { shopWarehouses } from '../service/shop-warehouses.ts';
 import { categorySyncStatus } from '../service/category-sync-status.ts';
+import { requestPermissionsRefresh } from '../service/category-permissions-sync.ts';
 import { requestCategorySync } from '../service/category-sync.ts';
 import { cascadeLevel, leafDetail, listPlatformCategories } from '../service/platform-categories.ts';
 import { applyCategory } from '../service/category-apply.ts';
@@ -233,8 +234,9 @@ export function channelRouter(ctx: ModuleContext): Router {
     validate({ params: PlatformParams, body: CategorySyncBody }),
     async (_req, res) => {
       const { platform } = validated<typeof PlatformParams>(res, 'params');
-      const { allowShrink } = validated<typeof CategorySyncBody>(res, 'body');
-      res.status(202).json(await requestCategorySync(platform, { allowShrink: allowShrink === true, accountId: actor(res).accountId }));
+      const { allowShrink, shopId } = validated<typeof CategorySyncBody>(res, 'body');
+      const { accountId, companyId } = actor(res);
+      res.status(202).json(await requestCategorySync(platform, { allowShrink: allowShrink === true, accountId, companyId, shopId }));
     },
   );
 
@@ -353,6 +355,12 @@ export function channelRouter(ctx: ModuleContext): Router {
   router.get('/shops/:id/category-sync', view, validate({ params: ShopParams }), async (_req, res) => {
     const { id } = validated<typeof ShopParams>(res, 'params');
     res.json(await categorySyncStatus(actor(res).companyId, id));
+  });
+
+  // Thử lại lượt đọc quyền category của gian hàng (#569, 21 §18.5): xếp việc, không gọi sàn trong request.
+  router.post('/shops/:id/category-permissions/refresh', ctx.authorize('channel.shop.sync'), validate({ params: ShopParams }), async (_req, res) => {
+    const { id } = validated<typeof ShopParams>(res, 'params');
+    res.status(202).json(await requestPermissionsRefresh(actor(res).companyId, id));
   });
 
   router.get('/shops/:id/warehouses', view, validate({ params: ShopParams }), async (_req, res) => {

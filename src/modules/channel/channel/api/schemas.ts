@@ -1244,6 +1244,13 @@ export const CategorySyncBody = z
       .boolean('allowShrink phải là true hoặc false')
       .optional()
       .meta({ description: 'Cho lượt này ghi cả khi cây sàn trả thiếu quá ngưỡng (đánh `removed` hàng loạt). Chỉ quản trị nền tảng' }),
+    shopId: z
+      .uuid('shopId không hợp lệ')
+      .optional()
+      .meta({
+        description:
+          'Gian hàng đang thiết lập (#569): sàn cần token mà chưa có gian hàng `active` nào thì lượt mượn token của gian hàng này. Phải là gian hàng của công ty, cùng sàn; không thì 404',
+      }),
   })
   .default({})
   .meta({ id: 'CategorySyncInput' });
