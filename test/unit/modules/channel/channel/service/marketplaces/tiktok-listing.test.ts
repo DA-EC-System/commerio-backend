@@ -524,6 +524,11 @@ describe('createProduct: kiểm điều kiện đăng trước khi tạo (#305)'
       platformCode: 'listing_check_failed',
       platformMessage:
         '12052051: The product name must be between 25 and 255 characters, inclusive.; 12052104: The following product attribute is missing, include it and try again. ID:101489',
+      // #567: mỗi lý do một detail để bảng dịch khớp mã Create Product.
+      details: [
+        { field: null, code: '12052051', message: 'The product name must be between 25 and 255 characters, inclusive.' },
+        { field: null, code: '12052104', message: 'The following product attribute is missing, include it and try again. ID:101489' },
+      ],
     });
     expect(paths(san)).not.toContain(CREATE);
   });

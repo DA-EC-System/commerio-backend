@@ -351,7 +351,10 @@ export function tiktokListingMethods(client: TiktokClient, deps: TiktokListingDe
     });
     const reasons = data?.check_result === 'FAILED' ? (data.fail_reasons ?? []) : [];
     if (!reasons.length) return;
-    throw new MarketplaceError('rejected', 'listing_check_failed', reasons.map((r) => `${String(r.code)}: ${String(r.message ?? '')}`).join('; '));
+    const err = new MarketplaceError('rejected', 'listing_check_failed', reasons.map((r) => `${String(r.code)}: ${String(r.message ?? '')}`).join('; '));
+    // Mỗi lý do một `details` để bảng dịch khớp mã Create Product (12052051, 12052104…) trước mã kiểm trước (#567).
+    err.details = reasons.map((r) => ({ field: null, code: r.code === undefined || r.code === null ? null : String(r.code), message: typeof r.message === 'string' ? r.message : null }));
+    throw err;
   }
 
   /**
