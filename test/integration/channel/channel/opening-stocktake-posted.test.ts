@@ -31,7 +31,7 @@ import { addMember, createCompany, createCustomRole } from '../../helpers/compan
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
 import { noLineInfo, noOrderInfo, noShipping } from '../../order/sales/helpers.ts';
-import { fakeAdapter, seedSpecs } from './helpers.ts';
+import { fakeAdapter, seedFeeConfig, seedSpecs } from './helpers.ts';
 import type * as ShopJobs from '#src/modules/channel/channel/service/shop-jobs.ts';
 import type * as Order from '#src/modules/order/index.ts';
 
@@ -633,8 +633,9 @@ describe('chờ phân hàng: thoát khi nhận allocation_done có cause.documen
 
 describe('đẩy listing khi đang giữ tồn: 409 (§18.6.11)', () => {
   /** Spec sàn của sản phẩm (#400 lát 15, thay ghép danh mục cũ). */
-  async function mapCategory(c: Company, _shopId: string) {
+  async function mapCategory(c: Company, shopId: string) {
     await seedSpecs(c.companyId, 'lazada', '14275', [fresh], { brand: 'No Brand' });
+    await seedFeeConfig(c.companyId, shopId);
   }
   const push = (c: Company, shopId: string) =>
     app()

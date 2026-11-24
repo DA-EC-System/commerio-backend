@@ -13,7 +13,7 @@ import { withCompany } from '#src/shared/db/client.ts';
 import { createCompany } from '../../helpers/company.ts';
 import { testPool } from '../../helpers/db.ts';
 import { testApp } from '../../helpers/http.ts';
-import { activateShop, fakeAdapter, seedSpecs } from './helpers.ts';
+import { activateShop, fakeAdapter, seedFeeConfig, seedSpecs } from './helpers.ts';
 
 const variant = (sku: string): ListingVariant => ({
   id: randomUUID(),
@@ -119,6 +119,7 @@ beforeAll(async () => {
   });
   shopId = res.body.shop.id;
   await activateShop(shopId);
+  await seedFeeConfig(company.companyId, shopId);
   await seedSpecs(company.companyId, 'lazada', '1', [a, b, c]);
   const imageUrls = Object.fromEntries([a, b, c].map((v) => [v.productId, ['https://img.test/x.png']]));
   const pushed = await auth(app().post(`/api/v1/channel/shops/${shopId}/listings/push`)).send({
@@ -315,9 +316,9 @@ describe('nút Đồng bộ chỉ xếp việc (POST /listings/sync, 202, #223)'
     const first = await press();
     const second = await press();
     expect(first.status).toBe(202);
-    expect(ListingSyncResult.parse(first.body)).toEqual({ queued: true });
+    expect(ListingSyncResult.parse(first.body)).toEqual({ queued: true, runId: expect.any(String) });
     expect(second.status).toBe(202);
-    expect(second.body).toEqual({ queued: false });
+    expect(second.body).toEqual({ queued: false, runId: first.body.runId });
     expect(await jobs()).toBe(1);
     expect(getSkusCalls).toBe(0);
     expect(updatePriceQuantity).not.toHaveBeenCalled();

@@ -708,6 +708,10 @@ export const ListingRow = z
     stockHeldReason: z.enum(['shop_waiting_opening', 'not_counted']).nullable().meta({
       description: 'Lý do chưa đẩy tồn, cùng nghĩa và thứ tự xét với `listings/match-preview`; khác null thì `stockToPush` null (21 §18.9 R3)',
     }),
+    lastSyncFailedAt: iso.nullable().meta({
+      description:
+        'Giờ lần đẩy lỗi hoặc bị giữ gần nhất (`at` mới hơn của `stockSyncError`, `priceSyncError` còn hiệu lực); null khi không có lỗi. `listing.lastPushedAt` là lần thành công gần nhất (21 §18 "Kết quả lượt đồng bộ")',
+    }),
   })
   .strict()
   .meta({ id: 'ListingRow' });
@@ -731,7 +735,7 @@ export const PushResult = z
     status: listingStatus.nullable().meta({ description: '`pushing` khi đã xếp việc; dòng bị chặn: trạng thái listing hiện có' }),
     code: z.string().nullable().meta({
       description:
-        'Null khi đã xếp việc. Dòng bị chặn: `not_found`, `push_in_progress`, `already_listed` (`under_review`, `live`, `hidden`), `mapping_pending` (listing lỗi đang chờ CEO duyệt ghép SKU sàn có sẵn), `sku_not_ready`, `price_missing`, `category_unmapped`, `dimensions_missing`, `images_missing`',
+        'Null khi đã xếp việc. Dòng bị chặn: `not_found`, `push_in_progress`, `already_listed` (`under_review`, `live`, `hidden`), `mapping_pending` (listing lỗi đang chờ CEO duyệt ghép SKU sàn có sẵn), `fee_not_configured` (lần đăng đầu, đăng lại sau gỡ hay sau lỗi mà gian hàng chưa có cấu hình phí, kể cả giá gõ tay; Documents/21 §18.9 R5), `sku_not_ready`, `price_missing`, `category_unmapped`, `dimensions_missing`, `images_missing`',
     }),
     message: z.string().nullable(),
   })
@@ -743,6 +747,7 @@ export const PushResults = z.object({ results: z.array(PushResult) }).strict().m
 export const ListingSyncResult = z
   .object({
     queued: z.boolean().meta({ description: '`true`: vừa xếp một lượt đồng bộ; `false`: gian hàng đã có lượt chờ, không xếp thêm' }),
+    runId: z.uuid().meta({ description: 'Lượt người bấm; lượt `queued` đang có thì cùng id (21 §18 "Kết quả lượt đồng bộ")' }),
   })
   .strict()
   .meta({ id: 'ListingSyncResult' });
@@ -1312,3 +1317,50 @@ export const ProductListingListWithSeparate = ProductListingList.extend({ separa
   .meta({ id: 'ProductListingListWithSeparate' });
 export const RegroupParams = z.object({ id: z.string(), productId: z.string().max(60) });
 export const RegroupQueued = z.object({ queued: z.literal(true) }).strict().meta({ id: 'RegroupQueued' });
+
+/** Lượt đồng bộ do người bấm (Documents/21 §18 "Kết quả lượt đồng bộ"). */
+export const SyncRunParams = z.object({ id: z.string(), runId: z.string() });
+export const SyncRunError = z
+  .object({
+    listingId: z.uuid(),
+    variantId: z.uuid().nullable(),
+    productId: z.uuid().nullable(),
+    productName: z.string().nullable(),
+    attributesLabel: z.string().nullable(),
+    sku: z.string().nullable().meta({ description: 'SKU người bán của listing' }),
+    code: z.string(),
+    message: z.string().meta({ description: 'Câu tiếng Việt cho người bán do app viết' }),
+    platformMessage: z.string().nullable().meta({ description: 'Câu sàn trả, nguyên văn; null khi lỗi do app giữ' }),
+    at: iso,
+    fix: z
+      .enum(['variant_price', 'stocktake', 'platform', 'shop_reconnect'])
+      .nullable()
+      .meta({ description: 'Chỗ sửa: `variant_price` mở Thông tin SKU ô Giá muốn thực nhận, `stocktake` tạo phiếu kiểm kê, `platform` sửa trên trang sàn' }),
+  })
+  .strict()
+  .meta({ id: 'SyncRunError' });
+export const SyncRun = z
+  .object({
+    id: z.uuid(),
+    shopId: z.uuid(),
+    status: z.enum(['queued', 'running', 'done', 'failed']),
+    requestedAt: iso,
+    startedAt: iso.nullable(),
+    finishedAt: iso.nullable(),
+    progress: z
+      .object({
+        processed: z.number().int(),
+        total: z.number().int().nullable().meta({ description: 'Số listing lượt này phải đẩy; null khi đang đọc trạng thái trên sàn' }),
+      })
+      .strict(),
+    succeeded: z.number().int(),
+    failed: z.number().int(),
+    errors: z.array(SyncRunError).meta({ description: 'Tối đa 200 dòng; số đủ ở `failed`' }),
+    error: z
+      .object({ code: z.string(), message: z.string() })
+      .strict()
+      .nullable()
+      .meta({ description: 'Lỗi cả lượt (`status = failed`): sàn lỗi, `marketplace_unauthorized`, `shop_not_connected`, `run_stale` (quá 30 phút)' }),
+  })
+  .strict()
+  .meta({ id: 'SyncRun' });

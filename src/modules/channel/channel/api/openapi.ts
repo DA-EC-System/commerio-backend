@@ -83,6 +83,8 @@ import {
   ShopList,
   ShopDisconnectConflict,
   ShopParams,
+  SyncRun,
+  SyncRunParams,
   ShopPlatformList,
   TokenBody,
   ConfirmPriceBody,
@@ -674,10 +676,29 @@ export function registerChannelOpenApi(registry: OpenAPIRegistry): void {
     path: '/shops/:id/listings/sync',
     summary: 'Xếp một lượt đồng bộ listing với sàn (#104, #223)',
     description:
-      'Cần `channel.shop.sync`. Không gọi sàn trong request: xếp một lượt `channel.listing_sync` (cùng việc chạy mỗi 15 phút) rồi trả 202. Lượt đó lấy đơn mới, đọc trạng thái sàn của listing mình (duyệt, từ chối, khoá, gỡ khoá, xoá), đối chiếu tồn, đẩy giá chuẩn và số có thể bán của listing `stockSync`/`priceSync` khác `synced`; kết quả xem ở danh sách listing. Đã có lượt chờ thì `queued: false`, không xếp thêm. Gian hàng không `active` hoặc mất token: 409 `shop_not_connected` kèm `current`.',
+      'Cần `channel.shop.sync`. Không gọi sàn trong request: xếp một lượt `channel.listing_sync` (cùng việc chạy mỗi 15 phút) rồi trả 202. Lượt đó lấy đơn mới, đọc trạng thái sàn của listing mình (duyệt, từ chối, khoá, gỡ khoá, xoá), đối chiếu tồn, đẩy giá chuẩn và số có thể bán của listing `stockSync`/`priceSync` khác `synced`; kết quả xem ở danh sách listing. Đã có lượt chờ thì `queued: false`, không xếp thêm. Trả `runId` để hỏi kết quả ở `GET …/sync-runs/:runId`. Gian hàng không `active` hoặc mất token: 409 `shop_not_connected` kèm `current`.',
     security: bearer,
     request: { params: ShopParams },
     responses: { 202: { description: 'Đã xếp hoặc đã có lượt chờ', ...json(ListingSyncResult) }, ...onShop },
+  });
+  registry.registerPath({
+    method: 'get',
+    path: '/shops/:id/listings/sync-runs/latest',
+    summary: 'Lượt đồng bộ người bấm gần nhất của gian hàng (Documents/21 §18)',
+    description: 'Cần `channel.shop.view`. Quay lại trang vẫn thấy kết quả; chưa bấm lần nào thì `null`.',
+    security: bearer,
+    request: { params: ShopParams },
+    responses: { 200: { description: 'Lượt gần nhất hoặc null', ...json(SyncRun.nullable()) }, ...onShop },
+  });
+  registry.registerPath({
+    method: 'get',
+    path: '/shops/:id/listings/sync-runs/:runId',
+    summary: 'Kết quả một lượt đồng bộ (Documents/21 §18)',
+    description:
+      'Cần `channel.shop.view`. FE hỏi lại tới khi `done` hoặc `failed`. Tiến độ theo lô (≤ 20 listing), dòng lỗi kèm chỗ sửa (`fix`). Lượt quá 30 phút chưa xong đọc ra `failed` `run_stale`. Lượt của gian hàng khác, id sai dạng: 404.',
+    security: bearer,
+    request: { params: SyncRunParams },
+    responses: { 200: { description: 'Lượt đồng bộ', ...json(SyncRun) }, ...onShop },
   });
   registry.registerPath({
     method: 'post',

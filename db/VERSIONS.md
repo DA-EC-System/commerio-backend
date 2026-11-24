@@ -5,18 +5,18 @@
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
 Mới nhất: **V148**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
 
-## V148 · 22/11/2026 · can-nang-kich-thuoc-tran
+## V148 · 21/11/2026 · luot-dong-bo-rls
 
-`db/migrations/20261122072333_can-nang-kich-thuoc-tran.sql` · sinh từ schema
+`db/migrations/20261121132759_luot-dong-bo-rls.sql` · viết tay
 
-- `product.product_variants`: đổi check `product_variants_dimensions`
+- viết tay: RLS
+- RLS cho bảng mới `channel.listing_sync_runs` (kết quả lượt đồng bộ do người bấm, Documents/21 §18; vòng lặp của 0002 chỉ chạy một lần).
 
-## V147 · 22/11/2026 · can-nang-kich-thuoc-du-lieu
+## V147 · 21/11/2026 · luot-dong-bo
 
-`db/migrations/20261122072328_can-nang-kich-thuoc-du-lieu.sql` · viết tay
+`db/migrations/20261121132737_luot-dong-bo.sql` · sinh từ schema
 
-- viết tay: dữ liệu
-- #434 (viết tay, chỉ dữ liệu, chạy lại được): cân nặng trên 50.000 g, cạnh trên 2.000 mm (Documents/21 §17.5) chỉ có trong dữ liệu thử trên staging (PATCH SKU trước #434 không chặn).
+- + bảng `channel.listing_sync_runs`
 
 ## V146 · 21/11/2026 · bang-san-fk
 
