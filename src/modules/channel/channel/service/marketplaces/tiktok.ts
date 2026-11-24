@@ -34,6 +34,7 @@ import {
 } from './tiktok-client.ts';
 import { tiktokOrderMethods, type TiktokOrderDeps } from './tiktok-orders.ts';
 import { tiktokReturnMethods } from './tiktok-returns.ts';
+import { tiktokFinanceMethods } from './tiktok-finance.ts';
 import { tiktokDeleteMethods } from './tiktok-delete.ts';
 
 export type { TiktokClient, TiktokConfig } from './tiktok-client.ts';
@@ -626,6 +627,8 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
     // Tồn, giá, ẩn hiện (#226), danh mục và đăng sản phẩm (#219): `tiktok-listing.ts`.
     ...tiktokListingMethods(client, { findSku }),
     ...tiktokReturnMethods(client),
+    // Quyết toán theo sao kê và mẫu phí cho gợi ý cấu hình phí (`tiktok-finance.ts`).
+    ...tiktokFinanceMethods(client),
     // Ảnh minh chứng khi từ chối đi Upload Product Image (`use_case` DESCRIPTION_IMAGE) rồi vào `images` (#476). Sàn nhận
     // cả WEBP, HEIC, BMP; giữ JPG, PNG như Lazada để một luật cho ô ảnh ở FE.
     returnImageTypes: ['image/jpeg', 'image/png'],

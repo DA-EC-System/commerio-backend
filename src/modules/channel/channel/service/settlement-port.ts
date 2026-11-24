@@ -5,6 +5,7 @@ import { currentCompanyId, withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import { logger } from '../../../../shared/logger.ts';
 import { findActiveShopsAnyCompany } from '../repository/shops.ts';
+import { type FeeSample, feeSamplesFromLines } from '../../../finance/index.ts';
 import { inBackground, type Payout, type SettlementTxn } from './marketplaces/index.ts';
 import { onMarketplace, shopSession } from './shops.ts';
 
@@ -38,6 +39,29 @@ export async function settlementPayouts(companyId: string, shopId: string, from:
     const { adapter, accessToken } = await withCompany(companyId, () => shopSession(shopId));
     if (!adapter.getPayouts) return [];
     return onMarketplace(() => adapter.getPayouts!(accessToken, from)).catch(reportInvalidAmount(companyId, shopId));
+  });
+}
+
+/**
+ * Mẫu phí theo đơn cho gợi ý cấu hình phí (tra-phi-san.md mục 5b): adapter có `feeSamples` (TikTok: sao kê, bù số ước tính)
+ * thì dùng; không thì dựng từ khoản quyết toán trong `[since, hôm nay]` (Lazada `getTransactions`, gom theo đơn), mới nhất
+ * trước, tối đa `limit`. Chỉ đọc, không ghi sổ. Gọi ngoài giao dịch nghiệp vụ.
+ */
+export async function settlementFeeSamples(
+  companyId: string,
+  shopId: string,
+  opts: { limit: number; since: string; until: string },
+): Promise<FeeSample[]> {
+  return inBackground(async () => {
+    const { adapter, accessToken } = await withCompany(companyId, () => shopSession(shopId));
+    if (adapter.feeSamples) {
+      return onMarketplace(() => adapter.feeSamples!(accessToken, { limit: opts.limit, since: opts.since })).catch(reportInvalidAmount(companyId, shopId));
+    }
+    if (!adapter.getTransactions) throw unsupported();
+    const lines = await onMarketplace(() => adapter.getTransactions!(accessToken, opts.since, opts.until)).catch(reportInvalidAmount(companyId, shopId));
+    return feeSamplesFromLines(lines)
+      .sort((a, b) => (a.date === b.date ? 0 : a.date < b.date ? 1 : -1))
+      .slice(0, opts.limit);
   });
 }
 
