@@ -561,7 +561,16 @@ export function createTiktokAdapter(config: TiktokConfig, fetchFn: typeof fetch 
     // đa 3 trục, tên trục tự đặt được (Documents#214 mục 3).
     standardSalesAttributes: TIKTOK_SALES_ATTRIBUTES,
     // `sales_attributes[].value_name` tối đa 50 ký tự, không công bố trần số giá trị (OAS Create Product 202309; #568).
-    variantCapabilities: () => ({ maxAxes: 3, customAxisName: true, salesRequired: [], addVariant: true, maxValueLength: 50, maxAxisValues: null }),
+    // Tên tự đặt tối đa 20 ký tự: OAS Create Product 202309 `sales_attributes[].name` "Max length: 20 characters" (#572).
+    variantCapabilities: () => ({
+      maxAxes: 3,
+      customAxisName: true,
+      maxAxisNameLength: 20,
+      salesRequired: [],
+      addVariant: true,
+      maxValueLength: 50,
+      maxAxisValues: null,
+    }),
     // Get Categories trả `permission_statuses` theo gian hàng mang token: việc đẩy ghi `shop_category_permissions` (#400 A17).
     categoryPermissionsPerShop: true,
     responsibleFields: RESPONSIBLE_ATTRS,

@@ -57,7 +57,7 @@ describe('POST /catalog/attributes', () => {
     expect(res.body.errors['values.1.code']).toBe('Nhập mã');
   });
 
-  it('giá trị trùng (không phân biệt hoa thường), danh sách rỗng, tên quá 15 ký tự, giá trị quá 20 ký tự → 422 (AC-18, #447)', async () => {
+  it('giá trị trùng (không phân biệt hoa thường), danh sách rỗng, tên quá 20 ký tự, giá trị quá 20 ký tự → 422 (AC-18, #447)', async () => {
     const dup = await api(token).post('/attributes', { name: uniq('X'), values: [{ value: 'Đen', code: 'D1' }, { value: 'đen', code: 'D2' }] });
     expect(dup.status).toBe(422);
     expect(dup.body.errors.values).toBe('Có giá trị bị trùng');
@@ -66,11 +66,11 @@ describe('POST /catalog/attributes', () => {
     const long = await api(token).post('/attributes', { name: uniq('X'), values: [{ value: 'A'.repeat(21) }] });
     expect(long.status).toBe(422);
     expect(long.body.errors['values.0.value']).toBeTruthy();
-    const longName = await api(token).post('/attributes', { name: 'A'.repeat(16), values: [{ value: 'A' }] });
+    const longName = await api(token).post('/attributes', { name: 'A'.repeat(21), values: [{ value: 'A' }] });
     expect(longName.status).toBe(422);
     expect(longName.body.errors.name).toBeTruthy();
-    // Đúng biên thì qua: tên 15 ký tự, giá trị 20 ký tự.
-    const edge = await api(token).post('/attributes', { name: `B${randomUUID().slice(0, 8)}`.padEnd(15, 'x'), values: [{ value: 'A'.repeat(20) }] });
+    // Đúng biên thì qua: tên 20 ký tự, giá trị 20 ký tự.
+    const edge = await api(token).post('/attributes', { name: `B${randomUUID().slice(0, 8)}`.padEnd(20, 'x'), values: [{ value: 'A'.repeat(20) }] });
     expect(edge.status, JSON.stringify(edge.body)).toBe(201);
   });
 

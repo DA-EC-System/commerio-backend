@@ -121,7 +121,7 @@ describe('POST /catalog/products: luật trục, lỗi theo ô (AC-3, AC-4)', ()
   const post = (axes: object[], variants: string[][], extra: object = {}) => api(ctx.token).post('/products', body(uniq('SP'), ctx.group.id, axes, variants, extra));
 
   it.each([
-    ['tên trục 16 ký tự', [{ name: 'x'.repeat(16), values: [{ value: 'A' }] }], [['A']], 'axes.0.name'],
+    ['tên trục 21 ký tự', [{ name: 'x'.repeat(21), values: [{ value: 'A' }] }], [['A']], 'axes.0.name'],
     ['giá trị 21 ký tự', [{ name: 'Mùi', values: [{ value: 'y'.repeat(21) }] }], [['y'.repeat(21)]], 'axes.0.values.0.value'],
     ['51 giá trị một trục', [{ name: 'Số', values: Array.from({ length: 51 }, (_, i) => ({ value: `G${i}` })) }], [['G0']], 'axes.0.values'],
     ['giá trị trùng trong trục', [{ name: 'Mùi', values: [{ value: 'Cam' }, { value: ' cam' }] }], [['Cam']], 'axes.0.values'],
