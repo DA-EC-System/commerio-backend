@@ -165,3 +165,57 @@ describe('attribute tier product (P2-7)', () => {
     expect(specMissing({ spec, attributes: [origin], axes: [], fallbacks: { '100149': '1000854' } })).toEqual([]);
   });
 });
+
+describe('normalizeSpec: thuộc tính biến thể ghép (#568)', () => {
+  const sale = (over: Partial<PlatformAttribute> & { code: string }): PlatformAttribute => ({
+    label: over.code,
+    kind: 'sales',
+    input: 'select',
+    options: [{ id: '10', label: 'Đỏ' }],
+    allowCustom: true,
+    required: false,
+    requiredWhen: null,
+    isKey: false,
+    tier: 'category',
+    raw: {},
+    ...over,
+  });
+  const two: SpecProduct = {
+    productId: 'p',
+    axes: [
+      { attributeId: 'a-color', name: 'Màu', platformKind: null, values: [{ valueId: 'v-red', value: 'Đỏ' }] },
+      { attributeId: 'a-size', name: 'Cỡ', platformKind: null, values: [{ valueId: 'v-s', value: 'S' }] },
+    ],
+    valueIds: new Map([
+      ['v-red', 'a-color'],
+      ['v-s', 'a-size'],
+    ]),
+    variantValues: [{ 'a-color': 'Đỏ', 'a-size': 'S' }],
+    originCountry: null,
+    brand: null,
+  };
+  const put = (leaf: PlatformAttribute[], valueMap: Record<string, string> = {}) =>
+    normalizeSpec(
+      { externalCategoryId: 'L', attributes: {}, axisMap: { 'a-color': 'color_family', 'a-size': 'color_family' }, valueMap, version: null },
+      leaf,
+      two,
+      {},
+    );
+
+  it('hai trục cùng đích nhận chữ ghép: lưu, không lỗi', () => {
+    expect(put([sale({ code: 'color_family' })])).toEqual({
+      values: { attributes: {}, axisMap: { 'a-color': 'color_family', 'a-size': 'color_family' }, valueMap: {} },
+      errors: {},
+    });
+  });
+
+  it('đích chỉ nhận lựa chọn có sẵn hoặc kiểu số: lỗi theo từng trục', () => {
+    for (const leaf of [[sale({ code: 'color_family', allowCustom: false })], [sale({ code: 'color_family', input: 'number' })]]) {
+      expect(Object.keys(put(leaf).errors).sort()).toEqual(['axisMap.a-color', 'axisMap.a-size']);
+    }
+  });
+
+  it('valueMap trên trục ghép: lỗi theo giá trị', () => {
+    expect(put([sale({ code: 'color_family' })], { 'v-red': '10' }).errors).toHaveProperty(['valueMap.v-red']);
+  });
+});

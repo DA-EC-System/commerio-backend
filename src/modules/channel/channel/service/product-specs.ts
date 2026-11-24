@@ -4,7 +4,7 @@ import { recordAudit, responsibleOrgOf } from '../../../core/index.ts';
 import { withCompany } from '../../../../shared/db/client.ts';
 import { AppError } from '../../../../shared/errors/app-error.ts';
 import type { ModuleContext } from '../../../../shared/module.ts';
-import { combineTarget } from '../domain/axis-combine.ts';
+import { axisGroups, combineTarget, targetCombinable } from '../domain/axis-combine.ts';
 import { type AxisInput, suggestAxes } from '../domain/axis-match.ts';
 import {
   CUSTOM_AXIS,
@@ -399,9 +399,22 @@ export function normalizeSpec(
   for (const key of Object.keys(input.axisMap)) {
     if (!product.axes.some((a) => a.attributeId === key)) errors[`axisMap.${key}`] = 'Không phải trục phân loại của sản phẩm';
   }
+  // Nhiều trục cùng đích là thuộc tính biến thể ghép (#568, Documents/21 §18.8.3): đích phải nhận chữ ghép.
+  const combined = new Set<string>();
+  for (const g of axisGroups(axisMap, product.axes.map((a) => a.attributeId))) {
+    if (g.attributeIds.length < 2) continue;
+    g.attributeIds.forEach((id) => combined.add(id));
+    if (targetCombinable(g.target, attributes)) continue;
+    const label = byCode.get(g.target)?.label ?? g.target;
+    for (const id of g.attributeIds) errors[`axisMap.${id}`] = `Thuộc tính biến thể ${label} của sàn không nhận chữ ghép, không ghép được`;
+  }
   const valueMap: Record<string, string> = {};
   for (const [valueId, optionId] of Object.entries(input.valueMap)) {
     const axisId = product.valueIds.get(valueId);
+    if (axisId && combined.has(axisId)) {
+      errors[`valueMap.${valueId}`] = 'Giá trị của thuộc tính biến thể ghép gửi nguyên chữ ghép, không chọn lựa chọn của sàn';
+      continue;
+    }
     const target = axisId ? axisMap[axisId] : undefined;
     const attr = target && target !== CUSTOM_AXIS ? byCode.get(target) : undefined;
     if (!attr || !attr.options.some((o) => o.id === optionId)) {
@@ -483,9 +496,13 @@ async function withSuggestion(adapter: MarketplaceAdapter, platform: Marketplace
   const axisMap = { ...input.axisMap };
   for (const axis of product.axes) if (axisMap[axis.attributeId] == null && suggestedAxisMap[axis.attributeId] != null) axisMap[axis.attributeId] = suggestedAxisMap[axis.attributeId]!;
   const valueMap = { ...input.valueMap };
+  // Trục ghép không có ánh xạ giá trị (#568)
+  const combined = new Set(axisGroups(axisMap, product.axes.map((a) => a.attributeId)).flatMap((g) => (g.attributeIds.length > 1 ? g.attributeIds : [])));
   for (const [valueId, optionId] of Object.entries(suggestedValueMap)) {
     const axisId = product.valueIds.get(valueId);
-    if (valueMap[valueId] === undefined && axisId !== undefined && axisMap[axisId] === suggestedAxisMap[axisId]) valueMap[valueId] = optionId;
+    if (valueMap[valueId] === undefined && axisId !== undefined && !combined.has(axisId) && axisMap[axisId] === suggestedAxisMap[axisId]) {
+      valueMap[valueId] = optionId;
+    }
   }
   return { ...input, axisMap, valueMap };
 }
