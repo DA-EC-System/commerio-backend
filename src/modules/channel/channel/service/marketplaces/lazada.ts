@@ -53,6 +53,8 @@ import { lazadaReturnMethods } from './lazada-returns.ts';
 import { downloadDocument } from './image-source.ts';
 import { lazadaPackingMethods, type LazadaPackingDeps } from './lazada-packing.ts';
 import { lazadaDeleteMethods } from './lazada-delete.ts';
+import { LAZADA_PUSH_ERRORS } from './lazada-push-errors.ts';
+import type { PlatformErrorDetail } from '../../domain/platform-error.ts';
 
 export interface LazadaConfig {
   appKey: string | undefined;
@@ -220,12 +222,36 @@ function lazadaMessage(res: LazadaResponse): string | null {
   return message ? `${message} (${details.join('; ')})` : details.join('; ');
 }
 
+/** Mã chi tiết đứng đầu câu (`BIZ_CHECK_PACKAGE_WEIGHT_BY_KG_INVALID:Khối lượng…`); chỉ mã có gạch dưới, `C006:` không tính. */
+const LEADING_CODE = /^([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+):\s*/;
+
+/**
+ * `detail[]` thành lý do có cấu trúc (#567). Hai dạng đã gặp: `{ field, message, code }` (gọi thật 17/11/2026) và mã đứng đầu
+ * `message` không có `code` (ca đêm 18/11/2026, `field: "Product"`); dạng sau thì tách mã, câu còn lại là phần sau dấu `:`.
+ */
+export function lazadaDetails(res: LazadaResponse): PlatformErrorDetail[] {
+  if (!Array.isArray(res.detail)) return [];
+  return res.detail.flatMap((d: { field?: unknown; message?: unknown; code?: unknown }) => {
+    if (!d || typeof d !== 'object') return [];
+    const field = typeof d.field === 'string' && d.field ? d.field : null;
+    let message = typeof d.message === 'string' && d.message ? d.message : null;
+    let code = typeof d.code === 'string' && d.code ? d.code : null;
+    const lead = !code && message ? LEADING_CODE.exec(message) : null;
+    if (lead) {
+      code = lead[1]!;
+      message = message!.slice(lead[0].length) || null;
+    }
+    return field || message || code ? [{ field, code, message }] : [];
+  });
+}
+
 export function lazadaError(res: LazadaResponse): MarketplaceError {
   const code = String(res.code ?? 'unknown');
   const message = lazadaMessage(res);
   const kind = AUTH_CODES.has(code) ? 'unauthorized' : res.type === 'SYSTEM' || TRANSIENT_CODES.has(code) ? 'unavailable' : 'rejected';
   const err = new MarketplaceError(kind, code, message);
   err.requestId = platformRequestId(res);
+  err.details = lazadaDetails(res);
   return err;
 }
 
@@ -1119,6 +1145,7 @@ export function createLazadaAdapter(config: LazadaConfig, fetchFn: typeof fetch 
     }),
     name: 'Lazada',
     capabilities: LAZADA_CAPABILITIES,
+    errorMap: LAZADA_PUSH_ERRORS,
     connectMethods() {
       // Chỉ OAuth cần trang callback; nối bằng token không cần.
       return oauthReady ? ['oauth', 'token'] : hasCredentials ? ['token'] : [];
