@@ -1058,6 +1058,13 @@
       "when": 1795521024769,
       "tag": "20261124115024_phi-moi-mon",
       "breakpoints": true
+    },
+    {
+      "idx": 151,
+      "version": "7",
+      "when": 1795525064710,
+      "tag": "20261124125744_ten-thuoc-tinh-20",
+      "breakpoints": true
     }
   ]
 }
