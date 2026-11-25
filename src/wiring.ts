@@ -26,6 +26,7 @@ import {
   remoteStockByVariant,
   returnPoliciesOf,
   settlementPayouts,
+  settlementSupported,
   settlementTransactions,
   shopsToSettle,
 } from './modules/channel/index.ts';
@@ -59,7 +60,7 @@ export function createModuleContext(): AppContext {
     // #30 A7: finance (lớp dưới) cần tên gian hàng của channel cho bảng kê đối soát; #105: sales cho danh sách đơn.
     shopsOf: getShops,
     // #117: finance kéo quyết toán qua token gian hàng của channel.
-    settlementSource: { transactions: settlementTransactions, payouts: settlementPayouts, shops: shopsToSettle },
+    settlementSource: { transactions: settlementTransactions, payouts: settlementPayouts, shops: shopsToSettle, supports: settlementSupported },
     // #105 PR 2: sales (lớp dưới) huỷ đơn, trả lời khách xin huỷ trên sàn qua token gian hàng của channel.
     marketplaceOrders: {
       cancelReasons: marketplaceCancelReasons, cancel: marketplaceCancelOrder, decideCancel: marketplaceDecideCancel,

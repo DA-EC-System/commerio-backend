@@ -102,7 +102,7 @@ export { returnPoliciesOf, type ShopReturnPolicy } from './service/shops-lookup.
 // Cho #133 (sàn báo gỡ app): `loseShopAuth` gọi ngoài giao dịch, đặt `needs_reauth` và dừng lịch việc nền của gian hàng.
 export { loseShopAuth, markNeedsReauth } from './service/shops.ts';
 // Cho finance kéo quyết toán (#117), tiêm qua `ctx.settlementSource` ở `src/wiring.ts`.
-export { settlementPayouts, settlementTransactions, shopsToSettle } from './service/settlement-port.ts';
+export { settlementPayouts, settlementTransactions, settlementSupported, shopsToSettle } from './service/settlement-port.ts';
 export type { Payout, SettlementTxn } from './service/marketplaces/index.ts';
 
 // Gian hàng của công ty cho checklist onboarding (#461).

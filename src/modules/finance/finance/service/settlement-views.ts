@@ -40,6 +40,8 @@ export interface SettlementSource {
   transactions(companyId: string, shopId: string, from: string, to: string): Promise<PlatformTxn[]>;
   payouts(companyId: string, shopId: string, from: string): Promise<PlatformPayout[]>;
   shops(): Promise<{ companyId: string; shopId: string }[]>;
+  /** Gian hàng kéo được quyết toán không (#401), không gọi sàn. Không khai thì coi như được. */
+  supports?(companyId: string, shopId: string): Promise<boolean>;
 }
 
 interface Paging {

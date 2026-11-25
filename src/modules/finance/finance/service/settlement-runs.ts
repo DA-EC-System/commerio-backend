@@ -72,6 +72,8 @@ export function listSettlementRuns(companyId: string, q: { shopId?: string; page
   });
 }
 
+const unsupportedShop = () => new AppError(422, 'marketplace_unsupported', 'Sàn này chưa hỗ trợ kéo quyết toán');
+
 /**
  * Mở một lần chạy `running` cho gian hàng và gửi việc chạy nó (cùng giao dịch: không mở được thì không có việc).
  * Đang có lần chạy thì 409 `settlement_running`, trừ lần đã đứng quá `STALE_RUN_MS` (đánh `failed`). Kỳ: từ mốc
@@ -81,6 +83,8 @@ export function openRun(ctx: FinanceContext, companyId: string, accountId: strin
   return withCompany(companyId, async () => {
     if (!ctx.settlementSource) throw new AppError(422, 'marketplace_unsupported', 'Chưa nối được sàn để lấy sao kê sàn');
     if (!isUuid(shopId) || (ctx.shopsOf && !(await ctx.shopsOf([shopId])).has(shopId))) throw notFound('gian hàng');
+    // Sàn chưa kéo được quyết toán (TikTok tới #252): báo ngay, không mở lần chạy, không gửi việc chắc chắn lỗi (#401).
+    if (ctx.settlementSource.supports && !(await ctx.settlementSource.supports(companyId, shopId))) throw unsupportedShop();
     await lockShopRuns(shopId);
     const running = await findRunningRun(shopId);
     if (running && now.getTime() - running.updatedAt.getTime() < STALE_RUN_MS) {
@@ -256,7 +260,9 @@ export async function pullAllShops(ctx: FinanceContext): Promise<number> {
       await openRun(ctx, companyId, null, shopId);
       opened++;
     } catch (err) {
-      if (!(err instanceof AppError && err.code === 'settlement_running')) logger.error({ err, shopId }, 'kéo quyết toán lỗi');
+      // Đang chạy, hoặc sàn vừa thôi hỗ trợ giữa lúc lấy danh sách và lúc mở (#401): bỏ qua lượt này, không phải lỗi.
+      const expected = err instanceof AppError && (err.code === 'settlement_running' || err.code === 'marketplace_unsupported');
+      if (!expected) logger.error({ err, shopId }, 'kéo quyết toán lỗi');
     }
   }
   return opened;
