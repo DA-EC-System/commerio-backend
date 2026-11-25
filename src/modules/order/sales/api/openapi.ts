@@ -27,7 +27,7 @@ export function registerSalesOpenApi(registry: OpenAPIRegistry): void {
     path: '/orders',
     summary: 'Danh sách đơn (§19.1)',
     description:
-      'Cần `sales.order.view`. Mới trước. `stage` suy từ kiện và `flag=due_soon` chỉ xét 1.000 đơn chưa dừng mới nhất; các bộ lọc khác không giới hạn.',
+      'Cần `sales.order.view`. Mới trước. `stage` suy từ kiện chỉ xét 1.000 đơn chưa dừng mới nhất; các bộ lọc khác (kể cả `flag=due_soon`, `flag=overdue`) không giới hạn.',
     security: bearer,
     request: { query: OrderListQuery },
     responses: { 200: { description: 'Một trang đơn', ...json(OrderSummaryPage) }, ...auth, 422: problemResponse('`validation_failed`') },

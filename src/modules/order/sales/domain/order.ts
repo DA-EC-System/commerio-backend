@@ -1,7 +1,7 @@
 // Máy trạng thái đơn và các luật suy ra (Documents/21 §19.1, sơ đồ D1), cùng bảng với FE `src/lib/machines/order.ts`.
 import { Decimal } from 'decimal.js';
 import { defineMachine } from '../../../core/index.ts';
-import { isHandedOver, isSealed, isStopped, holdsStock, type PackageStatus } from '../../fulfillment/index.ts';
+import { isHandedOver, isSealed, isStopped, PRE_HANDOVER, type PackageStatus } from '../../fulfillment/index.ts';
 
 export type OrderStatus = 'unpaid' | 'processing' | 'completed' | 'cancelled';
 export type OrderAction = 'confirm' | 'pay' | 'complete' | 'cancel' | 'platform_cancel' | 'cancel_on_platform' | 'auto_cancel';
@@ -15,6 +15,7 @@ export type OrderFlag =
   | 'cancelling'
   | 'platform_cancelled'
   | 'due_soon'
+  | 'overdue'
   | 'return_requested'
   | 'cod_mismatch'
   | 'shop_disconnected'
@@ -88,7 +89,6 @@ export function cancelPlan(packages: readonly PackageStatus[]): 'now' | 'after_o
 
 /** Hạn trả khi gian hàng chưa nhập số ngày hay không tìm thấy gian hàng (#236 D5). */
 export const DEFAULT_RETURN_WINDOW_DAYS = 7;
-export const DUE_SOON_HOURS = 24;
 const DAY_MS = 86_400_000;
 
 /** Cách sàn tính hạn trả (`capabilities.returnWindow`) và số ngày của gian hàng. */
@@ -235,9 +235,27 @@ export function stageOf(o: StageInput): OrderStage {
   return live.filter((s) => !isStopped(s)).reduce((a, b) => ((PROGRESS[b] ?? 9) < (PROGRESS[a] ?? 9) ? b : a)) as OrderStage;
 }
 
-/** Sắp trễ hạn: còn kiện chưa rời kho và dưới 24 giờ tới hạn bàn giao. */
-export function isDueSoon(shipBy: string | null, packages: readonly PackageStatus[], now: number): boolean {
-  if (!shipBy) return false;
-  const waiting = packages.some((s) => s === 'backordered' || holdsStock(s));
-  return waiting && Date.parse(shipBy) - now < DUE_SOON_HOURS * 3600_000;
+export type ShipByFlag = 'due_soon' | 'overdue';
+/** Còn ≤ 1/DUE_SOON_PARTS thời gian chuẩn bị hàng thì Sắp trễ hạn (Documents/25 §8.5). */
+export const DUE_SOON_PARTS = 4;
+
+export interface ShipByInput {
+  shipBy: Date | null;
+  /** Mốc bắt đầu thời gian chuẩn bị: lúc đặt trên sàn, thiếu thì lúc app nhận đơn (`placedAt ?? createdAt`, #432). */
+  startAt: Date;
+  packages: readonly PackageStatus[];
+  now: number;
+}
+
+/**
+ * Cờ hạn chuẩn bị hàng của sàn (Documents/25 §8.2, §8.5; #432), chỉ khi còn kiện chưa bàn giao (`PRE_HANDOVER`):
+ * tới `shipBy` thì Trễ hạn; còn ≤ 1/4 khoảng từ mốc bắt đầu tới `shipBy` thì Sắp trễ hạn. Hai cờ không cùng lúc.
+ * Mốc bắt đầu không trước `shipBy` thì chỉ có thể Trễ hạn. So mili giây nguyên, cùng công thức với `flagCondition`.
+ */
+export function shipByFlag(i: ShipByInput): ShipByFlag | null {
+  if (!i.shipBy || !i.packages.some((s) => PRE_HANDOVER.includes(s))) return null;
+  const deadline = i.shipBy.getTime();
+  const remaining = deadline - i.now;
+  if (remaining <= 0) return 'overdue';
+  return DUE_SOON_PARTS * remaining <= deadline - i.startAt.getTime() ? 'due_soon' : null;
 }

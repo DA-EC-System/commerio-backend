@@ -12,13 +12,13 @@ import {
   cancelInitiatorsOf,
   codUnconfirmed,
   completionBlocker,
-  isDueSoon,
   lastDeliveredAt,
   type OrderFlag,
   type OrderStage,
   type PaymentStatus,
   type ReturnPolicy,
   returnWindowEndsAt,
+  shipByFlag,
   stageOf,
 } from '../domain/order.ts';
 import {
@@ -120,7 +120,9 @@ function flagsOf(o: OrderViewRow, f: Facts, now: number): OrderFlag[] {
   // Suy ra (`cancellingSql`): lệnh huỷ chờ sàn, hoặc còn kiện chờ mở vì món đã huỷ.
   if (o.cancelling) flags.push('cancelling');
   if (o.platformCancelled) flags.push('platform_cancelled');
-  if (open && isDueSoon(isoOrNull(o.shipBy), statuses, now)) flags.push('due_soon');
+  // Hạn bàn giao (#432): đơn Đang huỷ không phải gửi nên không mang; cùng điều kiện với `flagCondition`.
+  const shipFlag = open && !o.cancelling ? shipByFlag({ shipBy: o.shipBy, startAt: o.placedAt ?? o.createdAt, packages: statuses, now }) : null;
+  if (shipFlag) flags.push(shipFlag);
   if (f.openReturns > 0) flags.push('return_requested');
   if (o.shopDisconnected) flags.push('shop_disconnected');
   if (f.paymentStatus === 'mismatch') flags.push('payment_mismatch');
@@ -197,7 +199,7 @@ const shopsOf = (ctx: SalesContext, ids: (string | null)[]) => {
   return ctx.shopsOf && unique.length ? ctx.shopsOf(unique) : Promise.resolve(new Map<string, ShopRef>());
 };
 
-/** Lọc theo giai đoạn suy từ kiện hay cờ Sắp trễ hạn phải tính trong bộ nhớ: chỉ xét chừng này đơn chưa dừng mới nhất. */
+/** Lọc theo giai đoạn suy từ kiện phải tính trong bộ nhớ: chỉ xét chừng này đơn chưa dừng mới nhất. */
 const DERIVED_SCAN = 1000;
 
 export async function listOrders(
@@ -214,13 +216,14 @@ export async function listOrders(
   const offset = (q.page - 1) * q.pageSize;
   // Giai đoạn `completed`, `cancelled` chính là trạng thái; còn lại chỉ có ở đơn chưa dừng.
   const stageIsStatus = q.stage === 'completed' || q.stage === 'cancelled';
-  const derived = q.flag === 'due_soon' || (q.stage !== undefined && !stageIsStatus);
+  const derived = q.stage !== undefined && !stageIsStatus;
   if (stageIsStatus && q.status && q.status !== q.stage) return { items: [], total: 0, page: q.page, pageSize: q.pageSize };
   const filter: OrderFilter = {
     ...q,
     status: stageIsStatus ? (q.stage as 'completed' | 'cancelled') : q.status,
-    flag: q.flag === 'due_soon' ? undefined : q.flag,
     openOnly: derived,
+    // Cùng mốc với `flags` của từng đơn: `flag=due_soon|overdue` không lệch với cờ trả về.
+    now: new Date(now),
   };
 
   const { rows, total } = derived ? await findOrderPage(filter, DERIVED_SCAN, 0) : await findOrderPage(filter, q.pageSize, offset);
@@ -231,7 +234,7 @@ export async function listOrders(
   ]);
   const items = rows.map((r) => summary(r, facts.get(r.id)!, shops, labels, now));
   if (!derived) return { items, total, page: q.page, pageSize: q.pageSize };
-  const matched = items.filter((s) => (!q.stage || s.display.stage === q.stage) && (q.flag !== 'due_soon' || s.flags.includes('due_soon')));
+  const matched = items.filter((s) => s.display.stage === q.stage);
   return { items: matched.slice(offset, offset + q.pageSize), total: matched.length, page: q.page, pageSize: q.pageSize };
 }
 

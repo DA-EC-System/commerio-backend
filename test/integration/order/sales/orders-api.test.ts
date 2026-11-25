@@ -140,6 +140,50 @@ describe('GET /sales/orders (#105)', () => {
     for (const i of page.items) expect(i.flags).toContain('cancelling');
   });
 
+  it('cờ hạn bàn giao: due_soon khi còn ≤ 25% tính từ lúc đặt, overdue khi tới hạn; lọc bằng SQL, đơn Đang huỷ không mang (#432)', async () => {
+    const own = await createCompany();
+    const tag = randomUUID().slice(0, 6);
+    const H = 3_600_000;
+    const now = Date.now();
+    const ids432: Record<string, string> = {};
+    const add = async (key: string, line: 'pending' | 'in_transit', placedAgo: number, shipIn: number) => {
+      const o = order(`T${key}-${tag}`, [{ variantId: null, status: line, pkg: `FP-T${key}-${tag}` }], {
+        placedAt: new Date(now - placedAgo * H),
+        shipBy: new Date(now + shipIn * H),
+      });
+      ids432[key] = (await withCompany(own.companyId, () => ingestMarketplaceOrder(o))).orderId;
+    };
+    await add('early', 'pending', 1, 15); // còn 15/16: không cờ
+    await add('dueSoon', 'pending', 13, 3); // còn 3/16: due_soon
+    await add('lateIngest', 'pending', 40, 8); // đặt 40 giờ trước, app vừa nhận: 8/48 → due_soon (tính từ lúc đặt)
+    await add('overdue', 'pending', 20, -1); // quá hạn 1 giờ
+    await add('handedOver', 'in_transit', 20, -1); // quá hạn nhưng đã bàn giao: không cờ
+    await add('cancellingOverdue', 'pending', 20, -1);
+    await testPool().query(`update "order".orders set cancel_pending = true where id = $1`, [ids432.cancellingOverdue]);
+
+    const list = async (q: string) => {
+      const res = await app().get(`/api/v1/sales/orders?pageSize=50${q}`).set('Authorization', `Bearer ${own.ceo.token}`);
+      expect(res.status).toBe(200);
+      return OrderSummaryPage.parse(res.body);
+    };
+    expect((await list('&flag=due_soon')).items.map((i) => i.id).sort()).toEqual([ids432.dueSoon, ids432.lateIngest].sort());
+    expect((await list('&flag=overdue')).items.map((i) => i.id)).toEqual([ids432.overdue]);
+    // Hàm domain và câu SQL cùng kết quả: cờ trong `flags` khớp bộ lọc trên mọi đơn.
+    const expected: Record<string, string | null> = {
+      early: null,
+      dueSoon: 'due_soon',
+      lateIngest: 'due_soon',
+      overdue: 'overdue',
+      handedOver: null,
+      cancellingOverdue: null,
+    };
+    const byId = new Map((await list('')).items.map((i) => [i.id, i.flags]));
+    for (const [key, flag] of Object.entries(expected)) {
+      const flags = byId.get(ids432[key]!)!;
+      expect(flags.filter((f) => f === 'due_soon' || f === 'overdue'), key).toEqual(flag ? [flag] : []);
+    }
+  });
+
   it('cờ có yêu cầu trả: lọc theo yêu cầu trả còn mở, yêu cầu đã đóng không tính', async () => {
     const insert = (status: string, close: string | null) =>
       testPool().query(
