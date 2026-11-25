@@ -15,6 +15,7 @@ import {
   CompanyParams,
   DeadJobListQuery,
   DeadJobParams,
+  FeeTemplateBody,
   LockCompanyBody,
   ReleaseTaxCodeBody,
   ModuleParams,
@@ -69,6 +70,22 @@ export function platformRouter(ctx: PlatformContext): Router {
     if (account) assertTokenCurrent(claims, account.passwordChangedAt);
     await deleteTestCompany({ accountId: claims.accountId, companyId: claims.companyId ?? null }, ctx.ceoRoleId!);
     res.status(204).end();
+  });
+
+  // Biểu phí mẫu (Documents/21 §21.6): quản trị nền tảng soạn, sửa khi sàn đổi phí; bảng và luật ở finance (qua `ctx`).
+  const templates = () => {
+    if (!ctx.feeTemplates) throw new AppError(404, 'not_found', 'Không có chức năng biểu phí mẫu');
+    return ctx.feeTemplates;
+  };
+  router.get('/fee-templates', platformAdmin, async (_req, res) => {
+    res.json(await templates().list());
+  });
+  router.post('/fee-templates', platformAdmin, validate({ body: FeeTemplateBody }), async (_req, res) => {
+    res.status(201).json(await templates().create(getAuth(res).accountId, validated<typeof FeeTemplateBody>(res, 'body')));
+  });
+  router.put('/fee-templates/:id', platformAdmin, validate({ params: CompanyParams, body: FeeTemplateBody }), async (_req, res) => {
+    const { id } = validated<typeof CompanyParams>(res, 'params');
+    res.json(await templates().update(getAuth(res).accountId, id, validated<typeof FeeTemplateBody>(res, 'body')));
   });
 
   router.get('/overview', platformAdmin, async (_req, res) => {

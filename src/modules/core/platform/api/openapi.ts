@@ -7,6 +7,7 @@ import {
   CompanyModule,
   CompanyPage,
   CompanyParams,
+  FeeTemplateBody,
   CompanyProfile,
   DeadJobListQuery,
   DeadJobPage,
@@ -112,6 +113,45 @@ export function registerPlatformOpenApi(registry: OpenAPIRegistry): void {
     description: `${adminOnly} \`recentActivities\`: năm dòng nhật ký nền tảng mới nhất.`,
     security: bearer,
     responses: { 200: { description: 'Tổng quan', ...json(PlatformOverview) }, ...adminAuth },
+  });
+  const feeTemplateNote =
+    'Biểu phí mẫu dùng chung mọi công ty (Documents/21 §21.6, thân và kết quả `FeeTemplate`): `{ platform, shopType, shopTypeLabel, payload, sources, effectiveFrom, note }`, `payload` theo luật `fee` của cấu hình phí. Ghi nhật ký nền tảng.';
+  registry.registerPath({
+    method: 'get',
+    path: '/fee-templates',
+    summary: 'Biểu phí mẫu của nền tảng',
+    description: `${adminOnly} ${feeTemplateNote}`,
+    security: bearer,
+    responses: { 200: { description: '`{ items: FeeTemplate[] }`' }, ...adminAuth },
+  });
+  registry.registerPath({
+    method: 'post',
+    path: '/fee-templates',
+    summary: 'Thêm biểu phí mẫu cho một sàn và loại shop',
+    description: `${adminOnly} ${feeTemplateNote}`,
+    security: bearer,
+    request: { body: json(FeeTemplateBody) },
+    responses: {
+      201: { description: '`FeeTemplate`' },
+      ...adminAuth,
+      409: problemResponse('`template_exists` (đã có mẫu cùng sàn, loại shop)'),
+      422: problemResponse('`validation_failed` theo ô (`platform`, `payload.<trường>`…)'),
+    },
+  });
+  registry.registerPath({
+    method: 'put',
+    path: '/fee-templates/:id',
+    summary: 'Sửa biểu phí mẫu khi sàn đổi phí; tăng `version`',
+    description: `${adminOnly} Thân như POST bỏ \`platform\`, \`shopType\`, thêm \`version\`. ${feeTemplateNote}`,
+    security: bearer,
+    request: { params: CompanyParams, body: json(FeeTemplateBody) },
+    responses: {
+      200: { description: '`FeeTemplate`' },
+      ...adminAuth,
+      404: problemResponse('`not_found`'),
+      409: problemResponse('`version_conflict` kèm `current`'),
+      422: problemResponse('`validation_failed` theo ô'),
+    },
   });
   registry.registerPath({
     method: 'get',

@@ -58,6 +58,9 @@ export const PlatformAuditQuery = z.object({
 /** Id sai dạng cũng là 404 như không có, nên không kiểm uuid ở đây. */
 export const CompanyParams = z.object({ id: z.string() });
 
+/** Biểu phí mẫu (Documents/21 §21.6): luật chi tiết của thân ở finance (lỗi theo ô 422), route chỉ nhận object JSON. */
+export const FeeTemplateBody = z.record(z.string(), z.unknown(), 'Thân là một object').meta({ id: 'PlatformFeeTemplateRequest' });
+
 const version = z.coerce.number('Thiếu version').int().min(1);
 export const ReleaseTaxCodeBody = z.object({
   reason: z.string('Cần nhập lý do gỡ').trim().min(1, 'Cần nhập lý do gỡ').max(500, 'Tối đa 500 ký tự'),

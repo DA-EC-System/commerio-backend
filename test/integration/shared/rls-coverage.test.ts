@@ -62,6 +62,9 @@ const EXPECTED_PRIVILEGES: Record<string, readonly Privilege[]> = {
   'channel.marketplaces': ['SELECT'],
   'channel.platform_category_attributes': ['SELECT'],
   'channel.platform_category_group_maps': ['SELECT'],
+  // Biểu phí mẫu của nền tảng là dữ liệu chuẩn dùng chung (Documents/21 §21.6): request chỉ đọc; quản trị nền tảng ghi bằng
+  // role chủ bảng (migration `*_bieu-phi-mau-quyen-du-lieu` thu lại INSERT, UPDATE, DELETE).
+  'finance.fee_templates': ['SELECT'],
   // Hàng việc nền (#102): request chỉ gửi việc trong giao dịch; mọi bảng khác của pgboss chỉ worker (role chủ bảng) chạm.
   'pgboss.queue': ['SELECT'],
   'pgboss.job_common': ['INSERT'],

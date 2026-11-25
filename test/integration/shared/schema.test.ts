@@ -70,6 +70,7 @@ const EXPECTED_TABLES: Record<string, readonly string[]> = {
     'bank_matches',
     'config_versions',
     'doc_counters',
+    'fee_templates',
     'gateway_configs',
     'ledger_entries',
     'ledger_package_lines',
