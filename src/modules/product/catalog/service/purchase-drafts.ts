@@ -5,6 +5,7 @@
 import { Decimal } from 'decimal.js';
 import { fileProblem, recordAudit } from '../../../core/index.ts';
 import { MISSING_FIELDS, type MissingField, readinessOf } from '../domain/labels.ts';
+import { EDGE_MAX_MM, WEIGHT_MAX_G } from '../domain/measure.ts';
 import { replaceProductImages } from '../repository/product-images.ts';
 import { findProduct, lockProduct, setSizeChart, touchProduct, updateProductIfVersion } from '../repository/products.ts';
 import { findTemplateFields } from '../repository/specs.ts';
@@ -245,8 +246,9 @@ export async function applyPurchaseDraft(companyId: string, productId: string, c
 
 /**
  * SKU vừa sinh khi ghi sổ (phiếu đầu hoặc phiếu sau) nhận số của tổ hợp trong bản soạn: giá chuẩn, giá muốn thực nhận,
- * cân nặng, kích thước gói (21 mục 16.3); chỉ ghi ô đang trống. Gắn ảnh theo giá trị của SKU nếu còn thiếu. Ngưỡng tồn do
- * bên gọi ghi qua inventory. Trả tên các ô đã ghi.
+ * cân nặng, kích thước gói (21 mục 16.3); chỉ ghi ô đang trống. Cân nặng, cạnh vượt trần 50.000 g / 2.000 mm (#434; bản
+ * soạn lưu trước khi có trần) thì bỏ số đó như `fillProductFacts`, không để CHECK `product_variants_dimensions` chặn ghi
+ * sổ. Gắn ảnh theo giá trị của SKU nếu còn thiếu. Ngưỡng tồn do bên gọi ghi qua inventory. Trả tên các ô đã ghi.
  */
 export async function applyDraftVariantFacts(
   companyId: string,
@@ -261,10 +263,13 @@ export async function applyDraftVariantFacts(
   const money = (s: string | null | undefined) => (s === null || s === undefined ? null : new Decimal(s).toFixed(2));
   if (v.standardPrice === null && facts.standardPrice != null) patch.standardPrice = money(facts.standardPrice);
   if (v.targetNetPrice === null && facts.targetNetPrice != null) patch.targetNetPrice = money(facts.targetNetPrice);
-  if (v.weightG === null && facts.weightG != null) patch.weightG = facts.weightG;
-  if (v.lengthMm === null && facts.lengthMm != null) patch.lengthMm = facts.lengthMm;
-  if (v.widthMm === null && facts.widthMm != null) patch.widthMm = facts.widthMm;
-  if (v.heightMm === null && facts.heightMm != null) patch.heightMm = facts.heightMm;
+  const capped = (n: number | null | undefined, max: number) => (n != null && n >= 1 && n <= max ? n : null);
+  const weight = capped(facts.weightG, WEIGHT_MAX_G);
+  const [length, width, height] = [facts.lengthMm, facts.widthMm, facts.heightMm].map((n) => capped(n, EDGE_MAX_MM));
+  if (v.weightG === null && weight !== null) patch.weightG = weight;
+  if (v.lengthMm === null && length !== null) patch.lengthMm = length;
+  if (v.widthMm === null && width !== null) patch.widthMm = width;
+  if (v.heightMm === null && height !== null) patch.heightMm = height;
   const fields = Object.keys(patch);
   if (fields.length) {
     await updateVariantIfVersion(variantId, v.version, patch);

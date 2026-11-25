@@ -249,6 +249,32 @@ describe('kiểm ô khi sửa', () => {
     expect(bad.status).toBe(422);
     expect(Object.keys(bad.body.errors)).toEqual(['variants.1.optionValues']);
   });
+
+  it('cân nặng, cạnh theo trần của SKU (#434): đúng 50.000 g / 2.000 mm thì lưu, vượt thì 422 theo ô', async () => {
+    const r = await createRequest(A.kho, A.supplierId, [fresh(uniq('Thùng'), { 'Kích cỡ': 'M' })] as never);
+    const id = PurchaseRequest.parse((await pur(A.kho).get(`/requests/${r.id}`)).body).productDrafts[0]!.id;
+    const draft = await getDraft(A.kho, id);
+
+    const over = await putDraft(A.kho, id, {
+      variantDefaults: { weightG: 50_001, lengthMm: 2_001 },
+      variants: [{ optionValues: { 'Kích cỡ': 'M' }, widthMm: 2_001, heightMm: 2_000 }],
+      version: draft.version,
+    });
+    expect(over.status).toBe(422);
+    expect(over.body.errors).toEqual({
+      'variantDefaults.weightG': 'Cân nặng tối đa 50 kg',
+      'variantDefaults.lengthMm': 'Chiều dài tối đa 2.000 mm',
+      'variants.0.widthMm': 'Chiều rộng tối đa 2.000 mm',
+    });
+
+    const max = await putDraft(A.kho, id, {
+      variantDefaults: { weightG: 50_000, lengthMm: 2_000 },
+      variants: [{ optionValues: { 'Kích cỡ': 'M' }, widthMm: 2_000, heightMm: 2_000 }],
+      version: draft.version,
+    });
+    expect(max.status, JSON.stringify(max.body)).toBe(200);
+    expect(ProductDraft.parse(max.body).variantDefaults).toMatchObject({ weightG: 50_000, lengthMm: 2_000 });
+  });
 });
 
 describe('ghi sổ phiếu nhập kho chép bản soạn sang sản phẩm', () => {
@@ -310,6 +336,31 @@ describe('ghi sổ phiếu nhập kho chép bản soạn sang sản phẩm', () 
     expect(again.variants).toHaveLength(2);
     const second = again.variants.find((v) => v.image?.fileId === white)!;
     expect(second).toMatchObject({ standardPrice: 150000, targetNetPrice: 130000, weightG: 400, minQty: 6 });
+  });
+
+  it('bản soạn lưu trước khi có trần còn số vượt 50.000 g / 2.000 mm (#434): ghi sổ vẫn được, SKU bỏ số vượt, giữ số hợp lệ', async () => {
+    const name = uniq('Tủ soạn trước');
+    const req = await ordered([fresh(name, { 'Kích cỡ': 'M' })]);
+    const id = PurchaseRequest.parse((await pur(A.kho).get(`/requests/${req.id}`)).body).productDrafts[0]!.id;
+    const draft = await getDraft(A.kho, id);
+    const saved = await putDraft(A.kho, id, { variantDefaults: { widthMm: 200 }, version: draft.version });
+    expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+    // Số cũ do trần trước đây (1.000.000 g, 100.000 mm) cho qua; API giờ chặn nên ghi thẳng DB.
+    await testPool().query(
+      `update product.purchase_product_drafts
+          set variant_defaults = variant_defaults || '{"weightG": 1000000, "lengthMm": 2001, "heightMm": 2000}'::jsonb
+        where id = $1`,
+      [id],
+    );
+
+    await receive(req.id, [{ announced: 2, accepted: 2 }]);
+    const productId = (await getDraft(A.kho, id)).productId;
+    expect(productId).not.toBeNull();
+    const product = (await api(A.ceo).get(`/products/${productId}`)).body as {
+      variants: { weightG: number | null; lengthMm: number | null; widthMm: number | null; heightMm: number | null }[];
+    };
+    expect(product.variants).toHaveLength(1);
+    expect(product.variants[0]).toMatchObject({ weightG: null, lengthMm: null, widthMm: 200, heightMm: 2_000 });
   });
 
   it('đề nghị đã kết thúc (huỷ): sửa bản soạn 409 draft_closed', async () => {
