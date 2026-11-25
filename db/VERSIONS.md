@@ -5,19 +5,18 @@
 `V<n>` là migration thứ n trong `db/migrations/meta/_journal.json`. Số không đổi sau khi merge vào `main`; migration của nhánh chưa merge mang số tạm, `npm run db:regen` có thể đẩy số lên.
 Mới nhất: **V158**. Schema hiện tại: [SCHEMA.md](SCHEMA.md).
 
-## V158 · 24/11/2026 · bieu-phi-mau-quyen-du-lieu
+## V158 · 24/11/2026 · can-nang-kich-thuoc-tran
 
-`db/migrations/20261124162400_bieu-phi-mau-quyen-du-lieu.sql` · viết tay
+`db/migrations/20261124160956_can-nang-kich-thuoc-tran.sql` · sinh từ schema
 
-- viết tay: quyền, dữ liệu
-- Biểu phí mẫu của nền tảng (Documents/21 §21.6): commerio_app chỉ đọc (ghi bằng role chủ bảng ở route quản trị nền tảng), dữ liệu TikTok ban đầu.
+- `product.product_variants`: đổi check `product_variants_dimensions`
 
-## V157 · 24/11/2026 · bieu-phi-mau
+## V157 · 24/11/2026 · can-nang-kich-thuoc-du-lieu
 
-`db/migrations/20261124162357_bieu-phi-mau.sql` · sinh từ schema
+`db/migrations/20261124160953_can-nang-kich-thuoc-du-lieu.sql` · viết tay
 
-- + bảng `finance.fee_templates`
-- `finance.config_versions`: + cột `source_template_id`, `source_template_version`; + khoá ngoại `config_versions_source_template_id_fee_templates_id_fk`; + check `config_versions_source_template`
+- viết tay: dữ liệu
+- #434 (viết tay, chỉ dữ liệu, chạy lại được): cân nặng trên 50.000 g, cạnh trên 2.000 mm (Documents/21 §17.5) chỉ có trong dữ liệu thử trên staging (PATCH SKU trước #434 không chặn).
 
 ## V156 · 24/11/2026 · cau-hinh-tai-khoan-ke-toan
 

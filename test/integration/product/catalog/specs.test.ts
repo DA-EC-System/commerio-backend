@@ -339,4 +339,24 @@ describe('POST /catalog/products: ảnh phân loại, giá và số đo lúc t�
       'validation_failed',
     );
   });
+
+  it('trần số đo như PATCH SKU (#434): đúng 50.000 g, 2.000 mm → 201; vượt → 422 báo tại ô của SKU', async () => {
+    const group = await groupNamed('Khác');
+    const atCap = await api(token).post('/products', {
+      name: uniq('Ly'),
+      groupId: group.id,
+      axes: [],
+      variants: [{ options: [], weightG: 50_000, lengthMm: 2_000, widthMm: 2_000, heightMm: 2_000 }],
+    });
+    ok(atCap, 201);
+    expect(ProductDetail.parse(atCap.body).variants[0]).toMatchObject({ weightG: 50_000, lengthMm: 2_000, widthMm: 2_000, heightMm: 2_000 });
+    const over = await api(token).post('/products', {
+      name: uniq('Ly'),
+      groupId: group.id,
+      axes: [],
+      variants: [{ options: [], weightG: 50_001, lengthMm: 2_000, widthMm: 2_001, heightMm: 2_000 }],
+    });
+    problem(over, 422, 'validation_failed');
+    expect(over.body.errors).toEqual({ 'variants.0.weightG': 'Cân nặng tối đa 50 kg', 'variants.0.widthMm': 'Chiều rộng tối đa 2.000 mm' });
+  });
 });

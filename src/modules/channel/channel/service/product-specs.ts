@@ -349,6 +349,11 @@ export function normalizeSpec(
   defaults: Record<string, SpecAttributeValue>,
   /** Khả năng khai biến thể của leaf (#448); có thì `__custom` chỉ nhận khi sàn cho tên trục tự đặt. */
   caps: VariantCapabilities | null = null,
+  /**
+   * Đổi category (#593): thiếu attribute bắt buộc và trục chưa ghép không chặn lưu, chỉ báo trong `missing` (vẫn chặn đẩy).
+   * Giá trị sai (lựa chọn không có, trục không phải sales, khoá lạ, ghép không hợp lệ) vẫn là lỗi.
+   */
+  { allowGaps = false }: { allowGaps?: boolean } = {},
 ): { values: Pick<SpecInput, 'attributes' | 'axisMap' | 'valueMap'>; errors: Record<string, string> } {
   const errors: Record<string, string> = {};
   const out: Record<string, SpecAttributeValue> = {};
@@ -382,7 +387,7 @@ export function normalizeSpec(
   for (const [code, value] of Object.entries(out)) if (sameValue(value, defaults[code])) delete out[code];
   // Bắt buộc, bắt buộc theo điều kiện (sales không tính, chỉ kiểm qua trục). `tier = 'product'` (xuất xứ) không báo theo ô: ô ở
   // tab spec chỉ đọc, điền ở trang sản phẩm; `missing` báo và chặn đẩy (review BE2 P2-7).
-  for (const m of specMissing({ spec: { attributes: { ...defaults, ...out }, axisMap: {}, categoryStatus: 'ok' }, attributes, axes: [] })) {
+  for (const m of allowGaps ? [] : specMissing({ spec: { attributes: { ...defaults, ...out }, axisMap: {}, categoryStatus: 'ok' }, attributes, axes: [] })) {
     if (byCode.get(m.code)?.tier === 'product') continue;
     if (m.reason === 'required' || m.reason === 'required_when') errors[`attributes.${m.code}`] ??= `Nhập ${m.label}`;
   }
@@ -390,6 +395,7 @@ export function normalizeSpec(
   const axisMap: Record<string, string> = {};
   for (const axis of product.axes) {
     const target = input.axisMap[axis.attributeId];
+    if (target == null && allowGaps) continue;
     if (target === CUSTOM_AXIS && caps && !caps.customAxisName) {
       errors[`axisMap.${axis.attributeId}`] = 'Sàn này không nhận tên trục tự đặt, chọn thuộc tính phân loại của sàn';
     } else if (target == null || (target !== CUSTOM_AXIS && !sales.has(target))) {
@@ -454,11 +460,18 @@ export async function putProductSpec(
   return withCompany(companyId, async () => {
     const resolve = await specResolver(productPort(ctx), companyId, adapter, platform, [productId]);
     const defaults = resolvedValues(resolve(product, attributes, {}));
-    // Lần lưu đầu: trục, giá trị người dùng chưa chọn thì điền theo gợi ý (#448); lần sau không tự điền để không đè lựa chọn.
-    const body = input.version === null ? await withSuggestion(adapter, platform, product, input) : input;
-    const { values, errors } = normalizeSpec(body, attributes, product, defaults, adapter.variantCapabilities?.(attributes) ?? null);
-    if (Object.keys(errors).length) throw new AppError(422, 'validation_failed', 'Dữ liệu không hợp lệ', { errors });
     const before = await findSpec(productId, platform);
+    // Đổi category (#593): attribute, trục của category cũ không dùng được nên FE gửi rỗng; thiếu thì lưu được, báo trong
+    // `missing` để điền tiếp ở tab sàn. Category không đổi, hoặc gửi
+    // `version: null` khi spec đã có (bản cũ, sẽ 409/422), thì kiểm chặt như cũ.
+    const categoryChanged = Boolean(before && input.version !== null && before.externalCategoryId !== input.externalCategoryId);
+    // Lần lưu đầu hoặc đổi category: trục, giá trị người dùng chưa chọn thì điền theo gợi ý (#448); còn lại không tự điền để
+    // không đè lựa chọn.
+    const body = input.version === null || categoryChanged ? await withSuggestion(adapter, platform, product, input) : input;
+    const { values, errors } = normalizeSpec(body, attributes, product, defaults, adapter.variantCapabilities?.(attributes) ?? null, {
+      allowGaps: categoryChanged,
+    });
+    if (Object.keys(errors).length) throw new AppError(422, 'validation_failed', 'Dữ liệu không hợp lệ', { errors });
     const conflict = async () => {
       const current = await findSpec(productId, platform);
       return new AppError(409, 'version_conflict', 'Thông tin sàn của sản phẩm vừa được người khác sửa', {

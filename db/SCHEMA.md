@@ -2,7 +2,7 @@
 
 <!-- Sinh tự động bởi `npm run db:docs`. Không sửa tay: sửa comment trong schema.ts (hoặc scripts/db/lib/schema-refs.ts) rồi chạy lại lệnh. -->
 
-Phiên bản **V158** (`20261124162400_bieu-phi-mau-quyen-du-lieu`): 106 bảng trong 6 schema, 96 khoá ngoại, 84 cột tham chiếu không có khoá ngoại. Lịch sử từng phiên bản: [VERSIONS.md](VERSIONS.md).
+Phiên bản **V158** (`20261124160956_can-nang-kich-thuoc-tran`): 105 bảng trong 6 schema, 95 khoá ngoại, 84 cột tham chiếu không có khoá ngoại. Lịch sử từng phiên bản: [VERSIONS.md](VERSIONS.md).
 
 Nguồn: snapshot của migration mới nhất, comment trong `src/modules/<lớn>/<con>/repository/schema.ts`, khoá ngoại, trigger, index, EXCLUDE viết tay trong migration. Cột, kiểu, ràng buộc, quan hệ của từng bảng ở `db/schema/<schema>.md`.
 
@@ -94,14 +94,13 @@ Chi tiết: [schema/order.md](schema/order.md)
 - `order.unmatched_return_parcel_lines` (fulfillment): Dòng hàng của kiện trả không khớp: số kho quét lúc nhận, chỉ món đã rõ SKU (Documents/19, Documents/21 §20).
 - `order.unmatched_return_parcels` (fulfillment): Kiện hàng trả quét được mà không khớp yêu cầu trả nào; hàng nằm ở chờ xử lý tới khi gắn hoặc bỏ (Documents/21 mục 20).
 
-## `finance` · Tài chính · lớp 4 · 22 bảng
+## `finance` · Tài chính · lớp 4 · 21 bảng
 
 Chi tiết: [schema/finance.md](schema/finance.md)
 
 - `finance.bank_matches` (finance): Khớp dòng sổ (rút tiền, NCC hoàn tiền, bồi thường) với sao kê ngân hàng (#117, Documents/21 §21.3).
 - `finance.config_versions` (finance): Phiên bản cấu hình phí (theo gian hàng), loại hình thuế, quy tắc thuế, ngưỡng lệch, biên tối thiểu.
 - `finance.doc_counters` (finance): Bộ đếm số hoá đơn, phiếu thu, phiếu chi; `period` theo tháng nếu #27 đánh số theo kỳ (plan chuẩn bị A4/K5).
-- `finance.fee_templates` (finance): Biểu phí mẫu của nền tảng (Documents/21 §21.6, 19; Thành chốt 22/11/2026): dữ liệu chuẩn dùng chung, không có `company_id`, mọi công ty đọc; chỉ quản trị nền tảng (route `/platform/fee-templates`) và…
 - `finance.gateway_configs` (payment): Khoá cổng của công ty, mã hoá AES-256-GCM.
 - `finance.ledger_entries` (finance): Sổ tiền, chỉ thêm (T1): mỗi khoản một dòng, số có dấu (vào dương, ra âm), cờ ước tính hay thực tế.
 - `finance.ledger_package_lines` (finance): Dòng hàng của kiện đã giao (#231), chép từ payload `fulfillment.package_delivered` lúc ghi sổ: lãi theo SKU (25 §10.2) gộp trong schema finance, không đọc chéo bảng kiện.

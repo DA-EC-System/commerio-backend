@@ -110,6 +110,16 @@ describe('ràng buộc bảng catalog (AC-9)', () => {
     });
     await expect(createVariant(randomUUID(), { sku: 'MU-0001' })).resolves.toBeDefined();
   });
+
+  it('cân nặng tối đa 50.000 g, mỗi cạnh tối đa 2.000 mm (#434, Documents/21 §17.5)', async () => {
+    const { variantId } = await createVariant(randomUUID());
+    const set = (column: 'weight_g' | 'length_mm' | 'height_mm', value: number) =>
+      db().query(`update product.product_variants set ${column} = $2 where id = $1`, [variantId, value]);
+    await expect(set('weight_g', 50_000)).resolves.toBeDefined();
+    await expect(set('length_mm', 2_000)).resolves.toBeDefined();
+    await expect(set('weight_g', 50_001)).rejects.toMatchObject({ constraint: 'product_variants_dimensions' });
+    await expect(set('height_mm', 2_001)).rejects.toMatchObject({ constraint: 'product_variants_dimensions' });
+  });
 });
 
 // Ảnh phân loại, xuất xứ, thương hiệu (#340, Documents/19 §3.2): CSDL tự chặn ảnh nằm sai thuộc tính và giá trị sai dạng.
