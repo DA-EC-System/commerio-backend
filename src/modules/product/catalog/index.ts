@@ -46,6 +46,8 @@ export {
 } from './service/purchase-drafts.ts';
 // Giá chuẩn và giá muốn bán là cột của SKU (Documents/19 D9); channel đọc giá muốn bán cho bộ lọc giá (#225).
 export { standardPricesOf, targetNetPricesOf } from './service/standard-price.ts';
+// Trần cân nặng, kích thước SKU (#434): bản soạn sản phẩm của phiếu nhập kiểm cùng luật với PATCH SKU.
+export { edgeMm, weightG } from './domain/measure.ts';
 // `ctx` của catalog: nguồn lý do chặn lưu trữ SKU do `product/index.ts` và `src/wiring.ts` nối (#204).
 export type { ArchiveBlockerSource, CatalogContext } from './service/usage.ts';
 // Link ảnh sản phẩm cho channel (ảnh đại diện của listing, ảnh đẩy lên sàn; #303).

@@ -1,0 +1,2 @@
+ALTER TABLE "product"."product_variants" DROP CONSTRAINT "product_variants_dimensions";--> statement-breakpoint
+ALTER TABLE "product"."product_variants" ADD CONSTRAINT "product_variants_dimensions" CHECK ("product"."product_variants"."weight_g" between 1 and 50000 and "product"."product_variants"."length_mm" between 1 and 2000 and "product"."product_variants"."width_mm" between 1 and 2000 and "product"."product_variants"."height_mm" between 1 and 2000);

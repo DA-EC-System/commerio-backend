@@ -2,6 +2,7 @@
 // trống của sản phẩm. Trường đã có giá trị bỏ qua, không lỗi. Người làm là hệ thống, nhật ký kèm gian hàng nguồn.
 import { requireCompanyId } from '../../../../shared/db/client.ts';
 import { fileProblem, recordAudit } from '../../../core/index.ts';
+import { EDGE_MAX_MM, WEIGHT_MAX_G } from '../domain/measure.ts';
 import {
   lockProductFacts,
   lockVariantMeasures,
@@ -47,21 +48,26 @@ export interface FactsSource {
   shopName?: string | null;
 }
 
-const MEASURES = ['weightG', 'lengthMm', 'widthMm', 'heightMm'] as const;
+// Trần như mọi đường ghi SKU (#434): vượt trần thì bỏ, không để CHECK `product_variants_dimensions` làm hỏng cả lần ghép.
+const MEASURES = [
+  ['weightG', WEIGHT_MAX_G],
+  ['lengthMm', EDGE_MAX_MM],
+  ['widthMm', EDGE_MAX_MM],
+  ['heightMm', EDGE_MAX_MM],
+] as const;
 const COUNTRY = /^[A-Z]{2}$/;
-const INT_MAX = 2_147_483_647;
 const DESCRIPTION_MAX = 5000;
 const BRAND_MAX = 100;
 
 const text = (v: string | null | undefined) => (typeof v === 'string' && v.trim() !== '' ? v.trim() : null);
-const measure = (v: number | null | undefined) => (typeof v === 'number' && Number.isInteger(v) && v > 0 && v <= INT_MAX ? v : null);
+const measure = (v: number | null | undefined, max: number) => (typeof v === 'number' && Number.isInteger(v) && v > 0 && v <= max ? v : null);
 
 /**
  * Điền trường **đang trống** (Documents/21 §11.3): `originCountry`, `brand` null; `description` rỗng; cân nặng, kích thước của
  * SKU null (theo `variantId`, SKU không thuộc sản phẩm bỏ qua). Giá trị sàn không hợp luật của catalog (mã nước không phải 2
- * chữ, thương hiệu quá 100 ký tự, số không nguyên dương) thì bỏ, không cắt. Có trường được ghi thì tăng `version` (sản phẩm và
- * từng SKU được ghi), một dòng nhật ký mỗi bản ghi, `actorId` null, `after.source = { shopId, shopName }`. SKU ghi mà sản
- * phẩm không đổi thì chỉ đổi `updated_at` của sản phẩm (P7). Khoá SKU theo id rồi sản phẩm, cùng chiều sửa SKU. Trả tên trường
+ * chữ, thương hiệu quá 100 ký tự, số không nguyên dương hoặc vượt trần 50.000 g / 2.000 mm của #434) thì bỏ, không cắt.
+ * Có trường được ghi thì tăng `version` (sản phẩm và từng SKU được ghi), một dòng nhật ký mỗi bản ghi, `actorId` null,
+ * `after.source = { shopId, shopName }`. SKU ghi mà sản phẩm không đổi thì chỉ đổi `updated_at` của sản phẩm (P7). Khoá SKU theo id rồi sản phẩm, cùng chiều sửa SKU. Trả tên trường
  * đã ghi (`variants.<variantId>.<trường>` cho SKU). Ảnh (#498): sản phẩm chưa có ảnh nào thì gắn `imageFileIds` (tối đa 9, bỏ
  * id trùng và tệp không dùng được theo `fileProblem`), chưa có bảng size thì gắn `sizeChartFileId`; tên trường `images`,
  * `sizeChartFileId`. Gọi trong `withCompany` của bên gọi.
@@ -79,8 +85,8 @@ export async function fillProductFacts(productId: string, facts: ProductFacts, s
   for (const row of variants) {
     const sent = wanted.get(row.id)!;
     const patch: VariantMeasuresPatch = {};
-    for (const field of MEASURES) {
-      const value = measure(sent[field]);
+    for (const [field, max] of MEASURES) {
+      const value = measure(sent[field], max);
       if (row[field] === null && value !== null) patch[field] = value;
     }
     if (!Object.keys(patch).length) continue;
