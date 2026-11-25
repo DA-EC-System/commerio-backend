@@ -318,7 +318,7 @@ describe('PATCH /variants/bulk', () => {
       { variantId: bad.variantId, version: 1, weightG: 50_001, widthMm: 2_001 },
     ]);
     expect(res.status).toBe(200);
-    expect(res.body.saved).toEqual([{ variantId: good.variantId, version: 2 }]);
+    expect(res.body.saved).toEqual([{ variantId: good.variantId, version: 2, reorderVersion: null }]);
     expect(res.body.failed).toMatchObject([
       {
         variantId: bad.variantId,

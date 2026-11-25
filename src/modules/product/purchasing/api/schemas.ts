@@ -5,6 +5,7 @@ import { MAX_LINES, MAX_QTY, MAX_UNIT_COST } from '../domain/request.ts';
 import { PURCHASE_REQUEST_STATUSES } from '../domain/request-machine.ts';
 import { SUPPLIER_RETURN_ACTIONS, SUPPLIER_RETURN_STATUSES } from '../domain/return-machine.ts';
 import { StatusChangeSchema } from '../../../../shared/http/status-change.ts';
+import { edgeMm, weightG } from '../../catalog/index.ts';
 
 // Hợp đồng /purchasing (Documents/21 mục 16.2, FE `src/types/purchasing.ts`). Giới hạn theo mock FE.
 // Id sai định dạng trả 404 ở service (như bản ghi không tồn tại, V6), nên tham số đường dẫn chỉ là chuỗi.
@@ -393,14 +394,14 @@ export const ProductDraftListQuery = z.object({
 });
 
 const nonNegMoney = (label: string) => z.number(label).int(label).min(0, label).max(1_000_000_000_000, label);
-const positive = (label: string, max: number) => z.number(label).int(label).min(1, label).max(max, label);
+// Cân nặng, kích thước theo luật từng số của PATCH SKU (Documents/21 mục 17.2, #434): ghi sổ phiếu nhận chép sang SKU.
 const factsIn = {
   standardPrice: nonNegMoney('Giá chuẩn là số nguyên đồng ≥ 0').nullish(),
   targetNetPrice: nonNegMoney('Giá muốn thực nhận là số nguyên đồng ≥ 0').nullish(),
-  weightG: positive('Cân nặng là số nguyên gam > 0', 1_000_000).nullish(),
-  lengthMm: positive('Chiều dài là số nguyên mm > 0', 100_000).nullish(),
-  widthMm: positive('Chiều rộng là số nguyên mm > 0', 100_000).nullish(),
-  heightMm: positive('Chiều cao là số nguyên mm > 0', 100_000).nullish(),
+  weightG,
+  lengthMm: edgeMm('Chiều dài'),
+  widthMm: edgeMm('Chiều rộng'),
+  heightMm: edgeMm('Chiều cao'),
   minQty: z.number('Ngưỡng tồn là số nguyên ≥ 0').int('Ngưỡng tồn là số nguyên ≥ 0').min(0, 'Ngưỡng tồn là số nguyên ≥ 0').max(1_000_000).nullish(),
 };
 
