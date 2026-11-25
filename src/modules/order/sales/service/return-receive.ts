@@ -117,6 +117,13 @@ export async function receiveReturn(ctx: SalesContext, actor: Actor, input: Rece
       const row = matches.find((r) => r.status === 'awaiting_return');
       if (!row) throw notAwaiting(await returnView(ctx, matches[0]!, opts));
       if (!(await allPackagesReturned(row.id))) {
+        // Hết giai đoạn chuyển tiếp (FE#212 đã đóng, #363): yêu cầu khớp phải có số kho quét từng món, `[]` là chưa nhận
+        // được món nào. Không còn "không gửi thì coi như quét đủ": hàng về thiếu phải lộ ra trên phiếu kiểm.
+        if (!input.lines) {
+          throw new AppError(422, 'validation_failed', 'Dữ liệu không hợp lệ', {
+            errors: { lines: 'Quét từng món thực nhận rồi mới nhận hàng' },
+          });
+        }
         const externalLineIds = await receiveRequest(row, actor, input.lines, { ...(note && { note }) });
         return { kind: 'matched' as const, row, externalLineIds };
       }
