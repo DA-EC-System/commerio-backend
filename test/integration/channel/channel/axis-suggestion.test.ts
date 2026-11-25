@@ -274,4 +274,73 @@ describe('gợi ý ghép trục', () => {
       expect(Object.keys(fixed.body.errors)).toEqual(expect.arrayContaining([`axisMap.${colorAttr}`, `axisMap.${sizeAttr}`]));
     });
   });
+
+  describe('đổi category (#593)', () => {
+    let pid: string;
+    const isbn = `isbn_${sfx}`;
+    const reqFull = `AXS-RQ-${sfx}`;
+    const reqNoSize = `AXS-RQN-${sfx}`;
+    beforeAll(async () => {
+      const v = await createVariant(ceo.companyId);
+      await bindValues(v.variantId, [redId, mId]);
+      pid = v.productId;
+      await leaf('lazada', reqFull, [
+        { code: 'color_family', label: 'Màu' },
+        { code: 'size', label: 'Kích cỡ' },
+      ]);
+      await leaf('lazada', reqNoSize, [{ code: 'color_family', label: 'Màu' }]);
+      for (const id of [reqFull, reqNoSize]) {
+        await testPool().query(
+          `insert into channel.platform_category_attributes (platform, external_category_id, code, label, kind, input, required, tier, fetched_at)
+           values ('lazada', $1, $2, 'ISBN ISSN', 'property', 'text', true, 'category', now())`,
+          [id, isbn],
+        );
+      }
+    });
+    const putPid = (body: object) =>
+      request(app).put(`/api/v1/channel/products/${pid}/specs/lazada`).set('Authorization', `Bearer ${ceo.token}`).send(body);
+    const empty = { attributes: {}, axisMap: {}, valueMap: {} };
+
+    it('có gợi ý: 200, trục và giá trị được điền theo leaf mới; attribute bắt buộc còn thiếu nằm trong missing', async () => {
+      const first = await putPid({ externalCategoryId: leafs.lzFull, attributes: {}, version: null });
+      expect(first.status, JSON.stringify(first.body)).toBe(200);
+      const res = await putPid({ externalCategoryId: reqFull, ...empty, version: first.body.spec.version });
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+      ProductSpecView.parse(res.body);
+      expect(res.body.spec).toMatchObject({
+        externalCategoryId: reqFull,
+        axisMap: { [colorAttr]: 'color_family', [sizeAttr]: 'size' },
+        valueMap: { [redId]: '10' },
+      });
+      expect(res.body.missing).toEqual([expect.objectContaining({ code: isbn, reason: 'required' })]);
+    });
+
+    it('không gợi ý được trục: 200, trục chưa ghép và attribute bắt buộc nằm trong missing', async () => {
+      const current = (await request(app).get(`/api/v1/channel/products/${pid}/specs/lazada`).set('Authorization', `Bearer ${ceo.token}`)).body.spec;
+      const res = await putPid({ externalCategoryId: reqNoSize, ...empty, version: current.version });
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+      expect(res.body.spec.axisMap).toEqual({ [colorAttr]: 'color_family' });
+      expect(res.body.missing).toEqual(
+        expect.arrayContaining([
+          { code: sizeAttr, label: 'Kích cỡ', reason: 'axis_unmapped' },
+          expect.objectContaining({ code: isbn, reason: 'required' }),
+        ]),
+      );
+    });
+
+    it('đổi category mà gửi giá trị sai: vẫn 422', async () => {
+      const current = (await request(app).get(`/api/v1/channel/products/${pid}/specs/lazada`).set('Authorization', `Bearer ${ceo.token}`)).body.spec;
+      const res = await putPid({ externalCategoryId: reqFull, ...empty, axisMap: { [colorAttr]: isbn }, version: current.version });
+      expect(res.status).toBe(422);
+      expect(res.body.errors[`axisMap.${colorAttr}`]).toBe('Chọn thuộc tính phân loại của sàn cho Màu sắc');
+    });
+
+    it('category không đổi mà còn thiếu: 422 như cũ', async () => {
+      const current = (await request(app).get(`/api/v1/channel/products/${pid}/specs/lazada`).set('Authorization', `Bearer ${ceo.token}`)).body.spec;
+      expect(current.externalCategoryId).toBe(reqNoSize);
+      const res = await putPid({ externalCategoryId: reqNoSize, ...empty, axisMap: { [colorAttr]: 'color_family' }, version: current.version });
+      expect(res.status).toBe(422);
+      expect(Object.keys(res.body.errors)).toEqual(expect.arrayContaining([`attributes.${isbn}`, `axisMap.${sizeAttr}`]));
+    });
+  });
 });
