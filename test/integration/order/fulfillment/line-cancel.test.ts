@@ -7,7 +7,7 @@ import { testPool } from '../../helpers/db.ts';
 import { getOrder } from '#src/modules/order/sales/service/orders.ts';
 import { CANCELLING_SQL, packageRow, packingApp, splitByHand, stockOfVariant, transitionsOf } from './helpers.ts';
 import { createModuleContext } from '#src/wiring.ts';
-import { ingest, remote, setup, withLineCancelled, withStatus } from './platform-fixtures.ts';
+import { ingest, remote, setup, withCancel, withLineCancelled, withStatus } from './platform-fixtures.ts';
 
 const unpacked = (o: PlatformOrder): PlatformOrder => ({ ...o, lines: o.lines.map((l) => ({ ...l, packageCode: null })) });
 
@@ -229,5 +229,19 @@ describe('sàn huỷ lẻ một món (spec 205 §5.10)', () => {
     await ingest(v.companyId, withStatus(lineCancel, 'delivered', liveCode));
     expect(await completeDueOrdersOnce(new Date(Date.now() + 8 * 86_400_000), createModuleContext())).toBeGreaterThanOrEqual(1);
     expect(await flagOf()).toMatchObject({ status: 'completed', cancelling: false, cancel_pending: false, platform_cancelled: false });
+  });
+});
+
+describe('sàn huỷ cả kiện đang chờ đổi ghép (spec 237 D17)', () => {
+  it('D2-G12 19d: kiện mang remap, sàn huỷ cả kiện → mục đích cancel', async () => {
+    const s = await setup(10);
+    const o = remote(s, { lines: 1, status: 'packed' });
+    const { packageId } = await ingest(s.companyId, o);
+    await testPool().query(`update "order".packages set needs_open = true, open_purpose = 'remap' where id = $1`, [packageId]);
+    await testPool().query('update "order".package_lines set remap_pending = true where package_id = $1', [packageId]);
+
+    await ingest(s.companyId, withCancel(o, 'cancellation'));
+
+    expect(await packageRow(packageId)).toMatchObject({ status: 'packed', needs_open: true, open_purpose: 'cancel' });
   });
 });

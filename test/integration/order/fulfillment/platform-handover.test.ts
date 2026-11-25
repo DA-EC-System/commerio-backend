@@ -189,3 +189,27 @@ describe('đồng bộ sàn trừ tồn qua lõi bàn giao (spec 199a §5.4)', (
     expect(await stockOfVariant(s.companyId, s.variantId)).toMatchObject({ onHand: 9 });
   });
 });
+
+describe('sàn báo rời kho khi kiện còn chờ đổi ghép (spec 237 D19)', () => {
+  it('D2-G14 21: kiện packed mang remap và dấu, sàn báo rời kho → trừ theo A một phiếu XK, dòng giữ A, cờ Cần mở gỡ, Cần xử lý LEFT_WHILE_AWAITING_OPEN_NOTE', async () => {
+    const s = await setup(10);
+    const o = remote(s, { lines: 1, status: 'packed' });
+    const { packageId } = await ingest(s.companyId, o);
+    await testPool().query(`update "order".packages set needs_open = true, open_purpose = 'remap' where id = $1`, [packageId]);
+    await testPool().query('update "order".package_lines set remap_pending = true where package_id = $1', [packageId]);
+
+    await ingest(s.companyId, withStatus(o, 'in_transit'));
+
+    expect(await packageRow(packageId)).toMatchObject({
+      status: 'in_transit',
+      needs_open: false,
+      open_purpose: null,
+      needs_attention: true,
+      flag_note: 'Sàn báo kiện rời kho khi còn chờ dỡ kiện về kệ',
+    });
+    expect(await packageDocuments(packageId)).toHaveLength(1);
+    const { rows } = await testPool().query('select variant_id, stock_deducted from "order".package_lines where package_id = $1', [packageId]);
+    expect(rows).toEqual([{ variant_id: s.variantId, stock_deducted: true }]);
+    expect(await stockOfVariant(s.companyId, s.variantId)).toMatchObject({ onHand: 9, reserved: 0 });
+  });
+});

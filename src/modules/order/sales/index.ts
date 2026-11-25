@@ -49,6 +49,8 @@ export {
 export { ingestMarketplaceOrder, type PlatformOrder, settleCancelledOrder } from './service/ingest.ts';
 // Ghép SKU áp lên đơn đã về (spec 237): channel gọi trong giao dịch ghép.
 export { applySkuMapping, type ApplySkuMappingInput } from './service/sku-mapping.ts';
+// Mở kiện đơn sàn áp lại ghép (spec 237 §5.6): fulfillment nhận qua `withContext` ở `order/index.ts`.
+export { applyLineSkus, lockOrderLines } from './service/sku-mapping.ts';
 export type { SalesContext } from './service/orders.ts';
 export { nextPackageCode, orderRefsOf } from './service/package-orders.ts';
 // Số bán 30 ngày của SKU cho gợi ý ngưỡng tồn khi sửa hàng loạt (#242); product (lớp dưới) nhận qua `src/wiring.ts`.

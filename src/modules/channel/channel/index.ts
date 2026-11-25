@@ -111,6 +111,8 @@ export { shopSetupState } from './repository/shops.ts';
 export { remoteStockByVariant } from './repository/remote-skus.ts';
 // Trạng thái chờ kiểm kê đầu kỳ của gian hàng cho fulfillment (#199 phần b), tiêm qua `ctx.stockHoldOf` ở `src/wiring.ts`.
 export { awaitingStocktakeShops } from './repository/shops.ts';
+// Ghép SKU hiện hành cho fulfillment mở kiện áp lại ghép (#237 PR 2), tiêm qua `ctx.skuMappingOf` ở `src/wiring.ts`.
+export { skuMappingOf } from './service/mapping.ts';
 // Lý do chặn lưu trữ SKU phần sàn cho catalog (#204), tiêm qua `ctx.listingArchiveBlockers` ở `src/wiring.ts`.
 export { listingArchiveBlockers, listingInUse, listingPresenceOf, type VariantPresence } from './service/catalog-boundary.ts';
 // Độ phủ sàn ở danh sách sản phẩm (FE#464), tiêm qua `ctx.channelCoverageOf` ở `src/wiring.ts`.

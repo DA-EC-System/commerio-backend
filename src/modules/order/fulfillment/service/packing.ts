@@ -10,11 +10,13 @@ import {
 import { lockPackingPackage, lockReadyPackages, packageGroupOf, pickListBase, platformItemsOf, readPackingPackage, setLinesPacked, type PackingPackage } from '../repository/packing.ts';
 import { clearPendingDrop, deleteLines } from '../repository/line-cancel.ts';
 import { awaitingReplacementIds, takeAllocationLock } from '../repository/allocation.ts';
-import { markLinesReserved, packageShopOf, setReserved, updatePackage } from '../repository/packages.ts';
+import { clearRemapPendingOf, markLinesReserved, packageShopOf, setReserved, updatePackage } from '../repository/packages.ts';
 import type { Actor } from './actor.ts';
 import { holdOrderReplacements, requestAllocation } from './allocation.ts';
+import { applyOpenRemap, awaitingLinesOf, openRemapChanges } from './open-remap.ts';
 import {
-  cancelledOrderSettlerOf, getPackage, marketplacePackagesOf, orderRefsLookupOf, stockHoldLookupOf, type FulfillmentContext, type MarketplacePackages,
+  cancelledOrderSettlerOf, getPackage, marketplacePackagesOf, orderLineWritersOf, orderRefsLookupOf, stockHoldLookupOf, type FulfillmentContext,
+  type MarketplacePackages,
 } from './packages.ts';
 import { stockPort } from './stock-port.ts';
 import { type PackageOrderRef, type PackageVariantRef, packageVariantsOf } from './views.ts';
@@ -301,8 +303,13 @@ export async function openPackage(ctx: FulfillmentContext, actor: Actor, id: str
       }
       await transition(ctx, actor, pkg, 'open');
 
+      // Kiện đơn sàn mở ra áp lại ghép hiện hành (spec 237 §5.6, D20): dòng lệch ghép không giữ lại theo ghép cũ, không
+      // thì kiện chưa giữ A mà A hết hàng sẽ 422 mãi dù dòng sắp sang B. Dòng chờ thay giữ ghép cũ (D26).
+      const remapLines = pkg.shopId !== null && ctx.skuMappingOf ? await openRemapChanges(ctx, pkg, await awaitingLinesOf(pkg)) : new Map();
       // Dòng chờ bỏ (món sàn đã huỷ, spec 205 §5.10) sẽ bị xoá ở bước ghi: không giữ thêm hàng cho chúng.
-      const missing = pkg.lines.filter((line) => line.variantId !== null && line.pendingDropQty === 0 && line.reservedQty < line.quantity);
+      const missing = pkg.lines.filter(
+        (line) => line.variantId !== null && line.pendingDropQty === 0 && line.reservedQty < line.quantity && !remapLines.has(line.orderLineId),
+      );
       if (missing.length) {
         if (awaitingStocktake) throw new AppError(409, 'shop_awaiting_stocktake', 'Gian hàng đang chờ kiểm kê đầu kỳ');
         const { reserved } = await stockPort().reserve(id, missing.map((line) => ({ variantId: line.variantId!, quantity: line.quantity - line.reservedQty })));
@@ -327,7 +334,16 @@ export async function openPackage(ctx: FulfillmentContext, actor: Actor, id: str
         // Mở để chia lại (D26): khoá advisory phân hàng trước khi khoá kiện (thứ tự khoá §5.10) để giữ ngay cho kiện thay.
         // `version` không đổi từ bước kiểm nên mục đích không đổi; lệch thì `version_conflict`.
         const resplit = target.purpose === 'resplit';
-        if (resplit) await takeAllocationLock(companyId);
+        // Kiện đơn sàn mở ra áp lại ghép (spec 237 D21): gian hàng `FOR SHARE` (cũng cho `holdStock`) → dòng đơn → khoá phân
+        // hàng → kiện, như lượt nhận đơn và đường ghép. Id dòng đơn đọc từ dòng kiện không khoá: dòng kiện đổi thì `version`
+        // của kiện đổi. Chưa nối ghép của channel (test) thì đi như cũ.
+        const remapShopId = !target.cancel && ctx.skuMappingOf ? target.shopId : null;
+        let holdStock = true;
+        if (remapShopId) {
+          holdStock = !(await stockHoldLookupOf(ctx)([remapShopId], { lock: true })).has(remapShopId);
+          await orderLineWritersOf(ctx).lockOrderLines((await readPackage(id)).lines.map((line) => line.orderLineId));
+        }
+        if (resplit || remapShopId) await takeAllocationLock(companyId);
         const pkg = await readPackage(id, true);
         await checkVersion(ctx, pkg, target.version);
         if (target.cancel) {
@@ -336,6 +352,7 @@ export async function openPackage(ctx: FulfillmentContext, actor: Actor, id: str
           const released = await releaseLines(id, pkg.lines);
           await setReserved(id, false);
           await clearPendingDrop(id);
+          await clearRemapPendingOf(id);
           await setLinesPacked(id, false);
           await updatePackage(id, { status: to, needsOpen: false, openPurpose: null, packedBy: null, packedAt: null, labelError: false });
           await recordPacking(pkg, to, 'open_cancel', actor.accountId);
@@ -348,12 +365,15 @@ export async function openPackage(ctx: FulfillmentContext, actor: Actor, id: str
         // Kiện chờ mở vì kiểm kê (spec #238 §5.5) hay để chia lại: mở xong là hết việc, gỡ cờ cùng câu với trạng thái (CHECK
         // `packages_open`). Kiện chờ mở để bỏ dòng chờ bỏ (spec 205 §5.10) cũng hết việc khi các dòng đó đã xoá.
         const stocktake = pkg.openPurpose === 'stocktake';
+        // Kiện chờ đổi ghép (spec 237 §5.6): mở ra là áp ghép (dưới), gỡ cờ và xoá mọi dấu như `stocktake`, `resplit`.
+        const remap = pkg.openPurpose === 'remap';
         const dropped = pkg.lines.filter((line) => line.pendingDropQty > 0);
         const released = await releaseLines(id, dropped);
         await deleteLines(dropped.map((line) => line.id));
+        await clearRemapPendingOf(id);
         await updatePackage(id, {
           status: to, packedBy: null, packedAt: null, labelError: false,
-          ...((stocktake || resplit || dropped.length > 0) && { needsOpen: false, openPurpose: null }),
+          ...((stocktake || resplit || remap || dropped.length > 0) && { needsOpen: false, openPurpose: null }),
           ...(outcome === 'repacked' && { platformPackageCode: null, trackingCode: null, carrierCode: null, carrierName: null }),
           // Giữ mã kiện sàn, vận đơn, ĐVVC (D25): đóng gói, báo sẵn sàng lại không gọi sàn.
           ...(target.keepWaybill && pkg.platformPackageCode !== null && pkg.trackingCode !== null && { waybillKept: true }),
@@ -361,10 +381,19 @@ export async function openPackage(ctx: FulfillmentContext, actor: Actor, id: str
         await setLinesPacked(id, false);
         await recordPacking(pkg, to, 'open', actor.accountId);
         if (resplit) await holdOrderReplacements(ctx, pkg.orderId, released);
-        // Kiện `stocktake`, `resplit` về `reserved` vẫn giữ hàng: lượt phân hàng sau commit lấy lại phần giữ nếu tồn thực
-        // vẫn nhỏ hơn đang giữ (kiện về `backordered`), không thì kiện ở lại `reserved` (D24). Cộng SKU vừa nhả của dòng
-        // chờ bỏ (phần dư sau khi kiện thay đã giữ).
-        const kept = stocktake || resplit
+        // Áp ghép hiện hành lên kiện vừa mở (D20), đọc lại dưới khoá gian hàng: ghép đổi giữa hai bước mà không đổi dấu thì
+        // áp ghép mới nhất và giữ bù dòng bước kiểm đã bỏ qua. Dòng chờ thay giữ ghép cũ (D26, Review Focus 5); dòng khác
+        // của kiện thay vẫn được áp.
+        if (remapShopId) {
+          const live = pkg.lines.filter((line) => line.pendingDropQty === 0);
+          const awaitingLineIds = await awaitingLinesOf(pkg);
+          const changes = await openRemapChanges(ctx, { id, shopId: remapShopId, lines: live }, awaitingLineIds);
+          await applyOpenRemap(ctx, id, changes, { actorId: actor.accountId, holdStock, awaitingLineIds });
+        }
+        // Kiện `stocktake`, `resplit`, `remap` về `reserved` vẫn giữ hàng: lượt phân hàng sau commit lấy lại phần giữ nếu
+        // tồn thực vẫn nhỏ hơn đang giữ (kiện về `backordered`), không thì kiện ở lại `reserved` (D24). Cộng SKU vừa nhả của
+        // dòng chờ bỏ (phần dư sau khi kiện thay đã giữ); SKU nhả khi áp ghép đã được xếp lượt trong lúc áp.
+        const kept = stocktake || resplit || remap
           ? pkg.lines.flatMap((line) => (line.variantId && line.pendingDropQty === 0 ? [line.variantId] : []))
           : [];
         await requestAllocation([...released, ...kept]);
